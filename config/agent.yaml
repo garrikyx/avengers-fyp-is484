@@ -1,0 +1,10 @@
+# agent:
+#   id: magic-agent-a
+#   instance_id: magic-a
+
+# log:
+#   path: /logs/magic.log
+#   poll_interval_ms: 250
+
+# backend:
+#   url: http://backend:8000

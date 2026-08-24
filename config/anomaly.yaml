@@ -1,0 +1,4 @@
+# reject_rate:
+#   enabled: true
+#   baseline_window_minutes: 60
+#   minimum_samples: 100

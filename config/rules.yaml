@@ -1,0 +1,8 @@
+# reject_rate:
+#   warning:
+#     threshold: 0.03
+#     window_seconds: 300
+
+#   critical:
+#     threshold: 0.05
+#     window_seconds: 300
