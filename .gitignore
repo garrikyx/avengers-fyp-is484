@@ -45,3 +45,8 @@ Thumbs.db
 #CLAUDE
 CLAUDE.md
 claude.*
+
+# Simulator-Generated Log Output & Rotation Backups
+logs/
+*.log
+*.log.*
