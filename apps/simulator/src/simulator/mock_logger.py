@@ -10,7 +10,6 @@ DEFAULT_MAX_BYTES = 5 * 1024 # 5 KB limit for rapid testing
 DEFAULT_INTERVAL = 0.2 # Writes every 200ms
 
 SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "FB", "NFLX", "NVDA", "INTC", "AMD"]
-REJECT_REASONS = ["PriceExceedsLimit", "UnknownSymbol", "RiskLimitExceeded"]
 
 def get_timestamps():
     now = datetime.now()
@@ -29,8 +28,6 @@ def run_harness(max_bytes:int, interval:float):
     log_files = {
         "Application": LOG_DIR / "Application.log",
         "Fix": LOG_DIR / "Fix.log",
-        "Order": LOG_DIR / "Order.log",
-        "Execution": LOG_DIR / "Execution.log",
     }
 
     print(f"=== Synthetic Log Generator active ===")
@@ -52,10 +49,6 @@ def run_harness(max_bytes:int, interval:float):
             line = f"{iso_ts} [INFO] [CoreEngine] Heartbeat active. Connected session count: {random.randint(1, 20)}"
         elif category == "Fix":
             line = f"{fix_ts} : 8=FIX.4.2|9=140|35=8|49=MAGIC|56=CLIENT|11=ORD{seq}|55={symbol}|54=1|38=100|44=150.50|10=112|"
-        elif category == "Order":
-            line = f"{iso_ts} [ORDER_MGMT] NEW_ORDER | ID: ORD{seq} | Symbol: {symbol} | Side: BUY | Qty: 100 | Price: 150.50"
-        elif category == "Execution":
-            line = f"{iso_ts} [EXEC_ENGINE] FULL_FILL | ExecID: EX{seq} | OrderID: ORD{seq} | Symbol: {symbol} | Qty: 100"
 
         with open(file_path, "a") as f:
             f.write(f"{line}\n")
