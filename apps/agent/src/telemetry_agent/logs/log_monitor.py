@@ -115,6 +115,9 @@ class LogMonitor:
             self._sync_offset()
 
         # Stream lines from active harvester
+        if self._harvester is None:
+            return
+
         lines_read = False
         for line in self._harvester.read_lines():
             lines_read = True

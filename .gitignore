@@ -50,3 +50,4 @@ claude.*
 logs/
 *.log
 *.log.*
+offsets.json
