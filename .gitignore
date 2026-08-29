@@ -47,7 +47,8 @@ CLAUDE.md
 claude.*
 
 # Simulator-Generated Log Output & Rotation Backups
-logs/
+/logs/
+/demo_logs/
 *.log
 *.log.*
 offsets.json
