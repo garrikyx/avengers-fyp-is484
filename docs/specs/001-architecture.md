@@ -59,7 +59,7 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 
 | Concern           | Choice                                             | Rationale / ADR                                                                                                                      |
 | ----------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Agent language    | Go 1.23+, no CGO, single static binary             | Bounded footprint, trivial deployment next to Magic, cross-compiles to Linux and Windows — [ADR 0001](../adr/0001-agent-in-go.md)    |
+| Agent language    | Python 3.12+, uv workspace package under `apps/agent/` | Shared monorepo with backend, Pydantic models, team scaffold — [ADR 0006](../adr/0006-agent-in-python.md) |
 | Backend language  | Python 3.12, FastAPI, Uvicorn, Pydantic v2         | Fast iteration, first-class OpenAPI for the Copilot plugin, strong validation — [ADR 0002](../adr/0002-backend-in-python-fastapi.md) |
 | Agent → backend   | HTTPS/1.1 + JSON, gzip, batched every 10s          | Debuggable, proxy-friendly; gRPC is a Day-2 swap behind the same interface — [ADR 0003](../adr/0003-https-json-transport-day-1.md)   |
 | Agent → Magic     | HTTPS POST, HMAC-SHA256 signed                     | Magic-owned contract, pending [Q-2](../plan/open-questions.md)                                                                       |

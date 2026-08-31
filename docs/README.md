@@ -12,6 +12,8 @@ If you are an AI agent working in this repository, read `docs/specs/000-overview
 
 ## Architecture at a glance
 
+See [architecture.md](./architecture.md) and the diagram below.
+
 ![High-level architecture and flows](./assets/architecture-overview.png)
 
 ## Specifications
@@ -39,8 +41,8 @@ rationale, and the conditions that would reverse it.
 
 | ADR | Decision |
 | --- | --- |
-| [0001](./adr/0001-agent-in-go.md) | Telemetry Agent is written in Go |
-| [0002](./adr/0002-backend-in-python-fastapi.md) | Backend is Python 3.12 + FastAPI |
+| [0006](./adr/0006-agent-in-python.md) | **Telemetry Agent is Python 3.14+** (current) |
+| [0002](./adr/0002-backend-in-python-fastapi.md) | Backend is Python 3.14 + FastAPI |
 | [0003](./adr/0003-https-json-transport-day-1.md) | Agent → backend transport is HTTPS/JSON batches on Day-1, gRPC deferred |
 | [0004](./adr/0004-no-raw-log-persistence.md) | Raw log content is never persisted or transmitted |
 | [0005](./adr/0005-in-memory-metric-store.md) | Backend metric store is in-memory time buckets, no database on Day-1 |
@@ -49,7 +51,7 @@ rationale, and the conditions that would reverse it.
 
 | Document | Contents |
 | --- | --- |
-| [plan/implementation-status.md](./plan/implementation-status.md) | What is built, requirement coverage, deviations from these specs, and measurements |
+| [plan/implementation-status.md](./plan/implementation-status.md) | What is built, requirement coverage, deviations from these specs |
 | [plan/scaffold.md](./plan/scaffold.md) | Target repository layout and milestone-by-milestone build order |
 | [plan/open-questions.md](./plan/open-questions.md) | Unresolved decisions blocking or shaping implementation, with owners |
 
@@ -60,4 +62,4 @@ rationale, and the conditions that would reverse it.
   renumbered or reused; superseded requirements are marked `(withdrawn)` in place.
 - Commits, pull requests, and tests reference the requirement IDs they implement or verify.
 - Times and timestamps are UTC, ISO-8601, millisecond precision (`2026-06-12T04:00:00.123Z`).
-- Durations in configuration use Go duration syntax (`5s`, `1m`, `250ms`).
+- Durations in configuration use human-readable strings (`5s`, `1m`, `250ms`) parsed by the agent.

@@ -52,8 +52,9 @@ reasons as ADR 0001, inverted).
   representations (arrays, `__slots__`, integer keys) are required, not optional.
 - `mypy --strict` and `ruff` are blocking CI gates (spec 012 §8) — a dynamically typed service
   handling a versioned contract needs the type checker to be non-negotiable.
-- Two languages, one contract: the `/contracts` schemas generate both Pydantic models and Go
-  structs (`FR-ING-022`).
+- Single-language monorepo: agent and backend both Python 3.12+. Shared models live in
+  `packages/telemetry_shared/` (`FR-ING-022` Day-1 approach — see [ADR 0006](../adr/0006-agent-in-python.md)).
+  A `/contracts` code generator may be added later if a second language is reintroduced.
 - Security rules for Python in this repository apply in full: no `pickle`, no `eval`/`exec`,
   no dynamic `importlib`, no user input in file paths, constant-time secret comparison
   (`NFR-SEC-018`, `NFR-SEC-005`).

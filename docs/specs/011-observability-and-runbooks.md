@@ -142,8 +142,8 @@ Agent RSS approaching `memoryLimitMb`, or backend `store` memory above `memoryWa
 
 | Operation | Procedure |
 | --- | --- |
-| Install agent | Place binary, write config, `--check-config`, install service unit, start, confirm heartbeat in `/telemetry/health/agents` |
-| Upgrade agent | Stop (SIGTERM, flushes and checkpoints), replace binary, start. Expect a sub-5s gap. Never upgrade during a market open window. |
+| Install agent | Deploy container or venv, write config, `--check-config`, install service unit, start, confirm heartbeat in `/telemetry/health/agents` |
+| Upgrade agent | Stop (SIGTERM, flushes and checkpoints), replace package/image, start. Expect a sub-5s gap. Never upgrade during a market open window. |
 | Change thresholds | Edit config, `--check-config`, SIGHUP. Alert state is preserved (`NFR-CFG-003`). |
 | Add a log file | Edit `logs[]`, `--check-config`, restart the agent (path changes require restart). |
 | Rotate callback secret | Add the new secret on Magic's verifier first (accept both), then update the agent env and restart. |

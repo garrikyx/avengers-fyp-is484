@@ -1,6 +1,6 @@
 # ADR 0001 — Telemetry Agent is written in Go
 
-Status: Accepted · Date: 2026-07-31 · Deciders: TBD
+Status: Superseded by [ADR 0006](./0006-agent-in-python.md) · Date: 2026-07-31 · Deciders: TBD
 
 ## Context
 
