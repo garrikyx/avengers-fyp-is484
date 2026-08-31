@@ -174,7 +174,7 @@ apps/agent/
 Imports should look like:
 
 ```python
-from telemetry_agent.parsers.fix import FixParser
+from telemetry_agent.parser.fix import FixParser
 ```
 
 not:
@@ -253,11 +253,19 @@ uv sync
 # Run tests
 uv run pytest
 
-# Lint & format
-uv run ruff check .
-uv run ruff format .
+# Parser tests
+make parser-test
 
-# Type check
-uv run mypy .
+# Parser demo over synthetic corpus
+make parser-demo
 
+# Lint
+make lint
+```
+
+Or without Make:
+
+```bash
+uv run pytest tests/unit/parser/ -v
+uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
 ```

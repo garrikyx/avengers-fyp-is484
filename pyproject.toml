@@ -9,7 +9,11 @@ dev = [
     "pytest>=8",
     "ruff>=0.11",
     "mypy>=1.15",
+    "telemetry-agent",
 ]
+
+[tool.uv.sources]
+telemetry-agent = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -30,3 +34,4 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["apps/agent/src", "packages/telemetry_shared/src"]
