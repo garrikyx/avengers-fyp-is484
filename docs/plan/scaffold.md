@@ -1,93 +1,55 @@
 # Scaffold and Build Plan
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-08-31
 
-No code exists yet. This document defines the target repository layout and the order in which
-to build it, so that each milestone produces something demonstrable and verifiable against the
-specs rather than a large unfinished skeleton.
+This document defines the target repository layout and build order. See
+[implementation-status.md](./implementation-status.md) for what exists today.
 
-## 1. Target repository layout
+## 1. Target repository layout (Python monorepo — ADR 0006)
 
 ```
-fyp-test/
+avengers-fyp-is484/
 ├── README.md
-├── LICENSE
-├── Makefile                       # build, test, lint, e2e — one entry point for both languages
-├── docker-compose.yml             # backend + mock Magic + fixgen, for local E2E
+├── Makefile                       # parser-test, parser-demo, lint
+├── pyproject.toml                 # uv workspace root
+├── compose.yaml
 │
-├── contracts/                     # single source of truth for the wire contract (FR-ING-022)
-│   ├── schema/
-│   │   ├── envelope.schema.json       # identity fields, spec 004 §1
-│   │   ├── event.schema.json          # spec 004 §2
-│   │   ├── snapshot.schema.json       # spec 004 §3
-│   │   ├── heartbeat.schema.json      # spec 004 §6
-│   │   ├── alert.schema.json          # spec 005 §2
-│   │   ├── batch.schema.json          # spec 007 §2.1
-│   │   └── callback.schema.json       # spec 005 §3.3
-│   ├── metrics.yaml               # metric catalogue + permitted dimensions (FR-MET-030)
-│   ├── generate.sh                # schema -> Go structs + Pydantic models
-│   └── README.md                  # how to change the contract (schemaVersion rules)
+├── apps/
+│   ├── agent/                     # Telemetry Agent — ADR 0006
+│   │   ├── pyproject.toml
+│   │   ├── testdata/fix/          # synthetic FIX corpus (FR-TST-002)
+│   │   └── src/telemetry_agent/
+│   │       ├── main.py
+│   │       ├── config.py
+│   │       ├── logs/              # M1 log monitor (stub)
+│   │       ├── parser/            # M2 FIX parser — UBS-40–42 implemented
+│   │       ├── metrics/           # M3
+│   │       ├── rules/             # M5
+│   │       ├── callbacks/
+│   │       ├── health/
+│   │       └── publishing/
+│   ├── backend/                   # FastAPI — ADR 0002
+│   ├── teams/                     # M6 Teams integration
+│   └── simulator/                 # synthetic log generator
 │
-├── agent/                         # Go — ADR 0001
-│   ├── go.mod
-│   ├── cmd/telemetry-agent/main.go        # flags: --config --check-config --dry-run --version
-│   ├── internal/
-│   │   ├── config/                # load, validate, defaults, SIGHUP reload (spec 010)
-│   │   ├── logmon/                # tail, interval, rotation, offsets, state file (spec 002 §2)
-│   │   ├── parser/
-│   │   │   ├── registry.go        # FR-PRS-031
-│   │   │   ├── fix/               # spec 003
-│   │   │   └── applog/            # signature matching only
-│   │   ├── model/                 # generated contract types
-│   │   ├── metrics/               # buckets, dimensions, histograms, cardinality (spec 004)
-│   │   ├── latency/               # ClOrdID correlation, bounded LRU (FR-MET-010)
-│   │   ├── rules/                 # rule kinds, alert lifecycle, schedules (spec 005 §1–2)
-│   │   ├── callback/              # signing, retry, delivery tracking (spec 005 §3)
-│   │   ├── publisher/             # batching, gzip, buffer, backoff (spec 002 §6)
-│   │   ├── health/                # heartbeat, derived status (spec 011 §2)
-│   │   ├── redact/               # hashing + allowlist enforcement helpers (FR-PRS-020/021)
-│   │   └── obs/                   # structured logging, self-metrics, rate-limited logging
-│   ├── testdata/fix/              # synthetic corpus (spec 012 §3) — never production data
-│   └── configs/agent.example.yaml
+├── packages/
+│   └── telemetry_shared/          # shared Pydantic models (FR-ING-022 Day-1)
 │
-├── backend/                       # Python — ADR 0002
-│   ├── pyproject.toml
-│   ├── app/
-│   │   ├── main.py                # FastAPI app factory, routers, lifespan
-│   │   ├── api/                   # ingest, metrics_query, alerts, health, nl routers
-│   │   ├── core/                  # settings, auth, errors, logging, rate limiting
-│   │   ├── models/                # generated Pydantic models + query/response models
-│   │   ├── store/                 # metric_store, rollups, alert_store, agent_registry
-│   │   ├── query/                 # engine, kpis, percentiles, completeness, fanout
-│   │   └── nl/                    # normaliser, rule matcher, llm client, slots, renderer
-│   ├── tests/
-│   └── configs/backend.example.yaml
+├── tests/
+│   ├── unit/parser/               # FR-PRS-* requirement-ID tests
+│   ├── integration/
+│   └── e2e/
 │
-├── tools/
-│   ├── fixgen/                    # synthetic FIX log generator (FR-TST-006)
-│   └── mock-magic/                # callback receiver that verifies HMAC signatures
-│
-├── deploy/
-│   ├── agent/                     # systemd unit, Windows service wrapper, install notes
-│   └── backend/                   # Dockerfile, k8s manifests or compose
-│
-├── tests/e2e/                     # acceptance scenario (FR-TST-010)
-│
-├── docs/                          # specs, ADRs, plan  (already written)
-└── .cursor/rules/                 # persistent AI context for spec-driven work
+├── config/                        # agent.yaml, rules.yaml, anomaly.yaml
+├── docs/                          # specs, ADRs, plan
+└── deployment/
 ```
 
-### 1.1 Layout rationale
-
-- `contracts/` sits above both components because the agent/backend contract is the thing most
-  likely to drift, and `FR-ING-022` forbids hand-maintaining both sides.
-- `agent/internal/` is used deliberately: nothing in the agent is a public Go API, and `internal`
-  makes accidental coupling impossible.
-- `redact/` is a separate package so that allowlist and hashing enforcement has one home and one
-  set of tests, and so a reviewer can see every place sensitive handling occurs.
-- `tools/fixgen` is a first-class deliverable, not a test fixture. Without it there is no way to
-  demonstrate or load-test the system (spec 012 §5), and it is the only sanctioned source of log
-  data.
+- `packages/telemetry_shared/` is the Day-1 shared schema home (`FR-ING-022`); a `/contracts`
+  JSON Schema generator may be added later if needed.
+- `apps/agent/src/telemetry_agent/parser/` implements the pluggable parser interface
+  (`FR-PRS-030`); Day-2 binary parsers register here without pipeline changes.
+- `apps/simulator/` replaces `tools/fixgen` as the synthetic log generator target.
 
 ## 2. Milestones
 
@@ -96,7 +58,7 @@ Each milestone lists its requirement IDs and an exit criterion that is demonstra
 
 ### M0 — Repository foundation
 
-Scope: `Makefile`, linters (`golangci-lint`, `ruff`, `mypy --strict`), CI workflow with the
+Scope: `Makefile`, linters (`ruff`, `mypy --strict`), CI workflow with the
 blocking gates of spec 012 §8 wired up (initially passing trivially), `contracts/` skeleton with
 the envelope and snapshot schemas plus `generate.sh`, `.cursor/rules`, example configs.
 
@@ -214,7 +176,7 @@ runbooks.
    in the same pull request, or record an ADR if it is a decision rather than a detail.
 2. **Reference requirement IDs** in commit messages, PR descriptions and test names. The coverage
    reporter is the check.
-3. **One milestone, one branch, small PRs within it.** Each PR should leave `make test` green.
+3. **One milestone, one branch, small PRs within it.** Each PR should leave `make parser-test` green.
 4. **Never widen the field allowlist casually.** It requires an ADR (ADR 0004).
 5. **Every new accumulating structure needs a cap and a drop counter** (`NFR-REL-009`), stated in
    the PR description.
