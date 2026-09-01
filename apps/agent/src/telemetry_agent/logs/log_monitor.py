@@ -1,11 +1,34 @@
 import logging
 import os
+from collections.abc import Generator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generator, Optional, TextIO
+from typing import TextIO
 
 from .offset_tracker import OffsetTracker
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FileReadStatus:
+    """Point-in-time read status for a single monitored file.
+
+    Mirrors the fields spec 002 (`FR-LOG-010`) and spec 011 (health signals table,
+    `files[].offset`) expect the Health Reporter to surface: byte offset progress and
+    read lag, the time since the last line was successfully read.
+    """
+
+    path: str
+    offset: int
+    size: int | None
+    last_read_at: datetime | None
+    read_lag_ms: float | None
+
+    @property
+    def has_read_any_line(self) -> bool:
+        return self.last_read_at is not None
 
 
 class Harvester:
@@ -16,12 +39,18 @@ class Harvester:
         self.ino = ino
         self.dev = dev
         self.offset = start_offset
+        # FR-LOG-010: "timestamp of last line read" — unset until this harvester
+        # yields a line. Left as None (not 0/epoch) so an idle-since-start file is
+        # distinguishable from a genuinely fresh read (FR-HLT-004: never present a
+        # data gap as a zero-value lag).
+        self.last_read_at: datetime | None = None
         self.handle.seek(self.offset)
 
-    def read_lines(self) -> Generator[str, None, None]:
+    def read_lines(self) -> Generator[str]:
         """Reads available complete lines from the file handle until EOF."""
         while line := self.handle.readline():
             self.offset = self.handle.tell()
+            self.last_read_at = datetime.now(UTC)
             yield line.rstrip("\r\n")
 
     def seek(self, offset: int) -> None:
@@ -41,18 +70,18 @@ class LogMonitor:
     spawns Harvesters, and syncs state to OffsetTracker.
     """
 
-    def __init__(self, file_path: Path, offset_tracker: Optional[OffsetTracker] = None):
+    def __init__(self, file_path: Path, offset_tracker: OffsetTracker | None = None):
         self.file_path = Path(file_path)
         self.offset_tracker = offset_tracker or OffsetTracker()
-        self._harvester: Optional[Harvester] = None
+        self._harvester: Harvester | None = None
 
-    def _get_file_stat(self) -> Optional[os.stat_result]:
+    def _get_file_stat(self) -> os.stat_result | None:
         try:
             return self.file_path.stat()
         except FileNotFoundError:
             return None
 
-    def _start_harvester(self, stat_res: os.stat_result, offset: Optional[int] = None) -> None:
+    def _start_harvester(self, stat_res: os.stat_result, offset: int | None = None) -> None:
         """Spawns a new Harvester bound to the active inode."""
         if self._harvester:
             self._harvester.close()
@@ -65,7 +94,7 @@ class LogMonitor:
         if offset > stat_res.st_size:
             offset = 0
 
-        handle = open(self.file_path, "r", encoding="utf-8", errors="replace")
+        handle = open(self.file_path, encoding="utf-8", errors="replace")
         self._harvester = Harvester(
             handle=handle,
             ino=stat_res.st_ino,
@@ -74,7 +103,7 @@ class LogMonitor:
         )
         self._sync_offset()
 
-    def _drain_and_close_harvester(self) -> Generator[str, None, None]:
+    def _drain_and_close_harvester(self) -> Generator[str]:
         """Drains an existing Harvester to EOF before closing."""
         if not self._harvester:
             return
@@ -93,7 +122,7 @@ class LogMonitor:
                 offset=self._harvester.offset,
             )
 
-    def poll_lines(self) -> Generator[str, None, None]:
+    def poll_lines(self) -> Generator[str]:
         """Polls for new log lines and manages Harvester lifecycle events."""
         stat_res = self._get_file_stat()
 
@@ -127,6 +156,38 @@ class LogMonitor:
         if lines_read:
             self._sync_offset()
             self.offset_tracker.save()
+
+    def get_status(self, now: datetime | None = None) -> FileReadStatus:
+        """Reports this file's current offset progress and read lag (`FR-LOG-010`).
+
+        `read_lag_ms` is `now - last_read_at`: the time since the last line was
+        successfully read from this file, not a byte count. It is `None` until at least
+        one line has been read, since a lag of "0ms" would misreport a file the agent
+        has never actually read from as perfectly healthy (`FR-HLT-004`).
+        """
+        now = now or datetime.now(UTC)
+        stat_res = self._get_file_stat()
+        size = stat_res.st_size if stat_res else None
+
+        if self._harvester:
+            offset = self._harvester.offset
+        elif stat_res:
+            offset = self.offset_tracker.get_offset(stat_res.st_dev, stat_res.st_ino)
+        else:
+            offset = 0
+
+        last_read_at = self._harvester.last_read_at if self._harvester else None
+        read_lag_ms: float | None = None
+        if last_read_at is not None:
+            read_lag_ms = (now - last_read_at).total_seconds() * 1000
+
+        return FileReadStatus(
+            path=str(self.file_path),
+            offset=offset,
+            size=size,
+            last_read_at=last_read_at,
+            read_lag_ms=read_lag_ms,
+        )
 
     def close(self) -> None:
         """Safely shuts down the monitor and persists final byte offsets."""
