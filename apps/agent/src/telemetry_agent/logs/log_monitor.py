@@ -13,12 +13,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FileReadStatus:
-    """Point-in-time read status for a single monitored file.
-
-    Mirrors the fields spec 002 (`FR-LOG-010`) and spec 011 (health signals table,
-    `files[].offset`) expect the Health Reporter to surface: byte offset progress and
-    read lag, the time since the last line was successfully read.
-    """
+    """Offset, size and read lag for one file. See docs/plan/ubs30-notes.md."""
 
     path: str
     offset: int
@@ -39,10 +34,7 @@ class Harvester:
         self.ino = ino
         self.dev = dev
         self.offset = start_offset
-        # FR-LOG-010: "timestamp of last line read" — unset until this harvester
-        # yields a line. Left as None (not 0/epoch) so an idle-since-start file is
-        # distinguishable from a genuinely fresh read (FR-HLT-004: never present a
-        # data gap as a zero-value lag).
+        # Read-lag anchor for UBS-30; None until the first line is read. See notes doc.
         self.last_read_at: datetime | None = None
         self.handle.seek(self.offset)
 
@@ -158,13 +150,7 @@ class LogMonitor:
             self.offset_tracker.save()
 
     def get_status(self, now: datetime | None = None) -> FileReadStatus:
-        """Reports this file's current offset progress and read lag (`FR-LOG-010`).
-
-        `read_lag_ms` is `now - last_read_at`: the time since the last line was
-        successfully read from this file, not a byte count. It is `None` until at least
-        one line has been read, since a lag of "0ms" would misreport a file the agent
-        has never actually read from as perfectly healthy (`FR-HLT-004`).
-        """
+        """Offset + read lag for this file (UBS-30). See docs/plan/ubs30-notes.md."""
         now = now or datetime.now(UTC)
         stat_res = self._get_file_stat()
         size = stat_res.st_size if stat_res else None
