@@ -27,7 +27,7 @@ class FileReadStatus:
 
 
 class Harvester:
-    """Reads lines from a single open file descriptor bound to a specific OS inode fingerprint."""
+    """Reads lines from an open file descriptor bound to a specific OS inode."""
 
     def __init__(self, handle: TextIO, ino: int, dev: int, start_offset: int = 0):
         self.handle = handle
@@ -73,7 +73,9 @@ class LogMonitor:
         except FileNotFoundError:
             return None
 
-    def _start_harvester(self, stat_res: os.stat_result, offset: int | None = None) -> None:
+    def _start_harvester(
+        self, stat_res: os.stat_result, offset: int | None = None
+    ) -> None:
         """Spawns a new Harvester bound to the active inode."""
         if self._harvester:
             self._harvester.close()
@@ -126,7 +128,9 @@ class LogMonitor:
             self._start_harvester(stat_res)
 
         # 2. Rotation Detected (Inode / Device Mismatch)
-        elif (stat_res.st_ino != self._harvester.ino) or (stat_res.st_dev != self._harvester.dev):
+        elif (stat_res.st_ino != self._harvester.ino) or (
+            stat_res.st_dev != self._harvester.dev
+        ):
             yield from self._drain_and_close_harvester()
             self._start_harvester(stat_res, offset=0)
 

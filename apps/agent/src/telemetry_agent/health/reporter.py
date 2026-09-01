@@ -1,4 +1,7 @@
-"""Health Reporter (UBS-30): aggregates per-file read lag. See docs/plan/ubs30-notes.md."""
+"""Health Reporter (UBS-30): aggregates per-file read lag.
+
+See docs/plan/ubs30-notes.md.
+"""
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -47,13 +50,19 @@ class HealthReporter:
             return None
         return max(known_lags)
 
-    def degraded_reasons(self, statuses: dict[str, FileReadHealth] | None = None) -> list[str]:
+    def degraded_reasons(
+        self, statuses: dict[str, FileReadHealth] | None = None
+    ) -> list[str]:
         """Files whose lag exceeds the threshold. Unread files are never flagged."""
         if statuses is None:
             statuses = self.file_statuses()
         reasons = []
         for name, status in statuses.items():
-            if status.read_lag_ms is not None and status.read_lag_ms > self.degraded_threshold_ms:
+            over_threshold = (
+                status.read_lag_ms is not None
+                and status.read_lag_ms > self.degraded_threshold_ms
+            )
+            if over_threshold:
                 reasons.append(
                     f"{name}: read lag {status.read_lag_ms:.0f}ms exceeds "
                     f"{self.degraded_threshold_ms:.0f}ms threshold"
