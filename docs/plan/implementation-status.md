@@ -11,7 +11,7 @@ is recorded here rather than by quietly editing the spec.
 | --- | --- | --- |
 | M0 | Repository foundation, CI gates, contracts | Partial — Makefile and module layout exist; CI, `contracts/` and the requirement-coverage reporter do not |
 | **M1** | **Log monitor and configuration** | **Implemented** — `agent/internal/logmon`, `agent/internal/config`, `agent/cmd/telemetry-agent` |
-| M2 | FIX parser | Not started |
+| **M2** | **FIX parser (UBS-40–42)** | **Partial** — plugin interface, classification, framing implemented; field extraction (UBS-43+) not started |
 | M3 | Metrics aggregation | Not started |
 | M4 | Backend ingestion, store, query | Not started |
 | M5 | Rules, alerts, callbacks | Not started |
@@ -122,11 +122,59 @@ it should not be optimised before the parser exists.
 These figures are not a substitute for the load test in spec 012 §5, which must run against
 `tools/fixgen` on representative hardware once [Q-1](./open-questions.md) is answered.
 
+## M2 requirement coverage (UBS-40–42)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-40 | Parser plugin interface and registry | `FR-PRS-030`–`032`, `FR-PRS-003` | Done | `tests/unit/parser/test_FR_PRS_030_registry.py` |
+| UBS-41 | Classify log lines before FIX parsing | `FR-PRS-010`, `FR-PRS-011` | Done | `tests/unit/parser/test_FR_PRS_010_classify.py` |
+| UBS-42 | Frame FIX messages from log lines | `FR-PRS-012`–`016` | Done | `tests/unit/parser/test_FR_PRS_012_frame.py`, `apps/agent/testdata/fix/` |
+
+### Deferred within M2 (UBS-43+)
+
+| Area | Requirements | Notes |
+| --- | --- | --- |
+| Field allowlist extraction | `FR-PRS-020` | Compile-time allowlist table — next story |
+| Hashing and enums | `FR-PRS-021`–`024` | Security-critical emission rules |
+| Timestamps and seq gaps | `FR-PRS-025`–`027` | Needed before metrics bucketing |
+| Leak sentinel | `FR-TST-005` | Lands with allowlist extraction |
+| Full spec 012 §3 corpus | `FR-TST-002` | Subset corpus exists for framing; lifecycle/reject paths pending |
+
+## Code locations
+
+| Component | Path |
+| --- | --- |
+| Parser protocol + registry | `apps/agent/src/telemetry_agent/parser/protocol.py`, `registry.py` |
+| FIX classification | `apps/agent/src/telemetry_agent/parser/fix/classify.py` |
+| FIX framing | `apps/agent/src/telemetry_agent/parser/fix/frame.py` |
+| FIX parser plugin | `apps/agent/src/telemetry_agent/parser/fix/parser.py` |
+| Demo CLI | `apps/agent/src/telemetry_agent/parser/cli.py`, `demo.py` |
+| Synthetic corpus | `apps/agent/testdata/fix/` |
+| Unit tests | `tests/unit/parser/` |
+
 ## How to verify
 
 ```bash
+# M1 (Go log monitor)
 make test    # unit and integration tests
 make race    # the same suite under the race detector
 make bench   # throughput and allocation figures
 make demo    # end-to-end run: rotation, truncation, restart, security assertions
+
+# M2 (FIX parser)
+uv sync                  # or: make sync
+make parser-test         # 29 UBS-40–42 unit tests
+make parser-demo         # visual walkthrough of classification + framing on synthetic corpus
+make lint                # ruff + mypy on agent source
 ```
+
+Expected demo output: a step-by-step visual for each corpus line — INPUT → Registry →
+Classification → Framing (field breakdown) → OUTPUT, plus a corpus summary at the end.
+Run `make parser-demo` in a terminal for colour highlighting.
+
+## Open risks
+
+| Risk | Mitigation |
+| --- | --- |
+| [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples |
+| Python agent footprint unproven at load | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply |
