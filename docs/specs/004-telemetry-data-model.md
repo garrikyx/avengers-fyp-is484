@@ -221,7 +221,7 @@ instance per bucket MUST be capped at `maxSeriesPerBucket` (default 2000).
   "publishBufferBytes": 1048576,
   "droppedEventsLast5Min": 0,
   "activeAlertCount": 1,
-  "resourceUsage": { "rssMb": 84, "cpuPercent": 1.8, "goroutines": 42 }
+  "resourceUsage": { "rssMb": 84, "cpuPercent": 1.8, "activeTasks": 42 }
 }
 ```
 
@@ -234,4 +234,4 @@ set in spec 011 §2 rather than hand-set per condition.
 | --- | --- |
 | `FR-ING-020` | Adding an optional field or a new `eventType` is a minor change; the backend MUST ignore unknown *optional* fields but MUST reject unknown *dimension* keys. |
 | `FR-ING-021` | Removing or retyping a field, or changing histogram boundaries, requires `schemaVersion` +1 and a backend that accepts both versions for one release. |
-| `FR-ING-022` | The shared schema MUST live in one place (`/contracts`) and be the source for Go structs and Pydantic models; hand-maintaining both is prohibited. |
+| `FR-ING-022` | The shared schema MUST live in `packages/telemetry_shared/` as Pydantic models; hand-maintaining duplicate schemas across apps is prohibited. |

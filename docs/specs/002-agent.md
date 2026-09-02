@@ -1,11 +1,12 @@
 # 002 — Telemetry Agent Design
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-08-31
 
 ## 1. Process model
 
-The agent is a single process containing one goroutine pipeline per monitored file, feeding
-shared aggregation and dispatch stages through bounded channels.
+The agent is a single Python process under `apps/agent/src/telemetry_agent/` containing one
+asyncio task (or dedicated thread) per monitored file, feeding shared aggregation and dispatch
+stages through bounded queues.
 
 ```
 per file:  [Log Monitor] ──lines──► [Parser Engine] ──events──► ┐
@@ -176,6 +177,6 @@ constrain this spec's design most directly:
 | --- | --- |
 | RSS ceiling — why every stage is bounded and sheds rather than queues (`FR-PUB-004`) | `NFR-PERF-003` |
 | No per-message map allocation — why the parser fills a fixed allowlisted struct (spec 003 §4) | `NFR-PERF-004` |
-| `GOMAXPROCS` default of `min(2, NumCPU)` — why per-file goroutines are cheap but not unlimited | `NFR-PERF-005` |
+| Configurable worker concurrency defaulting to `min(2, cpu_count)` — why per-file tasks are bounded | `NFR-PERF-005` |
 | Documented CPU/memory caps in the deployment unit — see spec 011 §4 | `NFR-PERF-006` |
 | No synchronous I/O per line — why publishing is decoupled by a channel and a ticker | `NFR-PERF-009` |

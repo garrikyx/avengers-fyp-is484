@@ -170,21 +170,17 @@ content — both are operationally interesting.
 `FR-PRS-030`: All parsers MUST satisfy one interface so Day-2 binary support requires no
 pipeline change:
 
-```go
-// Parser converts one framed input unit into zero or more telemetry events.
-// Implementations must be safe for concurrent use and must not retain the input slice.
-type Parser interface {
-    // Name is the value used in configuration (e.g. "fix", "magic-binary").
-    Name() string
-
-    // Classify reports whether this parser claims the input.
-    Classify(line []byte) Confidence
-
-    // Parse returns derived events. It must never return raw input content
-    // inside an event, and must return a ParseError rather than panicking.
-    Parse(line []byte, meta SourceMeta) ([]Event, error)
-}
+```python
+# FR-PRS-030 — Python Protocol (reference implementation in apps/agent/src/telemetry_agent/parser/)
+@runtime_checkable
+class Parser(Protocol):
+    def name(self) -> str: ...
+    def classify(self, line: bytes) -> Confidence: ...
+    def parse(self, line: bytes, meta: SourceMeta) -> ParseResult: ...
 ```
+
+At the UBS-40–42 milestone, `parse()` returns framing metadata (`ParseResult`) only. Telemetry
+event emission (allowlisted field extraction) is deferred to UBS-43+.
 
 `FR-PRS-031`: Parsers are selected per file set by name in configuration, with an ordered
 `parsers: [fix, applog]` chain; the first parser returning `ConfidenceHigh` wins.

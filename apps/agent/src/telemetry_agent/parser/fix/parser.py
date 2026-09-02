@@ -40,12 +40,6 @@ class FixParser:
             return Confidence.HIGH
         return Confidence.NONE
 
-    def bytes_for_framing(self, line: bytes) -> bytes:
-        """Log bytes that would be framed for this feed, including any join buffer."""
-        if self._joiner.has_pending:
-            return b"".join(self._joiner._pending + [line])
-        return line
-
     def parse(self, line: bytes, meta: SourceMeta) -> ParseResult:
         _ = meta
         try:
