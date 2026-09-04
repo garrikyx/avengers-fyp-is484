@@ -43,7 +43,14 @@ def _dimension_value(
 ) -> str:
     if dim == "reject_reason":
         return resolve_reject_reason(event)
-    return str(getattr(event, dim))
+    value = getattr(event, dim)
+    # A dim like ord_type/side/symbol is None on plenty of real messages
+    # (admin messages, OrderCancelReject) — str(None) would silently mint
+    # the literal label "None", indistinguishable from a real symbol named
+    # "None". "unspecified" matches the same convention already used for
+    # "nothing populated" elsewhere (ReasonNormalizer.resolve,
+    # default_resolve_reject_reason).
+    return "unspecified" if value is None else str(value)
 
 
 @dataclass(slots=True)

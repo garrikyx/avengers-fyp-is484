@@ -1,17 +1,28 @@
-"""Runnable demo of the Metrics Aggregator epic (MA-01/02/03).
+"""Runnable, narrated demo of the Metrics Aggregator epic (MA-01/02/03).
 
     uv run python -m telemetry_agent.metrics.demo
 
-Feeds a small, narrated set of synthetic FIX-derived events through the
+Feeds a small, hand-built set of synthetic FIX-derived events through the
 real ingest paths (no Parser Engine involved — it doesn't extract fields
-yet, so events are hand-built here the same way the tests do) and prints
-what comes out: counters, reject-reason normalisation, cardinality
-folding, correlation/latency, and window decay. Nothing here is asserted —
-read the output, don't grep it.
+yet, so events are constructed here the same way the tests do) and narrates
+each step: what business event is happening, which piece of the
+implementation it exercises, and what the resulting numbers mean.
+
+Six scenarios, run in order, all on one shared aggregator + correlator:
+  1. MA-01 + MA-02 — an order's lifecycle turns into counters
+  2. MA-02          — reject-reason normalisation, top-N, unmapped list
+  3. MA-01          — cardinality cap folds overflow into __other__
+  4. MA-03          — correlation: duplicate ack, orphan, cancel latency
+  5. MA-03          — latency histograms / percentiles
+  6. MA-01          — window decay (data ages out of a short window)
+
+Nothing here is asserted — it's meant to be read and narrated aloud, not
+grepped.
 """
 
 from __future__ import annotations
 
+import textwrap
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -31,9 +42,44 @@ from telemetry_shared.models.parsed_message import (
     ParsedMessageEvent,
 )
 
+TOTAL_SCENARIOS = 6
 
-def _section(title: str) -> None:
-    print(f"\n=== {title} ===")
+
+def _wrap(text: str, indent: int) -> None:
+    pad = " " * indent
+    for line in textwrap.wrap(" ".join(text.split()), width=78 - indent):
+        print(f"{pad}{line}")
+
+
+def _banner(n: int, title: str, ticket: str) -> None:
+    rule = "=" * 78
+    print(f"\n{rule}")
+    print(f"SCENARIO {n}/{TOTAL_SCENARIOS} — {title}  [{ticket}]")
+    print(rule)
+
+
+def _story(text: str) -> None:
+    print("\nSTORY")
+    _wrap(text, 2)
+
+
+def _implementation(text: str) -> None:
+    print("\nIMPLEMENTATION")
+    _wrap(text, 2)
+
+
+def _watch(text: str) -> None:
+    print("\nWATCH FOR")
+    _wrap(text, 2)
+
+
+def _result(label: str) -> None:
+    print(f"\nRESULT — {label}")
+
+
+def _line(metric: str, value: object, note: str = "") -> None:
+    left = f"  {metric} = {value}"
+    print(f"{left:<40} # {note}" if note else left)
 
 
 def main() -> None:
@@ -41,7 +87,7 @@ def main() -> None:
     config = AggregatorConfig(
         metric_dimensions={**COUNTER_DIMENSIONS, **LATENCY_DIMENSIONS},
         windows={"5s": 5, "1m": 60},
-        max_label_sets=3,  # deliberately small, so folding is visible below
+        max_label_sets=3,  # deliberately small, so folding is visible in scenario 3
     )
     aggregator = MetricsAggregator(config=config, resolve_reject_reason=reasons.resolve)
     correlator = LatencyCorrelator(aggregator, ttl_seconds=5)
@@ -52,7 +98,35 @@ def main() -> None:
 
     now = datetime.now(tz=UTC)
 
-    _section("MA-02: new order -> ack -> fill, and a rejected order")
+    print("=" * 78)
+    print("METRICS AGGREGATOR DEMO — MA-01 store / MA-02 counters / MA-03 correlation")
+    print("=" * 78)
+    _wrap(
+        "One FIX session, MAGIC->EXCH1, on instance magic-prod-01. The aggregator "
+        "is configured with two windows: a real 1m window, plus a 5s window that "
+        "exists only so window decay is visible live in scenario 6. The "
+        "cardinality cap (max_label_sets) is set to 3 instead of the production "
+        "default of 5,000, so scenario 3's folding is visible without needing "
+        "thousands of symbols.",
+        0,
+    )
+
+    # ------------------------------------------------------------------
+    _banner(1, "A trader's order lifecycle becomes counters", "MA-01 store + MA-02 counters")
+    _story(
+        "A trader submits a limit buy for 100 AAPL. 8ms later the exchange acks "
+        "it (ExecType=New). 22ms after that it fills completely (Trade, "
+        "leaves_qty=0). At the same time, a second trader's market sell for 50 "
+        "MSFT is rejected by the exchange (OrderExceedsLimit), a FIX "
+        "session-level Reject comes in for a bad checksum, and one message of a "
+        "type this system doesn't recognise arrives too."
+    )
+    _implementation(
+        "Each event goes through counters.derive_counters(event) to get a "
+        "sparse dict of metric -> amount, then aggregator.ingest_counters() "
+        "resolves the declared dimensions for that metric, builds a label "
+        "tuple, and writes into the shared ring buffer — MA-01's store."
+    )
     ingest(
         NewOrderEvent(
             instance_id="magic-prod-01",
@@ -140,14 +214,65 @@ def main() -> None:
         )
     )  # unrecognised
     totals = aggregator.snapshot("1m", group_by=())[()].counters
+    _result("1m window, all 7 events summed")
+    notes = {
+        "messages_total": "every event counts here, recognised or not",
+        "orders_submitted": "the AAPL buy (C1) + the MSFT sell (C2)",
+        "order_qty": "100 (AAPL) + 50 (MSFT)",
+        "orders_acked": "only AAPL got an ExecType=New ack",
+        "executions": "the AAPL Trade fill",
+        "executed_qty": "100 shares filled on AAPL",
+        "fills_full": "leaves_qty=0 on that fill",
+        "orders_rejected": "the MSFT sell, ExecType=Rejected",
+        "session_rejects": "the 35=3 Reject, checksum invalid",
+        "rejects_total": "orders_rejected + session_rejects, kept separate above",
+        "unclassified_messages": "CustomVendorPing isn't in KNOWN_MSG_TYPES",
+    }
     for metric in sorted(totals):
-        print(f"  {metric} = {totals[metric]}")
+        _line(metric, totals[metric], notes.get(metric, ""))
 
-    _section("MA-02: reject reasons, top-N, unmapped list")
-    print("  top_reject_reasons:", top_reject_reasons(aggregator, "1m"))
-    print("  unmapped_seen:", reasons.unmapped_seen)
+    # ------------------------------------------------------------------
+    _banner(2, "Turning raw reject reasons into canonical labels", "MA-02 reject reasons")
+    _story(
+        "Two rejects happened above: the MSFT sell carried a known reason code "
+        "(OrderExceedsLimit), and the session Reject only had free text "
+        "('checksum invalid') that isn't in the canonical reason map."
+    )
+    _implementation(
+        "ReasonNormalizer.resolve() is the dimension resolver the aggregator "
+        "calls for the 'reject_reason' dimension. Known codes pass through, "
+        "identity-mapped from spec 003's canonical names; anything unmapped "
+        "folds to the label 'Other' and gets recorded — truncated, capped at "
+        "50 entries — in unmapped_seen, so the map can be extended from what's "
+        "actually seen in production."
+    )
+    _result("top_reject_reasons + unmapped_seen")
+    print(f"  top_reject_reasons: {top_reject_reasons(aggregator, '1m')}")
+    print(f"  unmapped_seen:      {reasons.unmapped_seen}")
+    _watch(
+        "The raw text 'checksum invalid' never becomes the dimension value "
+        "itself — only the label 'Other' does. The raw text only shows up in "
+        "unmapped_seen, truncated, for someone to review and extend the map "
+        "later."
+    )
 
-    _section("MA-01: cardinality folding (isolated: 1 metric, cap=3, 5 symbols)")
+    # ------------------------------------------------------------------
+    _banner(3, "Protecting the store from cardinality blowup", "MA-01 cardinality cap")
+    _story(
+        "Five different, mostly illiquid symbols trade in the same second. In "
+        "production the cap is 5,000 distinct label-sets per metric (plus a "
+        "tighter 2,000-per-bucket total across all metrics) — high enough that "
+        "this never bites in practice. For this scenario only, a fresh "
+        "aggregator is configured with the cap turned down to 3, so the "
+        "folding behaviour is actually visible."
+    )
+    _implementation(
+        "_admit_label() checks the per-metric admitted-label set and the "
+        "bucket-wide total before accepting a new label; once either cap is "
+        "hit, the label is replaced with the '__other__' sentinel and "
+        "cardinality_folded increments — so the folding is itself an "
+        "observable metric, not silent data loss."
+    )
     cap_demo = MetricsAggregator(
         config=AggregatorConfig(
             metric_dimensions={"orders_submitted": ("symbol",)}, max_label_sets=3
@@ -167,11 +292,34 @@ def main() -> None:
             ),
             {"orders_submitted": Decimal(1)},
         )
-    print(f"  cardinality_folded = {cap_demo.cardinality_folded}  (expect 2)")
     by_symbol = cap_demo.snapshot("1m", group_by=("symbol",))
-    print(f"  __other__ row: {by_symbol.get(('__other__',))}")
+    _result("5 symbols submitted, cap=3")
+    _line(
+        "cardinality_folded",
+        cap_demo.cardinality_folded,
+        "expected 2 — GOOG/TSLA/AMZN admitted, NFLX/META folded",
+    )
+    _line("__other__ row", by_symbol.get(("__other__",)), "NFLX + META summed under one label")
 
-    _section("MA-03: duplicate ack, orphan response, cancel latency")
+    # ------------------------------------------------------------------
+    _banner(4, "Correlating responses back to the right order", "MA-03 correlation")
+    _story(
+        "Three things happen next, each exercising a different edge case: the "
+        "exchange retransmits the same ack for the AAPL order (a duplicate); "
+        "an ExecutionReport arrives for an order (C-UNKNOWN) this system never "
+        "saw submitted — e.g. lost on reconnect; and, independently, a cancel "
+        "request (X1, referencing the original order C1) is confirmed by the "
+        "exchange 15ms later, exercising the cancel-latency path on its own "
+        "order context."
+    )
+    _implementation(
+        "LatencyCorrelator.ingest() tracks open orders by (session_id, "
+        "cl_ord_id), routes each response by the tracked entry's own "
+        "origin_msg_type (not the incoming message's type), and guards "
+        "ack/fill/cancel with a once-only flag so a retransmit is a silent "
+        "no-op rather than a second latency sample. No tracked entry at all "
+        "-> orphan_responses, never a fake zero latency."
+    )
     ingest(
         ExecutionReportEvent(
             instance_id="magic-prod-01",
@@ -226,27 +374,92 @@ def main() -> None:
             side="buy",
         )
     )
-    print(f"  correlator.stats = {correlator.stats}")
+    stats = correlator.stats
+    _result("correlator.stats after all of the above")
+    _line("ttl_evictions", stats.ttl_evictions, "none expired yet (ttl_seconds=5 for this demo)")
+    _line("cap_evictions", stats.cap_evictions, "max_entries never hit")
+    _line("unmatched_orders", stats.unmatched_orders, "ttl_evictions + cap_evictions")
+    _line("orphan_responses", stats.orphan_responses, "the C-UNKNOWN ExecutionReport")
+    _line(
+        "latency_anomalies",
+        stats.latency_anomalies,
+        "none here — see MA-03 AC5 for the negative/implausible-latency path",
+    )
+    _watch(
+        "The duplicate ack doesn't appear anywhere in these stats — it's "
+        "neither an anomaly nor an orphan, just silently ignored via the "
+        "ack_recorded flag."
+    )
 
-    _section(
-        "MA-03: latency histograms (min_sample_size overridden — demo sample is tiny)"
+    # ------------------------------------------------------------------
+    _banner(5, "Millisecond deltas become latency percentiles", "MA-03 histograms")
+    _story(
+        "Three response times were captured above: 8ms from the AAPL order to "
+        "its ack, 30ms from the same order to its fill, and 15ms from the "
+        "cancel request to its confirmation."
+    )
+    _implementation(
+        "Histogram.record() buckets each sample into fixed boundaries (1, 5, "
+        "10, 25, 50, 100, 250, 500, 1000, 5000ms, +Inf) in constant memory per "
+        "series. percentile() linearly interpolates within the bucket holding "
+        "the target rank. In production it refuses to answer below 20 samples "
+        "(FR-QRY-007, avoids a misleadingly precise number) — here "
+        "min_sample_size is overridden to 1, since the whole demo only "
+        "produces one sample per histogram."
     )
     hist_row = aggregator.snapshot("1m", group_by=())[()].histograms
+    _result("p50 per latency metric")
     for metric in ("ack_latency_ms", "exec_latency_ms", "cancel_latency_ms"):
         hist = hist_row.get(metric)
         if hist is None:
             continue
         p50 = hist.percentile(0.5, min_sample_size=1)
-        print(f"  {metric}: count={hist.count} sum_ms={hist.sum_ms} p50={p50}")
+        _line(metric, f"count={hist.count} sum_ms={hist.sum_ms} p50={p50}")
 
-    _section("MA-01: window decay — waiting 6s for the 5s window to empty")
+    # ------------------------------------------------------------------
+    _banner(6, "Old data actually ages out of a window", "MA-01 window decay")
+    _story(
+        "In production, windows are 1m/5m/15m over a 1s-bucket ring buffer. "
+        "This aggregator is also tracking a 5s window purely so decay is "
+        "visible live, without a real multi-minute wait. Everything ingested "
+        "above already sits in the same handful of one-second buckets, all of "
+        "which are about to fall outside that 5s window."
+    )
+    _implementation(
+        "tick() runs on every ingest/snapshot call — not yet an independent "
+        "timer (a known gap, see the implementation review) — and clears any "
+        "ring slot whose bucket_start has fallen outside the retained window. "
+        "snapshot() calls tick() itself, so a query never returns stale data "
+        "even if nothing has been ingested recently."
+    )
     before = aggregator.snapshot("5s", group_by=())
     before_total = before[()].counters if () in before else {}
-    print(f"  before: {before_total}")
+    _result("5s window, right now")
+    for metric in sorted(before_total):
+        _line(metric, before_total[metric])
+    print(
+        "\n  ...waiting 6s for the 5s window to fully lapse. Good moment to "
+        "mention\n  that a real deployment drives tick() from the agent's own "
+        "runtime timer,\n  not a sleep() — this demo just doesn't have one to "
+        "hook into."
+    )
     time.sleep(6)
     after = aggregator.snapshot("5s", group_by=())
     after_total = after[()].counters if () in after else {}
-    print(f"  after:  {after_total}  (decayed to nothing, as expected)")
+    _result("5s window, 6s later")
+    if after_total:
+        for metric in sorted(after_total):
+            _line(metric, after_total[metric])
+    else:
+        print("  (empty — every bucket that held this data has aged out, as expected)")
+
+    print("\n" + "=" * 78)
+    print("End of demo. MA-01 (store/decay/cardinality), MA-02 (counters/reasons),")
+    print("and MA-03 (correlation/latency) all ran on one shared aggregator + ")
+    print("correlator instance.")
+    print("Mechanics:    docs/plan/ma-epic-implementation-summary.md")
+    print("Known gaps:   docs/plan/ma-epic-implementation-review.md")
+    print("=" * 78)
 
 
 if __name__ == "__main__":
