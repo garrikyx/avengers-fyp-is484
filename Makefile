@@ -1,4 +1,4 @@
-.PHONY: sync parser-test parser-demo lint
+.PHONY: sync parser-test parser-demo metrics-demo lint
 
 sync:
 	uv sync
@@ -8,6 +8,9 @@ parser-test: sync
 
 parser-demo:
 	uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
+
+metrics-demo:
+	uv run python -m telemetry_agent.metrics.demo
 
 lint:
 	uv run ruff check .
