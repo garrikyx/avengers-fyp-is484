@@ -154,6 +154,10 @@ class MetricsAggregator:
         # for either cap — an observability signal that folding is actually
         # happening, not just silent relabelling.
         self.cardinality_folded = 0
+        # Feeds the snapshot's `secondsSinceLastEvent` gauge (a future
+        # "no log activity" alert reads this rather than inferring staleness
+        # from bucket contents).
+        self._last_event_at: float | None = None
 
     def _bucket_start(self, ts: float) -> int:
         return int(ts // self.config.bucket_seconds)
@@ -207,10 +211,17 @@ class MetricsAggregator:
         bucket.total_admitted += 1
         return label
 
+    def seconds_since_last_event(self) -> float | None:
+        """None if nothing has ever been ingested."""
+        if self._last_event_at is None:
+            return None
+        return self._clock() - self._last_event_at
+
     def ingest_counters(
         self, event: ParsedMessageEvent, counters: dict[str, Decimal]
     ) -> None:
         now = self._clock()
+        self._last_event_at = now
         self.tick(now)
         bucket = self._get_bucket(event.event_time_utc.timestamp(), now=now)
         if bucket is None:
@@ -234,6 +245,7 @@ class MetricsAggregator:
         at: datetime,
     ) -> None:
         now = self._clock()
+        self._last_event_at = now
         self.tick(now)
         bucket = self._get_bucket(at.timestamp(), now=now)
         if bucket is None:

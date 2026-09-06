@@ -141,6 +141,43 @@ class LatencyCorrelator:
         """
         self._evict_expired()
 
+    def pending_order_count(self) -> int:
+        """Tracked orders whose first relevant response hasn't arrived yet:
+        an ack for a NewOrderSingle-origin order, a cancel outcome for a
+        cancel/replace-origin one. Feeds the snapshot's `pendingOrders` gauge.
+
+        Approximate, not full order-lifecycle state — the correlator only
+        ever tracks what MA-03 itself needs for latency, so entries are never
+        removed on resolution (only flagged), and a rejected order (which
+        sets neither ack_recorded nor cancel_recorded) still counts as
+        pending here until TTL eviction; rejections are already visible
+        separately via rejectRate.
+        """
+        self._evict_expired()
+        return sum(
+            1 for ctx in self._open.values() if not self._first_response_seen(ctx)
+        )
+
+    def oldest_pending_age_seconds(self) -> float | None:
+        """Age of the longest-pending tracked order (see
+        `pending_order_count`'s caveats), or None if nothing is pending.
+        Feeds the snapshot's `oldestPendingAgeSeconds` gauge.
+        """
+        self._evict_expired()
+        now = self._clock()
+        ages = [
+            now - ctx.first_seen_at.timestamp()
+            for ctx in self._open.values()
+            if not self._first_response_seen(ctx)
+        ]
+        return max(ages) if ages else None
+
+    @staticmethod
+    def _first_response_seen(ctx: OrderContext) -> bool:
+        if ctx.origin_msg_type in _CANCEL_ORIGIN_MSG_TYPES:
+            return ctx.cancel_recorded
+        return ctx.ack_recorded
+
     def ingest(self, event: ParsedMessageEvent) -> None:
         self._evict_expired()
 

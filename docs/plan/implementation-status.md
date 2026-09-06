@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-08-31
+Status: Live document · Last updated: 2026-09-06
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -12,7 +12,7 @@ is recorded here rather than by quietly editing the spec.
 | M0 | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/` exist; CI and requirement-coverage reporter do not |
 | M1 | Log monitor and configuration | **Not started** — `apps/agent/src/telemetry_agent/logs/` is stub only |
 | **M2** | **FIX parser (UBS-40–42)** | **Partial** — plugin interface, classification, framing implemented; field extraction (UBS-43+) not started |
-| M3 | Metrics aggregation | Not started |
+| **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; blocked on real events by M1 (Log Monitor) and field extraction (UBS-43+) |
 | M4 | Backend ingestion, store, query | Not started |
 | M5 | Rules, alerts, callbacks | Not started |
 | M6 | Natural language layer | Not started |
@@ -36,6 +36,19 @@ is recorded here rather than by quietly editing the spec.
 | Leak sentinel | `FR-TST-005` | Lands with allowlist extraction |
 | Full spec 012 §3 corpus | `FR-TST-002` | Subset corpus exists for framing; lifecycle/reject paths pending |
 
+## M3 requirement coverage (MA-01–04)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| MA-01 | Bucketed counter/histogram store | `FR-MET-024`–`030` | Done | `test_MA_01_aggregator.py` |
+| MA-02 | Order/execution/reject counters | spec 004 §4.1 | Done | `test_MA_02_counters.py` |
+| MA-03 | Order correlation and latency | spec 004 §4.4 | Done | `test_MA_03_correlation.py`, `test_histogram.py` |
+| MA-04 | Calculated indicators and snapshot output | `FR-QRY-007`, `FR-QRY-010`, `FR-QRY-012` | Done | `test_MA_04_snapshot.py` |
+
+Full detail and an alert-readiness mapping: `docs/plan/ma-epic-implementation-summary.md`.
+Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor) and field
+extraction (UBS-43+); `parseErrorRate` is formula-ready but has no producer yet.
+
 ## Code locations
 
 | Component | Path |
@@ -46,7 +59,11 @@ is recorded here rather than by quietly editing the spec.
 | FIX parser plugin | `apps/agent/src/telemetry_agent/parser/fix/parser.py` |
 | Demo CLI | `apps/agent/src/telemetry_agent/parser/cli.py` |
 | Synthetic corpus | `apps/agent/testdata/fix/` |
-| Unit tests | `tests/unit/parser/` |
+| Unit tests (parser) | `tests/unit/parser/` |
+| Metrics aggregator, counters, correlation, histogram | `apps/agent/src/telemetry_agent/metrics/` |
+| Calculated indicators and snapshot output | `apps/agent/src/telemetry_agent/metrics/snapshot.py` |
+| Shared snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/metrics.py` |
+| Unit tests (metrics) | `tests/unit/agent/metrics/` |
 
 ## How to verify
 

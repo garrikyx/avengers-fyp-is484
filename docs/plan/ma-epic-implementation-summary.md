@@ -130,9 +130,61 @@ remember to trigger.
 | `test_MA_03_correlation.py` | ack/first-fill/cancel latency, duplicate-response no-op, orphan responses, TTL *and* hard-cap eviction (oldest-first, verified via the evicted order's own later orphan response — not just a counter), the implausible-latency ceiling (positive, distinct from the skewed-clock negative case), both cancel-latency origins (35=F and 35=G), a replace's own confirmation being a documented no-op, and the `transact_time` timestamp source actually being used (not just its anomaly path). |
 | `test_MA_integration.py` | The core architecture claim: `derive_counters()` and `LatencyCorrelator` writing into *one* shared `MetricsAggregator`, a counter and a histogram both landing on the same `snapshot()` row. |
 | `test_histogram.py` | Exclusive bucket assignment, overflow, bucket-wise `merge`, all three named percentiles (p50/p95/p99) against hand-worked values, interpolation inside the `+Inf` bucket itself. |
+| `test_MA_04_snapshot.py` | Indicator formulas against the hand-labelled fixture's `EXPECTED_TOTALS`, null-on-zero-denominator, `lowConfidence` flipping at the sample-size threshold, throughput, grouped breakdown, gauges (pending orders, staleness), window bounds / `generatedAtUtc` using an injected clock. |
 
-Run: `uv run pytest tests/unit -v` · lint/types: `uv run ruff check .` and
-`uv run mypy apps/agent/src` (both clean on this package).
+Run: `uv run pytest tests/unit -v` (101 tests) · lint/types: `uv run ruff check .`
+and `uv run mypy apps/agent/src` (both clean on this package).
+
+## 6. Calculated indicators and snapshot output (MA-04)
+
+`telemetry_agent.metrics.snapshot.snapshot(aggregator, window, group_by, ...)`
+wraps `MetricsAggregator.snapshot()` (section 4) with the layer its two real
+consumers need — the Rule Engine and the Backend Publisher — without
+touching the write path at all. Pure read + arithmetic: no I/O, no locks, so
+it can never block a concurrent `ingest_counters`/`observe_latency` call.
+
+Per group, on top of the raw counters: `indicators` (spec 004 §4.5's
+`rejectRate`/`fillRate`/`cancelRate`/`parseErrorRate`, each `{value,
+denominator, lowConfidence}` — `value` is `null` when `denominator` is 0,
+`lowConfidence` is `true` whenever `denominator` is below
+`min_sample_size` (default 20, the same `histogram.DEFAULT_MIN_SAMPLE_SIZE`
+MA-03's percentiles already use — one shared constant, not a second copy) —
+so a single rejected order yields a real value, just flagged low-confidence,
+which is what stops a Rule Engine firing `HighRejectRate` off one sample),
+`throughput` (orders/sec, not a ratio, always defined), and `latency`
+(p50/p95/p99/avg/count per histogram present on that row, via the existing
+`Histogram.percentile`). Two new instance-wide `gauges`, sourced from small
+additive read methods on the already-existing classes (no change to their
+write paths): `pendingOrders`/`oldestPendingAgeSeconds` from
+`LatencyCorrelator.pending_order_count()`/`.oldest_pending_age_seconds()`
+(tracked orders whose first relevant response hasn't arrived — approximate,
+since the correlator never removes a resolved entry, only flags it, so a
+rejected order still counts as pending until TTL eviction), and
+`secondsSinceLastEvent` from `MetricsAggregator.seconds_since_last_event()`.
+Wrapped into `telemetry_shared.models.metrics.MetricsSnapshot` — the
+non-functional stub that used to live at this path is gone; the current
+model mirrors the backend's `POST /telemetry/query/metrics` response shape
+(spec 007 §3) field-for-field so a future relay needs no renaming.
+
+`parseErrorRate` is formula-ready but always reads `value=null,
+lowConfidence=true` today: nothing yet emits `parse_errors`/`log_lines_read`
+into the aggregator (that's a Log Monitor/Parser Engine wiring task, not
+started). The contract already has the field so the Rule Engine doesn't need
+a shape change once that wiring lands.
+
+### Alert readiness
+
+The next piece of work is six Rule Engine alerts. What this snapshot already
+carries for each, and what still needs to be built elsewhere:
+
+| # | Alert | Served by | Still needed |
+| - | --- | --- | --- |
+| 1 | HighRejectRate (warn>3%, crit>5% / 5m) | `indicators.rejectRate`, window="5m" | Nothing |
+| 2 | >5 execution failures/5m, or pending-order timeout | count half: `counters.orders_rejected`. Timeout half: `gauges.pendingOrders`/`oldestPendingAgeSeconds` | Nothing |
+| 3 | >1% parse failure/5m, or ≥10 consecutive failures | rate half: `indicators.parseErrorRate` (formula-ready) | A `parse_errors`/`log_lines_read` producer (Log Monitor/Parser Engine). Consecutive-failure half is a streak counter over raw parse outcomes — Rule Engine's own state, not a windowed-snapshot concept |
+| 4 | FIX processing latency (warn p95>500ms, crit p95>1s / 5m) | `groups[].latency["ack_latency_ms"].p95` | Nothing |
+| 5 | No heartbeat>30s; no log activity>60s | log-activity half: `gauges.secondsSinceLastEvent` | Heartbeat half is the Health Reporter (spec 004 §6) — a separate, unbuilt component |
+| 6 | Same rule+instance → one active alert | — | Entirely Rule Engine's own dedup-key state machine (spec 005) — no snapshot involvement |
 
 **Known gaps, not closed here** (tracked in the review doc, linked above):
 ExecID de-duplication is absent system-wide — a retransmitted
