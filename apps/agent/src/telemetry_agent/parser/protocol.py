@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from telemetry_agent.parser.fix.fields import FixFields
 
 
 class Confidence(str, Enum):
@@ -54,6 +57,7 @@ class ParseResult:
     warnings: list[str] = field(default_factory=list)
     error: ParseError | None = None
     joined_lines: int = 1
+    fields: "FixFields | None" = None
 
 
 @runtime_checkable
