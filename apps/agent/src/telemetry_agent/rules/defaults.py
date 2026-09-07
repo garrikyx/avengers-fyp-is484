@@ -1,9 +1,10 @@
 """RE-03: the 14 default rules (spec 005 §1.2).
 
-Concrete `RuleConfig` values, not YAML — wiring these to `config/rules.yaml`
-(real parsing, `FR-RUL-008` SIGHUP reload) is a separate, existing gap
-(`apps/agent/src/telemetry_agent/config.py` is empty for every config file,
-not a rules-specific one).
+Concrete `RuleConfig` values, used as the **fallback** by
+`telemetry_agent.rules.config_loader.load_rules()` when `config/rules.yaml`
+is absent (`FR-RUL-008`/`009`). `config/rules.yaml` is the live source of
+truth when present — a direct YAML transcription of this tuple, kept in
+sync by hand; changing a threshold here should usually change it there too.
 
 `HighRejectRate`, `AckLatencyBreach`, and `ParseErrorRate`'s tier thresholds
 are client-confirmed values, not spec 005's prior "provisional pending Q-5"

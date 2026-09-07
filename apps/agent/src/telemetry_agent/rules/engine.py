@@ -58,6 +58,7 @@ class AlwaysActive:
 
 @dataclass(slots=True)
 class _AlertState:
+    rule_name: str
     alert_id: str
     status: AlertStatus
     severity: str
@@ -223,6 +224,51 @@ class RuleEngine:
     def add_silence(self, silence: Silence) -> None:
         self._silences.append(silence)
 
+    def apply_rules(
+        self, new_rules: Sequence[RuleConfig], *, now: datetime
+    ) -> list[AlertEvent]:
+        """`FR-RUL-008`: hot-swap the active rule set without losing alert
+        state. `_states` is keyed by rule name (not by `RuleConfig` object
+        identity), so a state for a rule name present in both old and new
+        config carries over untouched — `alertId`/`firstObservedUtc`/
+        `notificationCount` all survive, and a changed threshold simply
+        takes effect on the next `evaluate()` call.
+
+        A state whose rule no longer exists in `new_rules` is force-
+        resolved: it cannot legitimately stay open for a condition that no
+        longer has a definition. Returns the synthetic `resolved` events
+        for any such states (empty if none).
+        """
+        new_names = {rule.name for rule in new_rules}
+        resolved_events: list[AlertEvent] = []
+        for key, state in list(self._states.items()):
+            if state.rule_name in new_names:
+                continue
+            if state.status in (AlertStatus.FIRING, AlertStatus.RESOLVING):
+                resolved_events.append(
+                    AlertEvent(
+                        alert_id=state.alert_id,
+                        rule_name=state.rule_name,
+                        severity=state.severity,
+                        status=AlertStatus.RESOLVED.value,
+                        application=self._application,
+                        instance_id=self._instance_id,
+                        agent_id=self._agent_id,
+                        matched_condition=(
+                            f"{state.rule_name} removed from configuration"
+                        ),
+                        observed_value=None,
+                        threshold=0.0,
+                        first_observed_utc=state.first_observed_utc,
+                        last_observed_utc=now,
+                        resolved_at_utc=now,
+                        notification_count=state.notification_count + 1,
+                    )
+                )
+            del self._states[key]
+        self._rules = tuple(new_rules)
+        return resolved_events
+
     def active_alert_count(self) -> int:
         """`FR-RUL-017`'s "active alert output" — firing/resolving alerts
         that have actually been notified, not `pending` internal bookkeeping
@@ -313,6 +359,7 @@ class RuleEngine:
             if tier is None:
                 return None
             self._states[key] = _AlertState(
+                rule_name=rule.name,
                 alert_id=str(uuid.uuid4()),
                 status=AlertStatus.PENDING,
                 severity=tier.severity,

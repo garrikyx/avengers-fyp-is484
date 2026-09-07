@@ -61,8 +61,10 @@ Full detail and the alert-readiness table: `docs/plan/re-epic-implementation-sum
 Not yet wired: consecutive-failure streak tracking (no rule kind or
 producer), session-message counters (`logouts`, `heartbeat_timeouts`,
 `seq_gaps`, `clock_skew_events`), Callback Dispatcher and Backend Publisher
-(so their self-health rules have no data), `config/rules.yaml` YAML
-loading/SIGHUP reload.
+(so their self-health rules have no data). `config/rules.yaml` loading and
+SIGHUP reload are implemented (`config_loader.py`); only the call to
+`SighupRuleReloader.install()` from a real running process is unwired,
+since no agent supervisor loop exists yet (M1).
 
 ## Code locations
 
@@ -80,6 +82,7 @@ loading/SIGHUP reload.
 | Shared snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/metrics.py` |
 | Unit tests (metrics) | `tests/unit/agent/metrics/` |
 | Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |
+| Rule config loading, SIGHUP reload | `apps/agent/src/telemetry_agent/rules/config_loader.py`, `config/rules.yaml` |
 | Shared alert contract | `packages/telemetry_shared/src/telemetry_shared/models/alerts.py` |
 | Unit tests (rules) | `tests/unit/agent/rules/` |
 | Unit tests (shared models) | `tests/unit/telemetry_shared/` |
