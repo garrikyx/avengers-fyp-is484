@@ -1,8 +1,171 @@
-# reject_rate:
-#   warning:
-#     threshold: 0.03
-#     window_seconds: 300
+# Live rule config, parsed by telemetry_agent.rules.config_loader.load_rules
+# (FR-RUL-008/009). Reloadable via SIGHUP without restarting the agent or
+# losing alert state (RuleEngine.apply_rules); a malformed file is rejected
+# with an error naming the offending rule and the process keeps serving its
+# last-known-good rules. If this file is absent, the agent falls back to
+# telemetry_agent.rules.defaults.DEFAULT_RULES — the two are kept in sync;
+# this is a direct YAML transcription of that tuple (spec 005 §1.2).
+#
+# Two conditions differing only in threshold are one rule with multiple
+# severity tiers, not two separate rules (FR-RUL-002) — `tiers` is ordered
+# least->most severe.
 
-#   critical:
-#     threshold: 0.05
-#     window_seconds: 300
+rules:
+  - name: HighRejectRate
+    kind: rate
+    source: indicator
+    metric: reject_rate
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 0.03
+      - severity: critical
+        threshold: 0.05
+    window: 5m
+    minSamples: 20
+    for: 2m
+    resolveAfter: 5m
+
+  - name: RejectSpike
+    kind: threshold
+    source: counter
+    metric: orders_rejected
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 50
+    window: 1m
+
+  - name: CancelRejectSpike
+    kind: threshold
+    source: counter
+    metric: cancel_rejects
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 20
+    window: 5m
+
+  - name: SessionRejects
+    kind: threshold
+    source: counter
+    metric: session_rejects
+    operator: ">"
+    tiers:
+      - severity: critical
+        threshold: 5
+    window: 5m
+
+  - name: PendingOrderTimeout
+    kind: threshold
+    source: gauge
+    metric: oldest_pending_age_seconds
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 30
+
+  - name: AckLatencyBreach
+    kind: latency
+    source: latency_p95
+    metric: ack_latency_ms
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 500
+      - severity: critical
+        threshold: 1000
+    window: 5m
+    minSamples: 50
+
+  - name: ParseErrorRate
+    kind: rate
+    source: indicator
+    metric: parse_error_rate
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 0.01
+      - severity: critical
+        threshold: 0.25
+    window: 5m
+    minSamples: 20
+    dependsOnLogActivity: false
+
+  - name: NoLogActivity
+    kind: absence
+    source: counter
+    metric: messages_total
+    operator: "=="
+    tiers:
+      - severity: critical
+        threshold: 0
+    window: 1m
+    dependsOnLogActivity: false
+
+  - name: NoExecutions
+    kind: absence
+    source: counter
+    metric: executions
+    operator: "=="
+    tiers:
+      - severity: warning
+        threshold: 0
+    window: 15m
+    guardMetric: orders_submitted
+
+  - name: FixSessionDown
+    kind: threshold
+    source: counter
+    metric: logouts
+    extraCounters: [heartbeat_timeouts]
+    operator: ">="
+    tiers:
+      - severity: critical
+        threshold: 1
+    window: 1m
+    dependsOnLogActivity: false
+
+  - name: SeqGapDetected
+    kind: threshold
+    source: counter
+    metric: seq_gaps
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 0
+    window: 1m
+    dependsOnLogActivity: false
+
+  - name: ClockSkew
+    kind: threshold
+    source: counter
+    metric: clock_skew_events
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 10
+    window: 5m
+    dependsOnLogActivity: false
+
+  - name: CallbackFailing
+    kind: threshold
+    source: counter
+    metric: callback_failures
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 3
+    window: 5m
+    dependsOnLogActivity: false
+
+  - name: BackendUnreachable
+    kind: threshold
+    source: counter
+    metric: publish_failures
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 5
+    window: 1m
+    dependsOnLogActivity: false

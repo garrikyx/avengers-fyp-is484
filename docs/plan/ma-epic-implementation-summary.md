@@ -120,20 +120,22 @@ the top of both the write path and the read path, so a stale bucket is
 never included either way — decay isn't something a caller has to
 remember to trigger.
 
-## 5. Verified — what 93 tests actually prove
+## 5. Verified — what 101 tests actually prove
 
 | File | Proves |
 | --- | --- |
-| `tests/unit/shared/test_parsed_message_event.py` | Every subclass's required fields, `Decimal` string-coercion (never float), immutability, `extra="forbid"`, `EVENT_CLASS_BY_MSG_TYPE`'s exact contents. |
+| `tests/unit/telemetry_shared/test_parsed_message_event.py` | Every subclass's required fields, `Decimal` string-coercion (never float), immutability, `extra="forbid"`, `EVENT_CLASS_BY_MSG_TYPE`'s exact contents. |
 | `test_MA_01_aggregator.py` | 10k events/60s window, 61s decay to zero, both cardinality caps (fold + reset-per-bucket-reuse + `cardinality_folded` count), `group_by` validation and multi-dim ordering, an out-of-window event dropped without corrupting a live bucket that shares its ring slot, an unknown window name raising. |
 | `test_MA_02_counters.py` | Every counter in `derive_counters()` against a hand-labelled fixture with an independently hand-computed total (`EXPECTED_TOTALS`), reason normalisation (map hit / unmapped→`Other`/`unspecified`, truncation, dedupe, bounded list), `top_reject_reasons`, the fill-full/partial split's `leaves_qty`-over-`ord_status` precedence, `orders_rejected`'s two independent trigger signals, the SessionRejectReason(373)-code path. |
 | `test_MA_03_correlation.py` | ack/first-fill/cancel latency, duplicate-response no-op, orphan responses, TTL *and* hard-cap eviction (oldest-first, verified via the evicted order's own later orphan response — not just a counter), the implausible-latency ceiling (positive, distinct from the skewed-clock negative case), both cancel-latency origins (35=F and 35=G), a replace's own confirmation being a documented no-op, and the `transact_time` timestamp source actually being used (not just its anomaly path). |
-| `test_MA_integration.py` | The core architecture claim: `derive_counters()` and `LatencyCorrelator` writing into *one* shared `MetricsAggregator`, a counter and a histogram both landing on the same `snapshot()` row. |
+| `tests/integration/agent/test_MA_integration.py` | The core architecture claim: `derive_counters()` and `LatencyCorrelator` writing into *one* shared `MetricsAggregator`, a counter and a histogram both landing on the same `snapshot()` row. |
 | `test_histogram.py` | Exclusive bucket assignment, overflow, bucket-wise `merge`, all three named percentiles (p50/p95/p99) against hand-worked values, interpolation inside the `+Inf` bucket itself. |
 | `test_MA_04_snapshot.py` | Indicator formulas against the hand-labelled fixture's `EXPECTED_TOTALS`, null-on-zero-denominator, `lowConfidence` flipping at the sample-size threshold, throughput, grouped breakdown, gauges (pending orders, staleness), window bounds / `generatedAtUtc` using an injected clock. |
 
-Run: `uv run pytest tests/unit -v` (101 tests) · lint/types: `uv run ruff check .`
-and `uv run mypy apps/agent/src` (both clean on this package).
+Run: `uv run pytest tests/unit tests/integration -v` (101 tests across this
+epic's own files; 161 across the whole repo) · lint/types:
+`uv run ruff check .` and `uv run mypy apps/agent/src` (both clean on this
+package).
 
 ## 6. Calculated indicators and snapshot output (MA-04)
 

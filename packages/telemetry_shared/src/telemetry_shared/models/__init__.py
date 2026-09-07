@@ -1,3 +1,4 @@
+from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.metrics import (
     Gauges,
     Indicator,
@@ -9,6 +10,7 @@ from telemetry_shared.models.metrics import (
 )
 
 __all__ = [
+    "AlertEvent",
     "Gauges",
     "Indicator",
     "Indicators",

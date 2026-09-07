@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-06
+Status: Live document · Last updated: 2026-09-07
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | **M2** | **FIX parser (UBS-40–42)** | **Partial** — plugin interface, classification, framing implemented; field extraction (UBS-43+) not started |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; blocked on real events by M1 (Log Monitor) and field extraction (UBS-43+) |
 | M4 | Backend ingestion, store, query | Not started |
-| M5 | Rules, alerts, callbacks | Not started |
+| **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
 
@@ -22,9 +22,9 @@ is recorded here rather than by quietly editing the spec.
 
 | ID | Story | Requirement | Status | Verified by |
 | --- | --- | --- | --- | --- |
-| UBS-40 | Parser plugin interface and registry | `FR-PRS-030`–`032`, `FR-PRS-003` | Done | `tests/unit/parser/test_FR_PRS_030_registry.py` |
-| UBS-41 | Classify log lines before FIX parsing | `FR-PRS-010`, `FR-PRS-011` | Done | `tests/unit/parser/test_FR_PRS_010_classify.py` |
-| UBS-42 | Frame FIX messages from log lines | `FR-PRS-012`–`016` | Done | `tests/unit/parser/test_FR_PRS_012_frame.py`, `apps/agent/testdata/fix/` |
+| UBS-40 | Parser plugin interface and registry | `FR-PRS-030`–`032`, `FR-PRS-003` | Done | `tests/unit/agent/parser/test_FR_PRS_030_registry.py` |
+| UBS-41 | Classify log lines before FIX parsing | `FR-PRS-010`, `FR-PRS-011` | Done | `tests/unit/agent/parser/test_FR_PRS_010_classify.py` |
+| UBS-42 | Frame FIX messages from log lines | `FR-PRS-012`–`016` | Done | `tests/unit/agent/parser/test_FR_PRS_012_frame.py`, `apps/agent/testdata/fix/` |
 
 ### Deferred within M2 (UBS-43+)
 
@@ -49,6 +49,23 @@ Full detail and an alert-readiness mapping: `docs/plan/ma-epic-implementation-su
 Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor) and field
 extraction (UBS-43+); `parseErrorRate` is formula-ready but has no producer yet.
 
+## M5 requirement coverage (RE-01–04)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| RE-01 | Rule and alert lifecycle types, multi-tier schema | `FR-RUL-001`–`003`, `FR-RUL-015` | Done | `test_RE_01_fsm.py` |
+| RE-02 | Rule evaluation and the alert lifecycle FSM | `FR-RUL-004`–`007`, `012`–`014`, `016`–`022` | Done | `test_RE_01_fsm.py`, `test_RE_02_evaluators.py`, `test_RE_03_safety.py` |
+| RE-03 | The 14 default rules | `FR-RUL-010` | Done | `test_RE_04_default_rules.py` |
+
+Full detail and the alert-readiness table: `docs/plan/re-epic-implementation-summary.md`.
+Not yet wired: consecutive-failure streak tracking (no rule kind or
+producer), session-message counters (`logouts`, `heartbeat_timeouts`,
+`seq_gaps`, `clock_skew_events`), Callback Dispatcher and Backend Publisher
+(so their self-health rules have no data). `config/rules.yaml` loading and
+SIGHUP reload are implemented (`config_loader.py`); only the call to
+`SighupRuleReloader.install()` from a real running process is unwired,
+since no agent supervisor loop exists yet (M1).
+
 ## Code locations
 
 | Component | Path |
@@ -59,11 +76,17 @@ extraction (UBS-43+); `parseErrorRate` is formula-ready but has no producer yet.
 | FIX parser plugin | `apps/agent/src/telemetry_agent/parser/fix/parser.py` |
 | Demo CLI | `apps/agent/src/telemetry_agent/parser/cli.py` |
 | Synthetic corpus | `apps/agent/testdata/fix/` |
-| Unit tests (parser) | `tests/unit/parser/` |
+| Unit tests (parser) | `tests/unit/agent/parser/` |
 | Metrics aggregator, counters, correlation, histogram | `apps/agent/src/telemetry_agent/metrics/` |
 | Calculated indicators and snapshot output | `apps/agent/src/telemetry_agent/metrics/snapshot.py` |
 | Shared snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/metrics.py` |
 | Unit tests (metrics) | `tests/unit/agent/metrics/` |
+| Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |
+| Rule config loading, SIGHUP reload | `apps/agent/src/telemetry_agent/rules/config_loader.py`, `config/rules.yaml` |
+| Shared alert contract | `packages/telemetry_shared/src/telemetry_shared/models/alerts.py` |
+| Unit tests (rules) | `tests/unit/agent/rules/` |
+| Unit tests (shared models) | `tests/unit/telemetry_shared/` |
+| Cross-component integration tests | `tests/integration/agent/` |
 
 ## How to verify
 

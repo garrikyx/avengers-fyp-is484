@@ -15,7 +15,7 @@ Two deployable units:
 Magic host                                        Central
 ┌──────────────────────────────┐                  ┌────────────────────────────────┐
 │ Magic app ──► log files      │                  │ Telemetry Backend              │
-│                  │           │                  │  ingest ─► metric store        │
+│                  │           │                  │  ingest ─► stream proc. ─► metric store │
 │                  ▼           │  HTTPS/JSON      │            alert store         │
 │  ┌────────────────────────┐  │  batches         │              │                 │
 │  │ Telemetry Agent        │──┼─────────────────►│              ▼                 │
@@ -28,6 +28,8 @@ Magic host                                        Central
 │  └────────────────────────┘  │
 └──────────────────────────────┘
 ```
+
+*The "stream proc." stage above is the Stream Processor — window alignment and cross-agent merge (counters sum, ratios recompute from summed numerator/denominator, histograms combine bucket-wise) — between the Ingestion Service and the Metric Store. See §2's component table and spec 006 §3.*
 
 Key property: **alerting does not depend on the backend.** The rule engine and callback
 dispatcher run in the agent, so a backend outage degrades querying but not alerting
@@ -46,6 +48,7 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 | Backend Publisher   | Batch, compress and publish snapshots/events; buffer while offline                     | Ingestion requests, publish queue metrics                 | 002      |
 | Health Reporter     | Heartbeat and agent self-metrics                                                       | Heartbeat documents                                       | 011      |
 | Ingestion Service   | Authenticate agents, validate payloads, normalise, fan into stores                     | Accept/reject responses                                   | 006      |
+| Stream Processor    | Align snapshots to canonical window grid; merge cross-agent counters/ratios/histograms correctly (never naive sum/average); handle late/out-of-order data and warm-up state | Merged, bucketed metric views | 006      |
 | Metric Store        | In-memory rolling time buckets per dimension set                                       | Query-ready aggregates                                    | 006      |
 | Alert Store         | Active and recent alert state per instance                                             | Alert query results                                       | 006      |
 | Query Service       | Filter, aggregate, group and summarise                                                 | Query responses                                           | 006, 007 |
@@ -111,7 +114,8 @@ Full sequences are in specs 002 (ingestion), 005 (alert/callback) and 008 (NL qu
 short:
 
 1. **Ingestion:** log line → classify → parse → allowlisted fields → bucket counters →
-  rule evaluation → 10s snapshot → backend → in-memory views → queryable.
+  rule evaluation → 10s snapshot → backend ingestion service → stream processor (window
+  alignment, cross-agent merge) → in-memory metric store → queryable.
 2. **Alert:** rule condition true for its `for` duration → alert fires → signed callback to
   Magic with retry → alert included in next publish → resolved when condition clears.
 3. **Query:** question → intent + filters + time range → structured query → in-memory

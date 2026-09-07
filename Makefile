@@ -4,7 +4,7 @@ sync:
 	uv sync
 
 parser-test: sync
-	uv run pytest tests/unit/parser/ -v
+	uv run pytest tests/unit/agent/parser/ -v
 
 parser-demo:
 	uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
