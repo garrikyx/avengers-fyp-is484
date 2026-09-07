@@ -18,7 +18,7 @@ from telemetry_agent.parser.fix.frame import (
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.protocol import LineClassification, SourceMeta
 
-CORPUS = Path(__file__).resolve().parents[3] / "apps" / "agent" / "testdata" / "fix"
+CORPUS = Path(__file__).resolve().parents[4] / "apps" / "agent" / "testdata" / "fix"
 
 
 def test_FR_PRS_012_pipe_delimited_framing() -> None:

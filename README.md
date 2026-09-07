@@ -205,7 +205,7 @@ from src.telemetry_agent.parsers.fix import FixParser
 Current stack:
 
 ```text
-Python 3.12+
+Python 3.14+
 FastAPI
 Pydantic
 Redis
@@ -266,6 +266,6 @@ make lint
 Or without Make:
 
 ```bash
-uv run pytest tests/unit/parser/ -v
+uv run pytest tests/unit/agent/parser/ -v
 uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
 ```

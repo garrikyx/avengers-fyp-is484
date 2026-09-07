@@ -18,17 +18,12 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, field_serializer
-from pydantic.alias_generators import to_camel
+from pydantic import field_serializer
+
+from telemetry_shared.models._base import CamelModel
 
 
-class _CamelModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel, populate_by_name=True, frozen=True, extra="forbid"
-    )
-
-
-class Indicator(_CamelModel):
+class Indicator(CamelModel):
     """One computed ratio (rejectRate/fillRate/cancelRate/parseErrorRate).
 
     `value` is None when `denominator` is 0 (spec 004 §4.5: never fabricate a
@@ -45,7 +40,7 @@ class Indicator(_CamelModel):
     low_confidence: bool
 
 
-class Indicators(_CamelModel):
+class Indicators(CamelModel):
     """spec 004 §4.5's derived KPIs. `parse_error_rate` is formula-ready but
     will read as `value=None, low_confidence=True` until a future ticket
     wires a `parse_errors`/`log_lines_read` producer into the aggregator —
@@ -60,7 +55,7 @@ class Indicators(_CamelModel):
     throughput: float
 
 
-class LatencySummary(_CamelModel):
+class LatencySummary(CamelModel):
     """Percentiles are approximate (FR-QRY-012, interpolated from fixed
     histogram bucket boundaries) — `approximate` is always True today, kept
     as an explicit field rather than a comment so a consumer doesn't have to
@@ -75,7 +70,7 @@ class LatencySummary(_CamelModel):
     approximate: bool = True
 
 
-class Gauges(_CamelModel):
+class Gauges(CamelModel):
     """Instance-wide state, not grouped by dimension — matching spec 004 §3
     where gauges sit beside `series[]`, not nested inside each series.
     """
@@ -85,12 +80,12 @@ class Gauges(_CamelModel):
     seconds_since_last_event: float | None
 
 
-class WindowBounds(_CamelModel):
+class WindowBounds(CamelModel):
     from_utc: datetime
     to_utc: datetime
 
 
-class MetricsGroup(_CamelModel):
+class MetricsGroup(CamelModel):
     """One row of a snapshot. `dimensions` is empty for the ungrouped
     (`groupBy=[]`) case — that row *is* the window-wide total, so there is no
     separate duplicate totals block.
@@ -114,7 +109,7 @@ class MetricsGroup(_CamelModel):
         }
 
 
-class MetricsSnapshot(_CamelModel):
+class MetricsSnapshot(CamelModel):
     window: str
     window_bounds: WindowBounds
     generated_at_utc: datetime

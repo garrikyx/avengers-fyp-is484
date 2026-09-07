@@ -1,8 +1,28 @@
-# reject_rate:
-#   warning:
-#     threshold: 0.03
-#     window_seconds: 300
+# Not parsed by any code yet — no YAML loader exists (FR-RUL-008/009,
+# SIGHUP reload + reject-on-malformed-rule, are unbuilt). The Rule Engine's
+# actual active defaults are hardcoded in
+# apps/agent/src/telemetry_agent/rules/defaults.py (all 14 rules); this
+# file is a placeholder for the eventual config-file shape (spec 005 §1.1).
+#
+# Two conditions differing only in threshold are one rule with multiple
+# severity tiers, not two separate rules (spec 005 FR-RUL-002) — this
+# example mirrors defaults.py's HighRejectRate exactly.
 
-#   critical:
-#     threshold: 0.05
-#     window_seconds: 300
+# rules:
+#   - name: HighRejectRate
+#     kind: rate
+#     numerator: orders_rejected
+#     denominator: [orders_acked, orders_rejected]
+#     window: 5m
+#     minSamples: 20
+#     operator: ">"
+#     tiers:
+#       - severity: warning
+#         threshold: 0.03
+#       - severity: critical
+#         threshold: 0.05
+#     for: 2m
+#     resolveAfter: 5m
+#     groupBy: [instanceId]
+#     callback: true
+#     description: "Reject rate exceeded configured threshold."
