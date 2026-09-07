@@ -18,6 +18,8 @@ update the affected specs, and add an ADR if the answer is a design decision rat
 | Q-8 | Log format and FIX version reality | Parser correctness | **Open — highest risk** |
 | Q-9 | Trading hours and timezone per instance | Absence rules, `today` semantics | Open |
 | Q-10 | Who receives alerts besides Magic | Notification design | Open |
+| Q-11 | Scope of "Callback audit" under Integration Service | UBS-102, spec 008 §6/§7 shape | Open |
+| Q-12 | Config/control push from backend to agent (thresholds, rules) | Day-1 vs Day-2 scope boundary | Open |
 
 ---
 
@@ -187,6 +189,61 @@ add a second `CallbackSink` implementation and expand spec 005 §3.
 
 ---
 
+## Q-11 — Scope of "Callback audit" under Integration Service
+
+**Why it matters.** The client's own architecture diagram (`docs/assets/architecture-overview.png`)
+labels "Callback audit" as part of the Integration Service box, alongside the Copilot/Teams
+connector and other external integrations. Specs 006, 007 and 008 don't currently define this as
+a requirement anywhere — there is no `FR-ID` for it. UBS-102 was created as a draft placeholder
+story referencing this question rather than guessing at scope.
+
+**Current assumption.** Alert query responses already carry a `delivery` block (status, attempts,
+last attempt time, `correlationId` — spec 007 §4.1). The open part is whether/how the Integration
+Service is expected to additionally surface that delivery status through NL answers and Adaptive
+Cards (a UX/audit feature), versus this being satisfied entirely by the existing alert API and
+needing no NL/Teams-specific work at all.
+
+**What is needed.** Confirm with the client whether "callback audit" means (a) nothing beyond the
+existing per-alert `delivery` block already in spec 007, (b) a dedicated audit view/report
+surfaced through Copilot/Teams, or (c) a separate audit log/export feature. Whichever it is,
+give it an `FR-ID` in spec 008 (or a new spec) before committing an estimate.
+
+**On resolution.** Update spec 008 with the relevant `FR-NLQ-*` (or new) requirements; replace
+UBS-102's draft AC with the confirmed shape; remove the "needs spec clarification" note from that
+ticket.
+
+---
+
+## Q-12 — Config/control push from backend to agent (thresholds, rules)
+
+**Why it matters.** The client's architecture diagram shows a dashed "Config / Control
+(Thresholds, Rules, etc.)" line running from the backend's Stream Processor box back to the
+agent's Parser Engine. This reads as centralized configuration distribution — the backend pushing
+threshold/rule changes down to agents at runtime. `docs/plan/scaffold.md` explicitly defers this:
+central config distribution is called out as Day-2 scope, with Day-1 agents reading their
+thresholds and rules from local config (`config/rules.yaml` and friends) only. This is a direct
+Day-1/Day-2 discrepancy between what the client's own diagram depicts and what the team's spec
+and milestone plan commit to building first.
+
+**Current assumption.** No backend-to-agent config push exists in any Day-1 spec (001, 002, 003,
+005, 006) or in any Jira epic created so far. Agents remain fully local-config-driven through M7.
+
+**What is needed.** Confirm with the client (or by re-reading the requirements docx's Day-1/Day-2
+roadmap table, which does not mention this explicitly either) whether the dashed line in the
+diagram is: (a) aspirational/Day-2 and safe to leave out of Day-1 scope entirely, (b) a
+misunderstanding of the diagram (e.g. it actually represents the agent's own local config file,
+not a backend push), or (c) an actual Day-1 requirement that was missed. Do not build a
+config-push mechanism speculatively based on the diagram alone.
+
+**On resolution.** If confirmed Day-2 (most likely, per scaffold.md): add an explicit note to
+spec 001 §1's diagram caption saying so, so future readers don't assume it's implemented. If
+confirmed Day-1: this needs its own epic (agent-side config-fetch/apply, backend-side
+config-distribution API) and is a scope addition, not something already covered by the epics
+created in this pass.
+
+---
+
 ## Resolved
+
 
 *(none yet — record answers here with the date, the decision, and the specs updated)*

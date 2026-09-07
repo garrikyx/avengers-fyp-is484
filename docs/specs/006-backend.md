@@ -19,6 +19,10 @@ HTTP (FastAPI)
                               │ Ingestion Service    │ auth, validate, dedupe, normalise
                               └──────────┬───────────┘
                                          ▼
+                              ┌──────────────────────┐
+                              │ Stream Processor     │ window alignment, cross-agent merge
+                              └──────────┬───────────┘
+                                         ▼
                     ┌────────────────┬───────────────┬────────────────┐
                     │ Metric Store   │ Alert Store   │ Agent Registry │
                     │ time buckets   │ active/recent │ heartbeats     │
@@ -43,7 +47,26 @@ HTTP (FastAPI)
 | `FR-ING-009` | Ingestion MUST be non-blocking: parse and validate, hand to an in-process queue, respond `202`. Queue overflow returns `503` so the agent buffers rather than the backend growing unboundedly. |
 | `FR-ING-010` | MUST record every agent's last heartbeat, version, and connectivity state in the Agent Registry, and MUST expose unknown-agent first-contact as an event. |
 
-## 3. Metric store
+## 3. Stream processing
+
+The stage between the Ingestion Service and the Metric Store. Ingestion accepts and
+validates a batch; stream processing is what turns possibly-late, possibly-unaligned,
+multi-agent snapshots into the single correct merged view the Metric Store holds. This
+formalizes the merge-semantics half of `FR-ING-005` as its own requirements, split out
+because they are independently testable and because the client's own architecture
+diagram (`docs/assets/architecture-overview.png`) shows this as a distinct box
+("Stream Processor: real-time aggregation, windowing, metric calculations").
+
+| ID | Requirement |
+| --- | --- |
+| `FR-STM-001` | MUST align every incoming snapshot to the backend's canonical window grid before merge, independent of the sending agent's own window boundaries; the alignment rule MUST be documented and deterministic. |
+| `FR-STM-002` | Counters MUST merge by summation across agents. |
+| `FR-STM-003` | Ratios (e.g. `rejectRate`) MUST NOT merge by averaging. They MUST be recomputed from the summed numerator and summed denominator across all contributing agents. A test MUST assert this explicitly with two agents of unequal volume. |
+| `FR-STM-004` | Latency percentiles MUST merge by combining histograms bucket-wise, never by averaging per-agent percentiles. If an agent sends only summary percentiles (no histogram), cross-agent latency MUST be reported as unavailable rather than fabricated. |
+| `FR-STM-005` | Late-arriving snapshots still inside the retention window MUST be merged in; ones outside it MUST be counted as dropped (exposed via self-metrics), not silently discarded. This governs the same `maxBucketAge` cutoff as `FR-ING-005`. |
+| `FR-STM-006` | An agent's `warmingUp` flag (cold start after restart) MUST be preserved through merge so queries can exclude incomplete data (see `FR-QRY-005`, renumbered below). |
+
+## 4. Metric store
 
 | ID | Requirement |
 | --- | --- |
@@ -53,7 +76,7 @@ HTTP (FastAPI)
 | `FR-QRY-004` | The store MUST be safe under concurrent read/write with a per-instance lock, not one global lock. |
 | `FR-QRY-005` | Restart loses all metric state. This is accepted; `/readyz` MUST report `warming` until `warmupWindow` (default `2m`) of data exists, so dashboards and alerts do not misread an empty store as zero activity. |
 
-## 4. Query engine
+## 5. Query engine
 
 | ID | Requirement |
 | --- | --- |
@@ -85,7 +108,7 @@ MUST carry a `dataCompleteness` block so an answer is never silently wrong:
 `confidence` is `complete` | `partial` | `degraded`. The NL adapter MUST surface anything other
 than `complete` in its prose answer (`FR-NLQ-010`).
 
-## 5. Alert store
+## 6. Alert store
 
 | ID | Requirement |
 | --- | --- |
@@ -93,14 +116,14 @@ than `complete` in its prose answer (`FR-NLQ-010`).
 | `FR-QRY-017` | Alert state from agents MUST be merged by `alertId`; a `resolved` update for an unknown `alertId` MUST be stored anyway (agents may have restarted) and flagged `synthetic: true`. |
 | `FR-QRY-018` | MUST own the `AgentHeartbeatMissing` rule (`FR-RUL-030`) and expose those alerts identically to agent-generated ones, distinguished by `source: backend`. |
 
-## 6. Health and self-metrics
+## 7. Health and self-metrics
 
 `FR-HLT-010`: `/healthz` is a liveness probe (process up, no dependency checks). `/readyz`
 reports readiness including warm-up state. `/metrics` exposes Prometheus-format internals:
 ingest rate, validation failures, queue depth, dedupe hits, store memory, query latency
 histogram, per-agent staleness.
 
-## 7. Scaling model
+## 8. Scaling model
 
 | ID | Requirement |
 | --- | --- |
@@ -109,7 +132,7 @@ histogram, per-agent staleness.
 | `NFR-SCA-004` | Alternatively (and preferably once available) the load balancer MUST consistently hash on `instanceId`, making fan-out unnecessary. The implementation MUST support both and select via config `queryMode: fanout \| colocated`. |
 | `NFR-SCA-005` | Target: 10 000 ingested series-updates/sec and 50 concurrent queries per replica at p95 query latency < 300ms (spec 009). |
 
-## 8. Configuration and secrets
+## 9. Configuration and secrets
 
 Backend configuration is specified in [010-configuration.md](./010-configuration.md).
 All secrets (agent tokens or CA bundle, Copilot/Teams app credentials, identifier hash key)
