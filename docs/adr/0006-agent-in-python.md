@@ -1,6 +1,6 @@
 # ADR 0006 — Telemetry Agent is written in Python
 
-Status: Accepted · Date: 2026-08-31 · Deciders: TBD · Supersedes: [ADR 0001](./0001-agent-in-go.md)
+Status: Accepted · Date: 2026-08-31 · Updated: 2026-09-07 · Deciders: TBD · Supersedes: [ADR 0001](./0001-agent-in-go.md)
 
 ## Context
 
@@ -33,14 +33,58 @@ Magic host.
 
 ADR 0001 remains in the record for historical context. New agent work follows this ADR.
 
+## Monitor → parser bridge
+
+The log monitor and parser engine have different resource profiles and MUST NOT be coupled
+directly:
+
+| Stage | Profile | Constraint |
+| --- | --- | --- |
+| Log monitor | I/O-bound (read, split lines, checkpoint) | MUST never block on downstream slowness |
+| Parser engine | CPU-bound (classify, frame, extract) | MAY lag under burst; absorbs backlog in a bounded queue |
+
+The bridge is implemented as a **bounded line queue** per monitored file set, plus a shared
+**parser worker pool** (`asyncio` + `ThreadPoolExecutor`):
+
+```
+[Log Monitor task] ──non-blocking put──► [LineQueue (bounded)] ──► [Parser workers (pool)]
+                                              │ drop-oldest
+                                              ▼
+                                        drop counter
+```
+
+Design rules:
+
+1. **Monitor never blocks.** On enqueue when the queue is full, drop the oldest line,
+   increment `pipeline.lines_dropped`, and continue reading. Disk I/O and offset progress
+   take priority over parse completeness (`FR-PIP-001`).
+2. **Parser gets the larger buffer.** Default `pipeline.lineQueueSize` is **2048** lines —
+   much larger than downstream event queues (default **256**) — because parsing is the first
+   CPU-bound stage and needs headroom when FIX messages span multiple lines or framing is
+   expensive (`FR-PIP-002`).
+3. **Parser workers are capped.** Default `pipeline.parseWorkers: min(2, cpu_count)`; workers
+   pull lines from the queue and call `Parser.parse()` synchronously in the pool
+   (`FR-PIP-003`, `NFR-PERF-005`).
+4. **Downstream stages keep smaller queues.** Parsed events flow to the metrics aggregator
+   through a separate bounded channel (`pipeline.eventQueueSize`, default 256). On overflow,
+   drop oldest and count `pipeline.events_dropped` (`FR-PUB-004`).
+
+This asymmetry — small tolerance for blocking the reader, large tolerance for parser backlog
+within a fixed cap — replaces the Go goroutine-per-file model from ADR 0001 while preserving
+the same backpressure guarantees.
+
 ## Consequences
 
 - Parser plugin interface is a Python `typing.Protocol` (`FR-PRS-030`); Day-2 binary parsers are
   Python packages registered at import time (`FR-PRS-032`), not dynamically loaded modules.
 - Deployment requires a Python runtime on the host (container image or bundled venv), not a
   single static binary.
-- Concurrency uses `asyncio` tasks or thread-per-file readers rather than goroutines; the
-  supervisor loop coordinates file sets.
+- Concurrency uses `asyncio` for I/O-bound log monitors and a bounded thread pool for
+  CPU-bound parsing; the supervisor loop coordinates file sets and pipeline stages.
+- The **monitor → parser bridge** is a bounded queue with asymmetric sizing: the log monitor
+  (I/O-bound) MUST never block on a full queue (`FR-PIP-001`); the parser side holds a larger
+  buffer because FIX framing and field extraction are CPU-bound and lag under burst load
+  (`FR-PIP-002`, `FR-PIP-003`).
 - `NFR-PERF-004` is enforced via profiling and allocation-aware parser design in pytest, not
   Go `-benchmem`.
 - The backend and agent share one language; schema drift is managed through

@@ -1,10 +1,20 @@
 # 003 — Parser Engine and FIX Parsing
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 Day-1 supports FIX 4.2 and 4.4 tag=value messages embedded in text log lines. The parser
 interface is designed so a binary protocol parser can be added on Day-2 without touching
 the rest of the pipeline.
+
+## 0. Invocation
+
+Parser plugins are **not** called from the log monitor directly. Lines arrive via the
+pipeline bridge (spec 002 §1.1): the monitor enqueues raw bytes on a bounded line queue;
+parser workers in a thread pool dequeue and call `Parser.parse(line, meta)`. This keeps
+I/O-bound reading decoupled from CPU-bound classification and framing (`FR-PIP-001`–`003`).
+
+The `SourceMeta` passed to `parse()` carries `{instanceId, path, logType, readAt}` set by
+the monitor at enqueue time.
 
 ## 1. Line classification
 

@@ -2,8 +2,10 @@
 
 This directory is the **source of truth** for the Telemetry System supporting the Magic
 trading application. Specs are written first, then implemented against them (spec-driven
-development). Milestone M1, the agent's log monitor, is implemented; everything downstream of it
-is still specification only. See
+development). The stack is a **Python 3.12+ monorepo** — agent and backend both Python;
+backend uses FastAPI ([ADR 0002](./adr/0002-backend-in-python-fastapi.md),
+[ADR 0006](./adr/0006-agent-in-python.md)). M2 parser classify+frame is partially
+implemented; M1 log monitor and M1.5 pipeline bridge are not started yet. See
 [plan/implementation-status.md](./plan/implementation-status.md) for the current position.
 
 If you are an AI agent working in this repository, read `docs/specs/000-overview.md` and
@@ -41,8 +43,8 @@ rationale, and the conditions that would reverse it.
 
 | ADR | Decision |
 | --- | --- |
-| [0006](./adr/0006-agent-in-python.md) | **Telemetry Agent is Python 3.14+** (current) |
-| [0002](./adr/0002-backend-in-python-fastapi.md) | Backend is Python 3.14 + FastAPI |
+| [0006](./adr/0006-agent-in-python.md) | **Telemetry Agent is Python 3.12+** with asyncio monitor + thread-pool parser workers |
+| [0002](./adr/0002-backend-in-python-fastapi.md) | **Unified Python stack** — backend is FastAPI + Pydantic v2 |
 | [0003](./adr/0003-https-json-transport-day-1.md) | Agent → backend transport is HTTPS/JSON batches on Day-1, gRPC deferred |
 | [0004](./adr/0004-no-raw-log-persistence.md) | Raw log content is never persisted or transmitted |
 | [0005](./adr/0005-in-memory-metric-store.md) | Backend metric store is in-memory time buckets, no database on Day-1 |

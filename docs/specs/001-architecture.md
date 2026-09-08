@@ -1,6 +1,6 @@
 # 001 — Architecture
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 ## 1. Shape of the system
 
@@ -41,6 +41,7 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 | Component           | Responsibility                                                                         | Outputs                                                   | Spec     |
 | ------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------- |
 | Log Monitor         | Tail and interval-scan configured files; track offsets; detect rotation and truncation | Log lines with source metadata, rotation events, read lag | 002      |
+| Pipeline bridge     | Bounded line queue between monitor and parser; non-blocking monitor enqueue; parser worker pool | Enqueued log lines, drop counters              | 002 §1.1 |
 | Parser Engine       | Classify each line; parse FIX; extract allowlisted fields; emit parse errors           | Structured message events, parse error events             | 003      |
 | Metrics Aggregator  | Maintain bucketed counters, gauges and latency histograms across dimensions            | Metric snapshots per bucket                               | 004      |
 | Rule Engine         | Evaluate thresholds, patterns, absence and latency conditions with hysteresis          | Alert firing / resolved state transitions                 | 005      |
@@ -68,7 +69,7 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 | Agent → Magic     | HTTPS POST, HMAC-SHA256 signed                     | Magic-owned contract, pending [Q-2](../plan/open-questions.md)                                                                       |
 | Backend storage   | Process-local ring of time buckets, 24h max        | No DB on Day-1 — [ADR 0005](../adr/0005-in-memory-metric-store.md)                                                                   |
 | Config            | YAML file + env var overrides, SIGHUP reload       | Spec 010                                                                                                                             |
-| Agent packaging   | Static binary + systemd unit / Windows service     | Spec 011                                                                                                                             |
+| Agent packaging   | Container image or managed venv + systemd unit / Windows service | ADR 0006; no static binary |
 | Backend packaging | Container image, N replicas behind a load balancer | §5                                                                                                                                   |
 
 
@@ -113,8 +114,8 @@ Day-1 implements scatter-gather with a documented replica registry.
 Full sequences are in specs 002 (ingestion), 005 (alert/callback) and 008 (NL query). In
 short:
 
-1. **Ingestion:** log line → classify → parse → allowlisted fields → bucket counters →
-  rule evaluation → 10s snapshot → backend ingestion service → stream processor (window
+1. **Ingestion:** log line → bounded line queue → classify → parse → allowlisted fields →
+  bucket counters → rule evaluation → 10s snapshot → backend ingestion service → stream processor (window
   alignment, cross-agent merge) → in-memory metric store → queryable.
 2. **Alert:** rule condition true for its `for` duration → alert fires → signed callback to
   Magic with retry → alert included in next publish → resolved when condition clears.

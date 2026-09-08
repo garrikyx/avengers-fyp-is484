@@ -55,8 +55,9 @@ apps/agent/src/telemetry_agent/
 Feature folders will include:
 
 ```text
-monitor/       # Log monitoring, offsets, rotation
-parsers/       # FIX parsing / future binary parsing
+logs/          # Log monitoring, offsets, rotation (M1)
+pipeline/      # Bounded queues + parser worker pool (M1.5)
+parser/        # FIX parsing / future binary parsing (M2)
 metrics/       # Rolling metrics and aggregation
 rules/         # Day-1 threshold alerts
 callbacks/     # Callback delivery

@@ -1,26 +1,57 @@
 # 002 — Telemetry Agent Design
 
-Status: Draft · Owner: TBD · Last updated: 2026-08-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 ## 1. Process model
 
 The agent is a single Python process under `apps/agent/src/telemetry_agent/` containing one
-asyncio task (or dedicated thread) per monitored file, feeding shared aggregation and dispatch
-stages through bounded queues.
+asyncio task per monitored file for I/O-bound reading, a shared parser worker pool for
+CPU-bound parsing, and shared aggregation and dispatch stages — all connected through bounded
+queues.
 
 ```
-per file:  [Log Monitor] ──lines──► [Parser Engine] ──events──► ┐
-                                                                ├─► [Metrics Aggregator]
-                                                                │        │ snapshots (10s)
-                                                                │        ▼
-                                                                ├─► [Rule Engine] ──alerts──► [Callback Dispatcher] ──► Magic
-                                                                │        │
-                                                                └────────┴──► [Backend Publisher] ──► Backend
-                                                                     [Health Reporter] ──► Backend
+per file:  [Log Monitor] ──lines──► [Line Queue] ──► [Parser Pool] ──events──► ┐
+                                                                                 ├─► [Metrics Aggregator]
+                                                                                 │        │ snapshots (10s)
+                                                                                 │        ▼
+                                                                                 ├─► [Rule Engine] ──alerts──► [Callback Dispatcher] ──► Magic
+                                                                                 │        │
+                                                                                 └────────┴──► [Backend Publisher] ──► Backend
+                                                                      [Health Reporter] ──► Backend
 ```
 
 `FR-PUB-004`: Every inter-stage channel MUST be bounded. On overflow the agent drops the
 oldest item, increments a drop counter per stage, and never blocks the log reader.
+
+### 1.1 Pipeline bridge (Log Monitor → Parser Engine)
+
+The log monitor and parser engine MUST be decoupled by a bounded queue and worker pool
+because their resource profiles differ:
+
+| Stage | Bound | Overflow behaviour |
+| --- | --- | --- |
+| Log monitor → line queue | I/O-bound; MUST NOT wait on parser | Non-blocking enqueue; drop oldest line on full queue |
+| Line queue → parser pool | CPU-bound; absorbs burst lag | Workers pull at their own pace; queue sized larger than downstream stages |
+| Parser → event queue | Mixed | Drop oldest event; count `pipeline.events_dropped` |
+
+| ID | Requirement |
+| --- | --- |
+| `FR-PIP-001` | The log monitor MUST enqueue each complete line to the per-file-set line queue without blocking. When the queue is full, it MUST discard the oldest queued line, increment `pipeline.lines_dropped`, and enqueue the new line. The monitor MUST NOT stall file reads or offset checkpointing waiting for parser capacity. |
+| `FR-PIP-002` | The monitor→parser line queue MUST default to `pipeline.lineQueueSize: 2048` — larger than downstream event queues — because FIX classification, framing and field extraction are CPU-bound and the parser legitimately falls behind during bursts while the monitor stays current with disk I/O. |
+| `FR-PIP-003` | Parser workers MUST pull lines from the line queue via a bounded thread pool sized `pipeline.parseWorkers` (default `min(2, cpu_count)`). Each worker calls `Parser.parse()` synchronously; no network or disk I/O inside the pool (`FR-PRS-003`, `NFR-PERF-005`). |
+| `FR-PIP-004` | Parsed events MUST be handed to the metrics aggregator through a separate bounded event queue (`pipeline.eventQueueSize`, default 256). On overflow, drop the oldest event and increment `pipeline.events_dropped`. |
+| `FR-PIP-005` | Queue depths and drop counters for both queues MUST appear on the agent heartbeat (`FR-HLT-001`) and local `/metrics` (`pipeline_line_queue_depth`, `pipeline_event_queue_depth`, `pipeline_lines_dropped_total`, `pipeline_events_dropped_total`). |
+
+Implementation lives in `apps/agent/src/telemetry_agent/pipeline/` (see
+[scaffold.md](../plan/scaffold.md)). The existing parser modules under `parser/` are invoked
+from the worker pool, not directly from the monitor task.
+
+**Why asymmetric sizing:** the monitor only reads bytes and splits lines — cheap and steady.
+The parser performs substring scans, delimiter detection, multi-line joining and (once
+UBS-43+ lands) allowlist extraction — work that scales with message complexity and contends
+for CPU with Magic. A larger line queue gives the parser time to catch up without ever
+blocking the reader; smaller downstream queues prevent unbounded event accumulation after
+parse (`NFR-REL-009`).
 
 ## 2. Log Monitor
 
@@ -136,9 +167,11 @@ counts, queue depths and drop counters.
 
 1. Magic appends a line to a monitored file.
 2. Log Monitor detects the change (fsnotify or poll), reads from the last committed offset,
-   splits complete lines, and emits them with `{instanceId, path, logType, readAt}`.
-3. Parser Engine classifies the line. For FIX, it extracts allowlisted tags and emits a
-   `fix.*` event; on failure it emits `parse.error`.
+   splits complete lines, and enqueues each with `{instanceId, path, logType, readAt}` on the
+   per-file-set line queue without blocking (`FR-PIP-001`).
+3. A parser worker dequeues the line and classifies it. For FIX, it extracts allowlisted tags
+   and emits a `fix.*` event on the event queue; on failure it emits `parse.error`
+   (`FR-PIP-003`, `FR-PIP-004`).
 4. Metrics Aggregator updates counters for the event's bucket and dimension set, and updates
    latency histograms via `ClOrdID` correlation.
 5. Every `5s` the Rule Engine evaluates completed buckets and may transition alert state.
@@ -177,6 +210,6 @@ constrain this spec's design most directly:
 | --- | --- |
 | RSS ceiling — why every stage is bounded and sheds rather than queues (`FR-PUB-004`) | `NFR-PERF-003` |
 | No per-message map allocation — why the parser fills a fixed allowlisted struct (spec 003 §4) | `NFR-PERF-004` |
-| Configurable worker concurrency defaulting to `min(2, cpu_count)` — why per-file tasks are bounded | `NFR-PERF-005` |
+| Configurable worker concurrency defaulting to `min(2, cpu_count)` — why parser workers are capped (`FR-PIP-003`) | `NFR-PERF-005` |
 | Documented CPU/memory caps in the deployment unit — see spec 011 §4 | `NFR-PERF-006` |
 | No synchronous I/O per line — why publishing is decoupled by a channel and a ticker | `NFR-PERF-009` |

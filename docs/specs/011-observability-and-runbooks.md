@@ -1,6 +1,6 @@
 # 011 — Observability and Runbooks
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 A telemetry system that cannot be trusted is worse than none, because it produces confident
 wrong answers. This spec defines how the system reports on itself and how operators respond.
@@ -16,6 +16,9 @@ wrong answers. This spec defines how the system reports on itself and how operat
 | Offset progress | Heartbeat `files[].offset` | increasing during trading hours | static while file grows |
 | Parse success rate | `parse_errors` / `log_lines_read` | > 99% | < 99% → `ParseErrorRate` |
 | Unsupported line ratio | `unsupported_lines` / `log_lines_read` | stable | sudden rise = log format change |
+| Pipeline line queue depth | `pipeline_line_queue_depth` | < 50% of cap | sustained > 75% → parser falling behind |
+| Pipeline line drops | `pipeline_lines_dropped_total` | 0 | any sustained non-zero → increase `lineQueueSize` or `parseWorkers` |
+| Pipeline event drops | `pipeline_events_dropped_total` | 0 | non-zero → downstream aggregator saturated |
 | Stage drops | `dropped_stage_events` | 0 | any sustained non-zero |
 | Publish queue depth | `publish_queue_depth` | < 10 | growing monotonically |
 | Publish buffer | `publishBufferBytes` | < 25% of cap | > 75% of cap |

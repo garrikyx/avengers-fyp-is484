@@ -1,6 +1,6 @@
 # 010 — Configuration Reference
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 Precedence: command-line flag > environment variable > config file > built-in default
 (`FR-CFG-001`). Environment variables are prefixed `MAGIC_TELEMETRY_` and map to keys by
@@ -16,7 +16,6 @@ agent:
   agentId: magic-agent-sg-01        # required, must match backend-registered identity
   application: Magic
   stateDir: /var/lib/magic-telemetry # offsets + alert state only
-  gomaxprocs: 0                      # 0 => min(2, NumCPU)
   memoryLimitMb: 150
   metricsListen: 127.0.0.1:9464      # local /metrics; loopback only by default
   logLevel: info                     # debug | info | warn | error
@@ -72,6 +71,11 @@ parsing:
       match: "OutOfMemoryError|std::bad_alloc"
     - label: db_connection_lost
       match: "connection (lost|refused).*(db|database)"
+
+pipeline:
+  lineQueueSize: 2048                # monitor → parser; larger — parser is CPU-bound (FR-PIP-002)
+  eventQueueSize: 256                # parser → aggregator (FR-PIP-004)
+  parseWorkers: 0                    # 0 => min(2, cpu_count) (FR-PIP-003)
 
 metrics:
   bucketSeconds: 10
@@ -139,6 +143,9 @@ alerting:
 | `publish.bufferBytes` | Directly bounds how long a backend outage is survivable at a given rate. Document the implied minutes in the runbook. |
 | `metrics.minSampleSize` | Prevents low-volume periods from producing 100% reject rates. |
 | `logs[].partialLineTimeout` | Defaults to `max(2s, 2 × pollInterval)` and MUST exceed `pollInterval` (`FR-CFG-004`). A timeout shorter than a poll cycle flushes *every* line that spans two writes as two lines, turning a correct log into a stream of malformed ones. The flat 2s default is correct for tail mode but not for interval mode's slower poll, hence the derivation. |
+| `pipeline.lineQueueSize` | Sized for parser lag, not monitor lag. The monitor never blocks on a full queue (`FR-PIP-001`); a larger line queue absorbs CPU-bound parse bursts without dropping lines while disk I/O stays current. |
+| `pipeline.eventQueueSize` | Smaller than `lineQueueSize` because events are post-parse and downstream aggregation is cheaper; overflow drops oldest parsed events, not raw lines. |
+| `pipeline.parseWorkers` | Caps CPU used by FIX parsing on a trading host (`NFR-PERF-005`). `0` resolves to `min(2, cpu_count)`. |
 | `callbacks.dryRun` | Required for pre-production validation before Magic's endpoint exists. |
 
 ## 2. Backend configuration

@@ -1,6 +1,6 @@
 # 000 — Overview, Scope and Conventions
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 ## 1. Purpose
 
@@ -85,6 +85,7 @@ Functional requirements are `FR-<AREA>-<NNN>`; non-functional are `NFR-<AREA>-<N
 | Area code | Domain | Home spec |
 | --- | --- | --- |
 | `LOG` | Log monitoring, offsets, rotation | 002 |
+| `PIP` | Pipeline bridge, bounded queues, parser worker pool | 002 |
 | `PRS` | Parser engine and FIX parsing | 003 |
 | `MET` | Metrics aggregation and data model | 004 |
 | `RUL` | Rule engine and alerting | 005 |

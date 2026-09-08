@@ -1,6 +1,6 @@
 # Scaffold and Build Plan
 
-Status: Draft · Owner: TBD · Last updated: 2026-08-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 This document defines the target repository layout and build order. See
 [implementation-status.md](./implementation-status.md) for what exists today.
@@ -19,9 +19,10 @@ avengers-fyp-is484/
 │   │   ├── pyproject.toml
 │   │   ├── testdata/fix/          # synthetic FIX corpus (FR-TST-002)
 │   │   └── src/telemetry_agent/
-│   │       ├── main.py
+│   │       ├── main.py            # supervisor: monitors + pipeline + stages
 │   │       ├── config.py
-│   │       ├── logs/              # M1 log monitor (stub)
+│   │       ├── logs/              # M1 log monitor
+│   │       ├── pipeline/          # M1.5 bridge: bounded queues + parser worker pool (FR-PIP-*)
 │   │       ├── parser/            # M2 FIX parser — UBS-40–42 implemented
 │   │       ├── metrics/           # M3
 │   │       ├── rules/             # M5
@@ -68,21 +69,31 @@ requirement-coverage reporter runs and lists all IDs as uncovered.
 Why first: the requirement-coverage gate and the leak-test gate are the two things that make the
 rest of this plan self-enforcing. Adding them after the fact never happens.
 
-### M1 — Log monitor and config (`FR-LOG-*`, `FR-CFG-*`, `NFR-CFG-*`) — **implemented**
+### M1 — Log monitor and config (`FR-LOG-*`, `FR-CFG-*`, `NFR-CFG-*`)
 
 Scope: config load/validate/defaults/`--check-config`; tail and interval modes; offset
 checkpointing and state file; rotation, truncation, partial line, glob discovery; the rotation
 harness of spec 012 §3.2.
 
 Exit: the full log monitor harness passes on Linux and Windows; `--check-config` output matches
-the defaults golden file (`NFR-CFG-004`); an agent run against `fixgen` output reports correct
-line counts and read lag with no parsing yet.
+the defaults golden file (`NFR-CFG-004`); an agent run against synthetic log output reports
+correct line counts and read lag with no parsing yet.
 
-Met, with two gaps recorded in
-[implementation-status.md](./implementation-status.md): the harness runs on macOS and Linux but
-not yet on Windows, and the synthetic stream comes from `agent/scripts/m1-demo.sh` rather than
-`tools/fixgen`, which does not exist until M2. Tail mode currently polls instead of using
-filesystem notifications; the reasoning is in that document's §4.1.
+### M1.5 — Pipeline bridge (`FR-PIP-*`)
+
+Scope: bounded line queue per file set with non-blocking monitor enqueue and drop-oldest;
+shared parser worker pool (`ThreadPoolExecutor`); bounded event queue to aggregator stub;
+queue depth and drop counters on heartbeat/metrics.
+
+Exit: integration test feeds lines faster than parser workers can consume and asserts (a) the
+monitor never blocks, (b) `pipeline.lines_dropped` increments only when the line queue is
+full, (c) parser workers drain the backlog when input slows, (d) framed `ParseResult` objects
+reach the event queue. Wires existing `parser/` modules into a live agent path for the first
+time.
+
+Why between M1 and M2 completion: the parser classify+frame code already exists; the bridge is
+the missing connection and establishes backpressure before field extraction adds more CPU
+load.
 
 ### M2 — FIX parser (`FR-PRS-*`)
 
@@ -90,9 +101,9 @@ Scope: classification, framing, delimiters, allowlist extraction, hashing, text 
 enum mapping, timestamps, sequence gaps, parse error reasons, the parser registry, the corpus and
 the fuzz target.
 
-Exit: full corpus passes; fuzz target runs clean for 5 minutes; `-benchmem` shows ≤ 4 allocations
-per message (`NFR-PERF-004`); **the data-leak sentinel test (`FR-TST-005`) is implemented and
-blocking from this milestone onward.**
+Exit: full corpus passes; fuzz target runs clean for 5 minutes; allocation profiling shows
+minimal per-message growth (`NFR-PERF-004`); **the data-leak sentinel test (`FR-TST-005`) is
+implemented and blocking from this milestone onward.**
 
 Why the leak test lands here: the moment the parser can extract fields is the moment leakage
 becomes possible. It must not be possible for a single commit to exist where extraction works and
@@ -162,11 +173,12 @@ replay and forensics; anomaly detection and adaptive thresholds; central config 
 ## 3. Dependency order
 
 ```
-M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M7
+M0 ──► M1 ──► M1.5 ──► M2 ──► M3 ──► M4 ──► M5 ──► M7
                              └────► M6 ──┘
 ```
 
-M6 depends only on M4's query engine, so the NL layer can be built in parallel with M5 once the
+M1.5 depends on M1 (monitor produces lines) and the existing parser stub (M2 partial). M6
+depends only on M4's query engine, so the NL layer can be built in parallel with M5 once the
 query API is stable. M2 must not be merged without the leak test. M7 needs M5 for the callback
 runbooks.
 
@@ -185,20 +197,18 @@ runbooks.
 
 ## 5. Next concrete tasks
 
-M1 is implemented (see [implementation-status.md](./implementation-status.md)). In priority
+See [implementation-status.md](./implementation-status.md) for current progress. In priority
 order:
 
-1. Build `tools/fixgen` — before the parser. Every later milestone needs its output, and writing
-   a generator forces the FIX details of spec 003 to be confronted concretely. It also replaces
-   the hand-rolled log writer in `agent/scripts/m1-demo.sh`.
-2. Stand up M0's CI on Linux and Windows runners with the requirement-coverage reporter reading
-   IDs out of `docs/specs/*.md`, so the gap between spec and tests is visible. This also closes
-   M1's Windows gap: rotation semantics differ there and are currently untested.
-3. Create `contracts/schema/snapshot.schema.json` and `contracts/metrics.yaml` from spec 004,
-   and make `generate.sh` produce Go structs and Pydantic models. This forces the data model to
-   be precise before the parser starts emitting events shaped by it.
+1. **M1 — Log monitor** — config loader, tail/interval readers, offset checkpointing, rotation
+   harness (spec 012 §3.2). Use `apps/simulator/` for synthetic log output until `fixgen` exists.
+2. **M1.5 — Pipeline bridge** — `pipeline/line_queue.py`, `pipeline/workers.py`, wire
+   `logs/` → `parser/` with bounded queues per spec 002 §1.1 (`FR-PIP-*`). This is the
+   critical integration point between I/O-bound reading and CPU-bound parsing.
+3. **M0 CI** — Linux and Windows runners with requirement-coverage reporter reading IDs from
+   `docs/specs/*.md`.
+4. **M2 completion** — allowlist extraction (`FR-PRS-020`+), leak sentinel (`FR-TST-005`).
 
-Before starting the parser, get sanitised log samples
+Before finishing the parser, get sanitised log samples
 ([Q-8](./open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk)).
-The log monitor is deliberately format-agnostic, so it is unaffected by the answer; the parser is
-not.
+The log monitor is deliberately format-agnostic; the parser is not.

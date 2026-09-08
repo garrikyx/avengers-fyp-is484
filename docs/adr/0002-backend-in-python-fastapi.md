@@ -1,8 +1,13 @@
-# ADR 0002 — Backend is Python 3.12 + FastAPI
+# ADR 0002 — Telemetry stack is Python 3.12 + FastAPI
 
-Status: Accepted · Date: 2026-07-31 · Deciders: TBD
+Status: Accepted · Date: 2026-07-31 · Updated: 2026-09-07 · Deciders: TBD
 
 ## Context
+
+The team has standardised on a **single-language Python monorepo** for both deployable
+units: the Telemetry Agent ([ADR 0006](./0006-agent-in-python.md)) and the Telemetry Backend.
+FastAPI is the HTTP framework for the backend; the agent is a long-running asyncio process
+with no public HTTP server on Day-1 (local `/metrics` only).
 
 The backend's demands are almost the inverse of the agent's. It runs on ordinary
 infrastructure, not a trading host, and its hard problems are integration and iteration
@@ -18,8 +23,14 @@ speed, not footprint:
 
 ## Decision
 
-The Telemetry Backend Service is **Python 3.12** with **FastAPI**, **Uvicorn**, and
-**Pydantic v2**, packaged as a container image and run as N replicas.
+The entire Day-1 telemetry stack is **Python 3.12+**:
+
+- **Telemetry Backend** — **FastAPI**, **Uvicorn**, and **Pydantic v2**, packaged as a
+  container image and run as N replicas.
+- **Telemetry Agent** — asyncio supervisor with thread-pool workers for CPU-bound parsing
+  (see ADR 0006), packaged as a container image or managed virtualenv on the Magic host.
+
+Both share models via `packages/telemetry_shared/`. No Go or second runtime on Day-1.
 
 ## Rationale
 
