@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from telemetry_agent.parser.fix.identifiers import load_hash_key
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.protocol import LineClassification, SourceMeta, ParseResult
 from telemetry_agent.parser.registry import Registry, registered_names
@@ -20,8 +22,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    try:
+        hash_key = load_hash_key()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+
     if args.corpus is None:
-        _run_stdin()
+        _run_stdin(hash_key)
         return
 
     corpus_dir = args.corpus.resolve()
@@ -36,7 +43,7 @@ def main() -> None:
         msg = f"unknown parsers in chain: {unknown}; registered={sorted(registered_names())}"
         raise SystemExit(msg)
 
-    fix_parser = FixParser()
+    fix_parser = FixParser(hash_key=hash_key)
     summary = {
         "lines": 0,
         "fix": 0,
@@ -67,8 +74,8 @@ def main() -> None:
     )
 
 
-def _run_stdin() -> None:
-    fix_parser = FixParser()
+def _run_stdin(hash_key: bytes) -> None:
+    fix_parser = FixParser(hash_key=hash_key)
     for raw in sys.stdin.buffer:
         line = raw.rstrip(b"\n\r")
         if not line:
@@ -92,11 +99,21 @@ def _format_line_result(filename: str, result: ParseResult) -> str:
     if result.framed:
         parts.append("framed=true")
         parts.append(f"msgType={result.msg_type}")
+        fields = _fields_dict(result)
+        if fields:
+            rendered = ",".join(f"{k}={v}" for k, v in fields.items())
+            parts.append(f"fields={{{rendered}}}")
         if result.joined_lines > 1:
             parts.append(f"(joined {result.joined_lines} lines)")
     elif result.error is not None:
         parts.append(f"error={result.error.reason}")
     return " ".join(parts)
+
+
+def _fields_dict(result: ParseResult) -> dict[str, str]:
+    if result.fields is None:
+        return {}
+    return {k: v for k, v in asdict(result.fields).items() if v is not None}
 
 
 def _update_summary(summary: dict[str, int], result: ParseResult) -> None:
@@ -128,82 +145,9 @@ def _safe_result_dict(result: ParseResult) -> dict[str, object]:
         payload["error"] = result.error.reason
     if result.joined_lines > 1:
         payload["joined_lines"] = result.joined_lines
-    return payload
-
-
-if __name__ == "__main__":
-    main()
-
-from __future__ import annotations
-
-import argparse
-import json
-import sys
-from datetime import UTC, datetime
-from pathlib import Path
-
-from telemetry_agent.parser.demo import run_corpus_demo
-from telemetry_agent.parser.fix.parser import FixParser
-from telemetry_agent.parser.protocol import SourceMeta, ParseResult
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Telemetry FIX parser CLI.")
-    parser.add_argument(
-        "--corpus",
-        type=Path,
-        help="Directory of synthetic FIX log files — runs the visual parser demo.",
-    )
-    args = parser.parse_args()
-
-    if args.corpus is None:
-        _run_stdin()
-        return
-
-    corpus_dir = args.corpus.resolve()
-    if not corpus_dir.is_dir():
-        msg = f"corpus path is not a directory: {corpus_dir}"
-        raise SystemExit(msg)
-
-    run_corpus_demo(corpus_dir)
-
-
-def _run_stdin() -> None:
-    fix_parser = FixParser()
-    for raw in sys.stdin.buffer:
-        line = raw.rstrip(b"\n\r")
-        if not line:
-            continue
-        result = _parse_line(fix_parser, line)
-        print(json.dumps(_safe_result_dict(result)))
-
-
-def _parse_line(fix_parser: FixParser, line: bytes) -> ParseResult:
-    meta = SourceMeta(
-        instance_id="demo",
-        path="stdin",
-        log_type="fix",
-        read_at=datetime.now(tz=UTC),
-    )
-    return fix_parser.parse(line, meta)
-
-
-def _safe_result_dict(result: ParseResult) -> dict[str, object]:
-    """Emit metadata only — no raw FIX field values beyond msgType."""
-    payload: dict[str, object] = {
-        "classification": result.classification.value,
-        "framed": result.framed,
-    }
-    if result.msg_type:
-        payload["msgType"] = result.msg_type
-    if result.delimiter:
-        payload["delimiter"] = result.delimiter
-    if result.warnings:
-        payload["warnings"] = result.warnings
-    if result.error is not None:
-        payload["error"] = result.error.reason
-    if result.joined_lines > 1:
-        payload["joined_lines"] = result.joined_lines
+    fields = _fields_dict(result)
+    if fields:
+        payload["fields"] = fields
     return payload
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from re import Pattern
 
 from telemetry_agent.parser.fix.classify import classify_line, compile_app_log_patterns
+from telemetry_agent.parser.fix.fields import extract_allowlisted_fields
 from telemetry_agent.parser.fix.frame import FrameOptions, Framer, FrameResult, LineJoiner
 from telemetry_agent.parser.protocol import (
     Confidence,
@@ -23,11 +24,13 @@ class FixParser:
         *,
         frame_options: FrameOptions | None = None,
         app_log_patterns: list[str] | None = None,
+        hash_key: bytes | None = None,
     ) -> None:
         self._frame_options = frame_options or FrameOptions()
         self._app_log_patterns: list[Pattern[bytes]] = (
             compile_app_log_patterns(app_log_patterns) if app_log_patterns else []
         )
+        self._hash_key = hash_key
         self._framer = Framer(self._frame_options)
         self._joiner = LineJoiner(self._framer, self._frame_options.max_join_lines)
 
@@ -53,6 +56,7 @@ class FixParser:
                 return _frame_to_parse_result(
                     frame_result,
                     joined_lines=frame_result.joined_lines,
+                    hash_key=self._hash_key,
                 )
 
             classification = classify_line(line, app_log_patterns=self._app_log_patterns)
@@ -69,6 +73,7 @@ class FixParser:
             return _frame_to_parse_result(
                 frame_result,
                 joined_lines=frame_result.joined_lines,
+                hash_key=self._hash_key,
             )
         except Exception as exc:
             return ParseResult(
@@ -81,6 +86,7 @@ def _frame_to_parse_result(
     frame_result: FrameResult,
     *,
     joined_lines: int,
+    hash_key: bytes | None,
 ) -> ParseResult:
     if not frame_result.ok:
         return ParseResult(
@@ -106,6 +112,7 @@ def _frame_to_parse_result(
         delimiter=message.delimiter.value,
         warnings=list(frame_result.warnings),
         joined_lines=joined_lines,
+        fields=extract_allowlisted_fields(message.fields, hash_key=hash_key),
     )
 
 register_parser(FixParser())

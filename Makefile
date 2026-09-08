@@ -6,6 +6,9 @@ sync:
 parser-test: sync
 	uv run pytest tests/unit/agent/parser/ -v
 
+MAGIC_TELEMETRY_ID_HASH_KEY ?= dev-only
+export MAGIC_TELEMETRY_ID_HASH_KEY
+
 parser-demo:
 	uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
 
