@@ -257,7 +257,7 @@ uv run pytest
 # Parser tests
 make parser-test
 
-# Parser demo over synthetic corpus
+export MAGIC_TELEMETRY_ID_HASH_KEY=dev-only
 make parser-demo
 
 # Lint
@@ -267,6 +267,10 @@ make lint
 Or without Make:
 
 ```bash
+export MAGIC_TELEMETRY_ID_HASH_KEY=dev-only
 uv run pytest tests/unit/agent/parser/ -v
-uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
+uv run python -m telemetry_agent.parser.cli \
+  --corpus apps/agent/testdata/fix/demo_logs.txt \
+  --corpus apps/agent/testdata/magic/ \
+  --config apps/agent/testdata/magic/demo_config.yaml
 ```

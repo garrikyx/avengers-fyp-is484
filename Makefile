@@ -10,7 +10,10 @@ MAGIC_TELEMETRY_ID_HASH_KEY ?= dev-only
 export MAGIC_TELEMETRY_ID_HASH_KEY
 
 parser-demo:
-	uv run python -m telemetry_agent.parser.cli --corpus apps/agent/testdata/fix/
+	uv run python -m telemetry_agent.parser.cli \
+	  --corpus apps/agent/testdata/fix/demo_logs.txt \
+	  --corpus apps/agent/testdata/magic/ \
+	  --config apps/agent/testdata/magic/demo_config.yaml
 
 metrics-demo:
 	uv run python -m telemetry_agent.metrics.demo

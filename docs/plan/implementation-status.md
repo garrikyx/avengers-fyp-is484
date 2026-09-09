@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-07
+Status: Live document · Last updated: 2026-09-08
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -12,8 +12,8 @@ is recorded here rather than by quietly editing the spec.
 | M0 | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/` exist; CI and requirement-coverage reporter do not |
 | M1 | Log monitor and configuration | **Not started** — `apps/agent/src/telemetry_agent/logs/` does not exist yet |
 | M1.5 | Pipeline bridge (monitor → parser) | **Not started** — `apps/agent/src/telemetry_agent/pipeline/` does not exist yet |
-| **M2** | **FIX parser (UBS-40–42)** | **Partial** — plugin interface, classification, framing implemented in isolation via CLI demo; not wired through pipeline; field extraction (UBS-43+) not started |
-| **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; blocked on real events by M1 (Log Monitor), M1.5 (pipeline bridge), and field extraction (UBS-43+) |
+| **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
+| **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
 | M4 | Backend ingestion, store, query | Not started |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
@@ -26,16 +26,26 @@ is recorded here rather than by quietly editing the spec.
 | UBS-40 | Parser plugin interface and registry | `FR-PRS-030`–`032`, `FR-PRS-003` | Done | `tests/unit/agent/parser/test_FR_PRS_030_registry.py` |
 | UBS-41 | Classify log lines before FIX parsing | `FR-PRS-010`, `FR-PRS-011` | Done | `tests/unit/agent/parser/test_FR_PRS_010_classify.py` |
 | UBS-42 | Frame FIX messages from log lines | `FR-PRS-012`–`016` | Done | `tests/unit/agent/parser/test_FR_PRS_012_frame.py`, `apps/agent/testdata/fix/` |
+| UBS-43 | Allowlisted field extraction | `FR-PRS-020` | Done | `tests/unit/agent/parser/test_FR_PRS_020_fields.py`, `parser/fix/fields.py` |
+| UBS-44 | Identifier hashing | `FR-PRS-021` | Done | `tests/unit/agent/parser/test_FR_PRS_021_identifiers.py`, `parser/fix/identifiers.py` |
+| UBS-45 | Enum mapping + tag-58 rejection labels | `FR-PRS-022`–`024` | Done | `test_FR_PRS_022_normalize.py`, `test_FR_PRS_023_enums.py`, `test_FR_PRS_024_rejection.py`, `test_UBS45_integration.py` |
+| UBS-46 | FIX timestamps + sequence gaps | `FR-PRS-025`–`027` | Done | `test_FR_PRS_025_timestamps.py`, `test_FR_PRS_027_seq_tracker.py` |
+| UBS-47 | Parse errors without stopping agent | `FR-PRS-017`–`019` | Done | `test_FR_PRS_017_019_errors.py` |
 
-### Deferred within M2 (UBS-43+)
+### Magic applog demo (not UBS-45–47)
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Magic line classification | Done | `test_FR_PRS_010_magic_venue_lines.py`, config in `apps/agent/testdata/magic/demo_config.yaml` |
+| `%` template error signatures | Done | `parser/applog/signatures.py`, `test_applog_signature_templates.py` |
+| Full AppLogParser plugin | Not started | Demo uses FixParser classification + CLI signature matcher |
+
+### Remaining M2 gaps
 
 | Area | Requirements | Notes |
 | --- | --- | --- |
-| Field allowlist extraction | `FR-PRS-020` | Compile-time allowlist table — next story |
-| Hashing and enums | `FR-PRS-021`–`024` | Security-critical emission rules |
-| Timestamps and seq gaps | `FR-PRS-025`–`027` | Needed before metrics bucketing |
-| Leak sentinel | `FR-TST-005` | Lands with allowlist extraction |
-| Full spec 012 §3 corpus | `FR-TST-002` | Subset corpus exists for framing; lifecycle/reject paths pending |
+| Leak sentinel | `FR-TST-005` | Lands with full corpus gate |
+| Parser → MA-01 event bridge | spec 004 | ParsedMessageEvent construction from FixTelemetry not wired |
 
 ## Planned: pipeline bridge (M1.5)
 
@@ -90,9 +100,15 @@ since no agent supervisor loop exists yet (M1).
 | Parser protocol + registry | `apps/agent/src/telemetry_agent/parser/protocol.py`, `registry.py` |
 | FIX classification | `apps/agent/src/telemetry_agent/parser/fix/classify.py` |
 | FIX framing | `apps/agent/src/telemetry_agent/parser/fix/frame.py` |
+| FIX field extraction + hashing | `apps/agent/src/telemetry_agent/parser/fix/fields.py`, `identifiers.py` |
+| FIX enums, rejection, timestamps, seq gaps | `apps/agent/src/telemetry_agent/parser/fix/enums.py`, `normalize.py`, `rejection.py`, `timestamps.py`, `seq_tracker.py`, `enrich.py`, `telemetry.py` |
 | FIX parser plugin | `apps/agent/src/telemetry_agent/parser/fix/parser.py` |
-| Demo CLI | `apps/agent/src/telemetry_agent/parser/cli.py` |
-| Synthetic corpus | `apps/agent/testdata/fix/` |
+| Applog signature matcher (demo) | `apps/agent/src/telemetry_agent/parser/applog/signatures.py` |
+| Parser CLI + visual display | `apps/agent/src/telemetry_agent/parser/cli.py`, `display.py` |
+| Demo config loader | `apps/agent/src/telemetry_agent/parser/config.py` |
+| Demo metrics sink | `apps/agent/src/telemetry_agent/metrics/demo_sink.py` |
+| Synthetic FIX corpus | `apps/agent/testdata/fix/demo_logs.txt` |
+| Magic applog corpus + config | `apps/agent/testdata/magic/` |
 | Unit tests (parser) | `tests/unit/agent/parser/` |
 | Metrics aggregator, counters, correlation, histogram | `apps/agent/src/telemetry_agent/metrics/` |
 | Calculated indicators and snapshot output | `apps/agent/src/telemetry_agent/metrics/snapshot.py` |
@@ -109,17 +125,9 @@ since no agent supervisor loop exists yet (M1).
 
 ```bash
 uv sync                  # or: make sync
-make parser-test         # 29 UBS-40–42 unit tests
-make parser-demo         # corpus walk — expect framed > 0, errors = 0 on valid fixtures
+make parser-test         
+make parser-demo
 make lint                # ruff + mypy on agent source
-```
-
-Expected demo output (approximate):
-
-```
-pipe_delimited.txt: classification=fix framed=true msgType=D
-split_message.txt: classification=fix framed=true msgType=D (joined 2 lines)
-SUMMARY: N lines | fix=X unsupported=Y framed=Z errors=0
 ```
 
 ## Open risks
