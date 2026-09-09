@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -15,10 +14,9 @@ from telemetry_agent.parser.fix.frame import (
     SOH,
     frame_message,
 )
+from telemetry_agent.parser.corpus import demo_log_lines
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.protocol import LineClassification, SourceMeta
-
-CORPUS = Path(__file__).resolve().parents[4] / "apps" / "agent" / "testdata" / "fix"
 
 
 def test_FR_PRS_012_pipe_delimited_framing() -> None:
@@ -100,15 +98,19 @@ def test_FR_PRS_012_corpus_files_frame_without_errors() -> None:
         log_type="fix",
         read_at=datetime.now(tz=UTC),
     )
-    for name in ("pipe_delimited.txt", "log_prefix.txt", "soh_clean.txt", "delimiter_auto.txt"):
-        path = CORPUS / name
-        for raw in path.read_bytes().splitlines():
-            if not raw.strip():
-                continue
-            result = parser.parse(raw, meta)
-            assert result.classification == LineClassification.FIX, name
-            assert result.framed, f"{name}: {raw!r}"
-            assert result.error is None
+    framing_sources = {
+        "pipe_delimited.txt",
+        "log_prefix.txt",
+        "soh_clean.txt",
+        "delimiter_auto.txt",
+    }
+    for line, source in demo_log_lines():
+        if source not in framing_sources:
+            continue
+        result = parser.parse(line, meta)
+        assert result.classification == LineClassification.FIX, source
+        assert result.framed, f"{source}: {line!r}"
+        assert result.error is None
 
 
 @pytest.mark.parametrize(
