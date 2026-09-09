@@ -1,3 +1,0 @@
-not a fix message at all
-random garbage 35=D without begin string
-8=FIX without delimiter or msg type

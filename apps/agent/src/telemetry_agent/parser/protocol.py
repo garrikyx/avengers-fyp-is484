@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from telemetry_agent.parser.fix.fields import FixFields
+    from telemetry_agent.parser.fix.telemetry import FixTelemetry
 
 
 class Confidence(str, Enum):
@@ -58,6 +59,8 @@ class ParseResult:
     error: ParseError | None = None
     joined_lines: int = 1
     fields: "FixFields | None" = None
+    telemetry: "FixTelemetry | None" = None
+    internal_error: bool = False
 
 
 @runtime_checkable
