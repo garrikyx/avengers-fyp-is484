@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-08
+Status: Live document · Last updated: 2026-09-10
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | M1.5 | Pipeline bridge (monitor → parser) | **Not started** — `apps/agent/src/telemetry_agent/pipeline/` does not exist yet |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| M4 | Backend ingestion, store, query | Not started |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics) implemented and tested; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -72,9 +72,21 @@ Target modules: `apps/agent/src/telemetry_agent/pipeline/line_queue.py`, `worker
 | MA-04 | Calculated indicators and snapshot output | `FR-QRY-007`, `FR-QRY-010`, `FR-QRY-012` | Done | `test_MA_04_snapshot.py` |
 
 Full detail and an alert-readiness mapping: `docs/plan/ma-epic-implementation-summary.md`.
-Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor), M1.5 (pipeline
-bridge), and field extraction (UBS-43+); `parseErrorRate` is formula-ready but has no
-producer yet.
+Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor) and M1.5 (pipeline
+bridge) — field extraction itself is done (UBS-43–47); `parseErrorRate` is
+formula-ready but has no producer yet.
+
+## M4 requirement coverage (Stream Processor & Metric Store)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
+| UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
+
+Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
+§7. Not yet wired: nothing calls `StreamProcessor.process_snapshot()` with real
+data — no agent Backend Publisher and no backend Ingestion Service or HTTP
+layer exist yet (both separate, later work).
 
 ## M5 requirement coverage (RE-01–04)
 
@@ -114,6 +126,13 @@ since no agent supervisor loop exists yet (M1).
 | Calculated indicators and snapshot output | `apps/agent/src/telemetry_agent/metrics/snapshot.py` |
 | Shared snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/metrics.py` |
 | Unit tests (metrics) | `tests/unit/agent/metrics/` |
+| Shared histogram, ratios, latency summary | `packages/telemetry_shared/src/telemetry_shared/metrics/` |
+| Shared wire-format snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/snapshot.py` |
+| Stream Processor (window alignment, staleness) | `apps/backend/src/telemetry_backend/services/stream_processor.py` |
+| Metric Store (cross-agent merge, ring buffer) | `apps/backend/src/telemetry_backend/services/metric_store.py` |
+| Stream Processor / Metric Store config | `apps/backend/src/telemetry_backend/config.py` |
+| Unit tests (backend services) | `tests/unit/backend/services/` |
+| Unit tests (shared metrics/snapshot model) | `tests/unit/telemetry_shared/metrics/`, `tests/unit/telemetry_shared/models/` |
 | Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |
 | Rule config loading, SIGHUP reload | `apps/agent/src/telemetry_agent/rules/config_loader.py`, `config/rules.yaml` |
 | Shared alert contract | `packages/telemetry_shared/src/telemetry_shared/models/alerts.py` |

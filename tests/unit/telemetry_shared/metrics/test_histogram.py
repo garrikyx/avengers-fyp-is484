@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from telemetry_agent.metrics.histogram import Histogram
+from telemetry_shared.metrics.histogram import Histogram
 
 
 def test_record_places_values_into_the_correct_exclusive_bucket() -> None:

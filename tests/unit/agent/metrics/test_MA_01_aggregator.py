@@ -12,7 +12,7 @@ def make_event(ts: float, **overrides: object) -> ParsedMessageEvent:
         "event_time_utc": datetime.fromtimestamp(ts, tz=UTC),
         "instance_id": "magic-prod-01",
         "session_id": "MAGIC->EXCH1",
-        "cl_ord_id": "ORD-1",
+        "cl_ord_id_hash": "ORD-1",
         "symbol": "AAPL",
         "side": "buy",
         "ord_type": "limit",

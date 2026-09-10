@@ -1,10 +1,16 @@
-# MAGIC Metrics Aggregator — Implementation Summary
+# MAGIC Metrics Aggregator & Stream Processor — Implementation Summary
 
-Last updated: 2026-09-04 · Gaps/diagrams: [`ma-epic-implementation-review.md`](./ma-epic-implementation-review.md)
+Last updated: 2026-09-09 · Gaps/diagrams: [`ma-epic-implementation-review.md`](./ma-epic-implementation-review.md)
 
 One `ParsedMessageEvent` moves through four stages before it's queryable:
 **separated** by type, **grouped** into a label, **written** into a store,
-and later **read** back out.
+and later **read** back out. §§1–6 cover that agent-side story (the
+Metrics Aggregator, MA-01–04). §7 covers what happens to its output next:
+the backend Stream Processor and Metric Store (UBS-88), which take
+possibly-late, possibly-misaligned snapshots from *many* agents and merge
+them into one correct view. Nothing upstream of the agent's own snapshot or
+downstream of the Metric Store's own read path is in scope here — those
+are mentioned only where §7 touches them directly.
 
 ## 1. Separate — what kind of message is this
 
@@ -13,7 +19,7 @@ and later **read** back out.
 actually fired. Independently, `LatencyCorrelator.ingest(event)` makes its
 own classification: a new-order-family message opens a tracked
 `OrderContext`; a response message (`ExecutionReport`, `OrderCancelReject`)
-looks up a tracked order by `(session_id, cl_ord_id)` and resolves it by
+looks up a tracked order by `(session_id, cl_ord_id_hash)` and resolves it by
 the *tracked order's own origin type* — never by the incoming message's
 own type.
 
@@ -195,3 +201,85 @@ correlator but never reaches `MetricRow`, so a `snapshot()` caller can't
 tell which clock basis a latency number used. Both are design decisions
 (what eviction policy, what schema change) rather than test-coverage gaps,
 so neither was made unilaterally in this pass.
+
+## 7. Stream Processor & Metric Store — the backend side (UBS-88)
+
+Everything above is one agent's own view. The backend's job (spec 006 §3–4)
+is to take the spec 004 §3 wire snapshot — one agent's raw per-bucket
+counters and histograms, not this doc's computed-indicators `MetricsSnapshot`
+— from *many* agents and merge them into one correct view, even when a
+snapshot is late, out of order, or bucketed on a boundary that doesn't line
+up with the backend's own grid.
+
+### Reused, not reimplemented
+
+Rather than a second histogram/ratio implementation on the backend that
+could quietly drift from this one, the width-agnostic pieces of §§3–4 moved
+out of `telemetry_agent.metrics` and into `packages/telemetry_shared/`, and
+both sides now call the same code:
+
+| Moved | To | Why |
+| --- | --- | --- |
+| `Histogram` (`record`/`merge`/`percentile`) | `telemetry_shared.metrics.histogram` | One merge/percentile implementation for both a single agent's own buckets and a backend merge across agents. |
+| Ratio computation (`_compute_ratio`) | `telemetry_shared.metrics.ratios` | §6's rule — recompute from summed numerator/denominator, never average — applied by the backend to counters summed *across agents* instead of across one agent's buckets. |
+| Latency summary building (`_build_latency_summary`) | `telemetry_shared.metrics.latency` | Same reasoning, for percentile-from-histogram. |
+
+`aggregator.py`/`snapshot.py` here now import these instead of owning
+private copies; this epic's 101 tests are unchanged by the move.
+
+### What the backend does with it
+
+- **Window alignment**: every incoming snapshot is floored onto the
+  backend's own canonical grid — `floor(bucketStartUtc / canonicalBucketSeconds)
+  * canonicalBucketSeconds` — the same rule this doc's `_bucket_start` already
+  uses, just applied to a bucket boundary that may not be phase- or
+  width-aligned with the backend's.
+- **Staleness**: a bucket older than `maxBucketAge` is rejected
+  (`bucket_too_old`) and counted, not silently discarded; a second,
+  narrower counter catches the same failure mode if a bucket somehow ages
+  out of the store's own retention window before being merged.
+- **`warmingUp`**: the wire's `restarted: true` (this doc's own
+  restart-marking convention, §3) is preserved per bucket per agent and
+  drives a derived warm-up window per instance, rather than requiring an
+  agent-side schema change.
+- **Cross-agent merge**: counters sum, ratios are recomputed from summed
+  counters (never averaged per agent), and histograms merge bucket-wise —
+  the same three rules §§3–4 already enforce for one agent's own buckets,
+  now applied across agents. Contributions are keyed by
+  `(dimensions, agentId, agent's own native bucketStartUtc)`, not just
+  `agentId` — testing caught a real bug where keying on `agentId` alone let
+  a second bucket from the *same* agent silently overwrite the first
+  instead of accumulating. Gauges take the latest value by that same native
+  timestamp, not by merge order — a second bug testing caught, where an
+  out-of-order late arrival could regress a gauge to a stale value.
+
+### Verified — 25 new/relocated tests
+
+`tests/unit/backend/services/test_STM_01_window_alignment.py` (9),
+`test_STM_02_merge_semantics.py` (6), `test_STM_03_warmup.py` (5); the new
+wire-format contract in `tests/unit/telemetry_shared/models/test_snapshot.py`
+(5); `test_histogram.py` (6, relocated, unchanged) now proves the shared
+module both sides import. `test_STM_02` includes the two-unequal-volume
+reject-rate case this component's AC requires explicitly. Run:
+`uv run pytest tests/ -v` (223 tests, whole repo) · lint/types:
+`uv run ruff check .` and `uv run mypy apps/backend/src packages/telemetry_shared/src`
+clean on every file this component touched (`make lint` itself still only
+runs `mypy apps/agent/src` — it doesn't cover the backend yet).
+
+**Known gaps, not closed here**: the per-bucket contribution maps and the
+per-instance ring dictionary have no cardinality cap or drop counter yet
+(`NFR-REL-009` expects one on every accumulating structure); the merge-
+associativity test is a hand-picked example, not the `hypothesis` property
+test spec 012 names for this case (`hypothesis` isn't a dependency yet);
+and there is no per-instance lock (`FR-QRY-004`) — moot today since nothing
+concurrent calls into this code yet.
+
+**Relationship to neighbouring, unbuilt components** (out of scope here,
+noted only for orientation): nothing yet calls this code with real data —
+the agent has no component that turns a live `MetricsAggregator`/
+`LatencyCorrelator` into a published snapshot (spec 002's Backend
+Publisher), and the backend has no authenticating, validating, deduping
+Ingestion Service in front of it (spec 006 §2). Nothing yet reads its
+output over HTTP either — the Query Engine (spec 006 §5) that would expose
+`MetricStore.read()` and assemble `dataCompleteness` from its warm-up/
+restart bookkeeping doesn't exist. All are separate, later work.

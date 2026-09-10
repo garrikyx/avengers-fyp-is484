@@ -1,4 +1,4 @@
-.PHONY: sync parser-test parser-demo metrics-demo lint
+.PHONY: sync parser-test parser-demo metrics-demo metrics-quickstart stream-processor-quickstart lint
 
 sync:
 	uv sync
@@ -17,6 +17,12 @@ parser-demo:
 
 metrics-demo:
 	uv run python -m telemetry_agent.metrics.demo
+
+metrics-quickstart:
+	uv run python -m telemetry_agent.metrics.demo_quickstart
+
+stream-processor-quickstart:
+	uv run python -m telemetry_backend.services.demo_quickstart
 
 lint:
 	uv run ruff check .

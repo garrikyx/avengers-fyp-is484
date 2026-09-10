@@ -83,7 +83,7 @@ def test_ratio_is_null_when_denominator_is_zero() -> None:
     order = NewOrderEvent(
         **_ENVELOPE,
         event_time_utc=_T0,
-        cl_ord_id="ORD-1",
+        cl_ord_id_hash="ORD-1",
         symbol="AAPL",
         side="buy",
         ord_type="limit",
@@ -135,7 +135,7 @@ def test_gauges_reflect_pending_orders_and_event_staleness() -> None:
     order = NewOrderEvent(
         **_ENVELOPE,
         event_time_utc=datetime.fromtimestamp(clock(), tz=UTC),
-        cl_ord_id="ORD-STUCK",
+        cl_ord_id_hash="ORD-STUCK",
         symbol="AAPL",
         side="buy",
         ord_type="limit",

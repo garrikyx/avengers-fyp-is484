@@ -22,7 +22,7 @@ ENVELOPE = dict(
 
 def test_administrative_message_uses_base_class_directly() -> None:
     event = ParsedMessageEvent(**ENVELOPE, msg_type="Heartbeat")
-    assert event.cl_ord_id is None
+    assert event.cl_ord_id_hash is None
     assert event.reject_reason_code is None
     assert event.order_qty is None
     assert event.transact_time_utc is None
@@ -48,13 +48,13 @@ def test_event_is_immutable() -> None:
 
 def test_new_order_event_requires_its_order_fields() -> None:
     with pytest.raises(ValidationError, match="symbol"):
-        NewOrderEvent(**ENVELOPE, cl_ord_id="ORD-1")  # type: ignore[call-arg]
+        NewOrderEvent(**ENVELOPE, cl_ord_id_hash="ORD-1")  # type: ignore[call-arg]
 
 
 def test_new_order_event_with_all_required_fields_succeeds() -> None:
     event = NewOrderEvent(
         **ENVELOPE,
-        cl_ord_id="ORD-1",
+        cl_ord_id_hash="ORD-1",
         symbol="AAPL",
         side="buy",
         ord_type="limit",
@@ -72,7 +72,7 @@ def test_order_qty_never_coerces_through_float_imprecision() -> None:
     # from raw text); Decimal(str) is exact, unlike Decimal(float).
     event = NewOrderEvent(
         **ENVELOPE,
-        cl_ord_id="ORD-1",
+        cl_ord_id_hash="ORD-1",
         symbol="AAPL",
         side="buy",
         ord_type="limit",
@@ -82,10 +82,10 @@ def test_order_qty_never_coerces_through_float_imprecision() -> None:
 
 
 def test_execution_report_requires_exec_fields() -> None:
-    with pytest.raises(ValidationError, match="order_id"):
+    with pytest.raises(ValidationError, match="order_id_hash"):
         ExecutionReportEvent(
             **ENVELOPE,
-            cl_ord_id="ORD-1",
+            cl_ord_id_hash="ORD-1",
             symbol="AAPL",
             side="buy",
         )  # type: ignore[call-arg]
@@ -95,9 +95,9 @@ def test_execution_report_trade_requires_last_qty() -> None:
     with pytest.raises(ValidationError, match="last_qty"):
         ExecutionReportEvent(
             **ENVELOPE,
-            cl_ord_id="ORD-1",
-            order_id="OID-1",
-            exec_id="EXEC-1",
+            cl_ord_id_hash="ORD-1",
+            order_id_hash="OID-1",
+            exec_id_hash="EXEC-1",
             exec_type="Trade",
             ord_status="Filled",
             symbol="AAPL",
@@ -110,9 +110,9 @@ def test_execution_report_rejected_does_not_require_reject_reason() -> None:
     # a rejection with neither is valid, the aggregator treats it as unspecified.
     event = ExecutionReportEvent(
         **ENVELOPE,
-        cl_ord_id="ORD-1",
-        order_id="OID-1",
-        exec_id="EXEC-1",
+        cl_ord_id_hash="ORD-1",
+        order_id_hash="OID-1",
+        exec_id_hash="EXEC-1",
         exec_type="Rejected",
         ord_status="Rejected",
         symbol="AAPL",
@@ -123,21 +123,21 @@ def test_execution_report_rejected_does_not_require_reject_reason() -> None:
 
 
 def test_cancel_reject_requires_orig_cl_ord_id() -> None:
-    with pytest.raises(ValidationError, match="orig_cl_ord_id"):
-        CancelRejectEvent(**ENVELOPE, cl_ord_id="ORD-1")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError, match="orig_cl_ord_id_hash"):
+        CancelRejectEvent(**ENVELOPE, cl_ord_id_hash="ORD-1")  # type: ignore[call-arg]
 
 
 def test_cancel_request_event_requires_its_order_fields() -> None:
-    with pytest.raises(ValidationError, match="orig_cl_ord_id"):
-        CancelRequestEvent(**ENVELOPE, cl_ord_id="ORD-1")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError, match="orig_cl_ord_id_hash"):
+        CancelRequestEvent(**ENVELOPE, cl_ord_id_hash="ORD-1")  # type: ignore[call-arg]
 
 
 def test_cancel_replace_event_requires_its_order_fields() -> None:
     with pytest.raises(ValidationError, match="ord_type"):
         CancelReplaceEvent(
             **ENVELOPE,
-            cl_ord_id="ORD-1",
-            orig_cl_ord_id="ORD-0",
+            cl_ord_id_hash="ORD-1",
+            orig_cl_ord_id_hash="ORD-0",
             symbol="AAPL",
             side="buy",
             order_qty=Decimal(100),
