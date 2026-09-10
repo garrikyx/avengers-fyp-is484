@@ -50,11 +50,11 @@ class _Clock:
         self._now += seconds
 
 
-def _new_order(cl_ord_id: str, symbol: str) -> NewOrderEvent:
+def _new_order(cl_ord_id_hash: str, symbol: str) -> NewOrderEvent:
     return NewOrderEvent(
         **_ENVELOPE,
         event_time_utc=_T0,
-        cl_ord_id=cl_ord_id,
+        cl_ord_id_hash=cl_ord_id_hash,
         symbol=symbol,
         side="buy",
         ord_type="limit",
@@ -63,14 +63,18 @@ def _new_order(cl_ord_id: str, symbol: str) -> NewOrderEvent:
 
 
 def _ack(
-    cl_ord_id: str, order_id: str, exec_id: str, symbol: str, delay_ms: int
+    cl_ord_id_hash: str,
+    order_id_hash: str,
+    exec_id_hash: str,
+    symbol: str,
+    delay_ms: int,
 ) -> ExecutionReportEvent:
     return ExecutionReportEvent(
         **_ENVELOPE,
         event_time_utc=_T0 + timedelta(milliseconds=delay_ms),
-        cl_ord_id=cl_ord_id,
-        order_id=order_id,
-        exec_id=exec_id,
+        cl_ord_id_hash=cl_ord_id_hash,
+        order_id_hash=order_id_hash,
+        exec_id_hash=exec_id_hash,
         exec_type="New",
         ord_status="New",
         symbol=symbol,
@@ -79,14 +83,14 @@ def _ack(
 
 
 def _rejected(
-    cl_ord_id: str, order_id: str, exec_id: str, symbol: str
+    cl_ord_id_hash: str, order_id_hash: str, exec_id_hash: str, symbol: str
 ) -> ExecutionReportEvent:
     return ExecutionReportEvent(
         **_ENVELOPE,
         event_time_utc=_T0,
-        cl_ord_id=cl_ord_id,
-        order_id=order_id,
-        exec_id=exec_id,
+        cl_ord_id_hash=cl_ord_id_hash,
+        order_id_hash=order_id_hash,
+        exec_id_hash=exec_id_hash,
         exec_type="Rejected",
         ord_status="Rejected",
         symbol=symbol,

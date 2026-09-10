@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
-from telemetry_agent.metrics.histogram import Histogram
+from telemetry_shared.metrics.histogram import Histogram
 from telemetry_shared.models.parsed_message import ParsedMessageEvent
 
 Clock = Callable[[], float]

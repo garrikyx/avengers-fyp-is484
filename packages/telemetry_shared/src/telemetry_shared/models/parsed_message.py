@@ -47,10 +47,10 @@ class ParsedMessageEvent(BaseModel):
     # are kept.
     transact_time_utc: datetime | None = None
 
-    cl_ord_id: str | None = None
-    orig_cl_ord_id: str | None = None
-    order_id: str | None = None
-    exec_id: str | None = None
+    cl_ord_id_hash: str | None = None
+    orig_cl_ord_id_hash: str | None = None
+    order_id_hash: str | None = None
+    exec_id_hash: str | None = None
 
     symbol: str | None = None
     side: str | None = None
@@ -77,7 +77,7 @@ class NewOrderEvent(ParsedMessageEvent):
     """35=D NewOrderSingle."""
 
     msg_type: str = "NewOrderSingle"
-    cl_ord_id: str
+    cl_ord_id_hash: str
     symbol: str
     side: str
     ord_type: str
@@ -88,8 +88,8 @@ class CancelRequestEvent(ParsedMessageEvent):
     """35=F OrderCancelRequest."""
 
     msg_type: str = "OrderCancelRequest"
-    cl_ord_id: str
-    orig_cl_ord_id: str
+    cl_ord_id_hash: str
+    orig_cl_ord_id_hash: str
     symbol: str
     side: str
     order_qty: Decimal
@@ -99,8 +99,8 @@ class CancelReplaceEvent(ParsedMessageEvent):
     """35=G OrderCancelReplaceRequest."""
 
     msg_type: str = "OrderCancelReplaceRequest"
-    cl_ord_id: str
-    orig_cl_ord_id: str
+    cl_ord_id_hash: str
+    orig_cl_ord_id_hash: str
     symbol: str
     side: str
     ord_type: str
@@ -116,9 +116,9 @@ class ExecutionReportEvent(ParsedMessageEvent):
     """
 
     msg_type: str = "ExecutionReport"
-    cl_ord_id: str
-    order_id: str
-    exec_id: str
+    cl_ord_id_hash: str
+    order_id_hash: str
+    exec_id_hash: str
     exec_type: str
     ord_status: str
     symbol: str
@@ -142,8 +142,8 @@ class CancelRejectEvent(ParsedMessageEvent):
     """
 
     msg_type: str = "OrderCancelReject"
-    cl_ord_id: str
-    orig_cl_ord_id: str
+    cl_ord_id_hash: str
+    orig_cl_ord_id_hash: str
 
 
 # Convenience for the Parser Engine: pick the right constructor by msg_type.

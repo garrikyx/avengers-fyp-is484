@@ -57,10 +57,10 @@ def _timedelta_to_ms(delta: timedelta) -> Decimal:
 
 @dataclass(slots=True)
 class OrderContext:
-    """One tracked order, keyed by (session_id, cl_ord_id).
+    """One tracked order, keyed by (session_id, cl_ord_id_hash).
 
-    orig_cl_ord_id is retained for lineage/traceability when this entry is a
-    cancel/replace of a prior order; latency for *this* cl_ord_id is still
+    orig_cl_ord_id_hash is retained for lineage/traceability when this entry is a
+    cancel/replace of a prior order; latency for *this* cl_ord_id_hash is still
     measured from *this* entry's own first-seen time, not carried forward
     from the original order — a deliberate simplification: the ticket
     specifies the link but not which timestamp a replace's latency should
@@ -79,7 +79,7 @@ class OrderContext:
     """
 
     first_seen_at: datetime
-    orig_cl_ord_id: str | None
+    orig_cl_ord_id_hash: str | None
     origin_msg_type: str
     ack_recorded: bool = False
     first_fill_recorded: bool = False
@@ -189,20 +189,20 @@ class LatencyCorrelator:
             self._handle_cancel_reject(event)
 
     def _track_new_order(self, event: ParsedMessageEvent) -> None:
-        if event.cl_ord_id is None:
+        if event.cl_ord_id_hash is None:
             return
         self._evict_if_at_capacity()
-        key = (event.session_id, event.cl_ord_id)
+        key = (event.session_id, event.cl_ord_id_hash)
         self._open[key] = OrderContext(
             first_seen_at=self._timestamp_of(event),
-            orig_cl_ord_id=event.orig_cl_ord_id,
+            orig_cl_ord_id_hash=event.orig_cl_ord_id_hash,
             origin_msg_type=event.msg_type,
         )
 
     def _handle_execution_report(self, event: ParsedMessageEvent) -> None:
-        if event.cl_ord_id is None:
+        if event.cl_ord_id_hash is None:
             return
-        key = (event.session_id, event.cl_ord_id)
+        key = (event.session_id, event.cl_ord_id_hash)
         context = self._open.get(key)
         if context is None:
             self.stats.orphan_responses += 1
@@ -223,9 +223,9 @@ class LatencyCorrelator:
         # no-op: not a second latency sample, and not an anomaly either.
 
     def _handle_cancel_reject(self, event: ParsedMessageEvent) -> None:
-        if event.cl_ord_id is None:
+        if event.cl_ord_id_hash is None:
             return
-        key = (event.session_id, event.cl_ord_id)
+        key = (event.session_id, event.cl_ord_id_hash)
         context = self._open.get(key)
         if context is None:
             self.stats.orphan_responses += 1

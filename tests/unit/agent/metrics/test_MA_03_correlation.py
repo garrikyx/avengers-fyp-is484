@@ -20,11 +20,13 @@ _T0 = datetime.fromtimestamp(_CLOCK_START, tz=UTC)
 _ENVELOPE = dict(instance_id="magic-prod-01", session_id="MAGIC->EXCH1")
 
 
-def new_order(cl_ord_id: str, at: datetime = _T0, **overrides: object) -> NewOrderEvent:
+def new_order(
+    cl_ord_id_hash: str, at: datetime = _T0, **overrides: object
+) -> NewOrderEvent:
     fields: dict[str, object] = {
         **_ENVELOPE,
         "event_time_utc": at,
-        "cl_ord_id": cl_ord_id,
+        "cl_ord_id_hash": cl_ord_id_hash,
         "symbol": "AAPL",
         "side": "buy",
         "ord_type": "limit",
@@ -34,13 +36,13 @@ def new_order(cl_ord_id: str, at: datetime = _T0, **overrides: object) -> NewOrd
     return NewOrderEvent(**fields)  # type: ignore[arg-type]
 
 
-def ack(cl_ord_id: str, at: datetime, **overrides: object) -> ExecutionReportEvent:
+def ack(cl_ord_id_hash: str, at: datetime, **overrides: object) -> ExecutionReportEvent:
     fields: dict[str, object] = {
         **_ENVELOPE,
         "event_time_utc": at,
-        "cl_ord_id": cl_ord_id,
-        "order_id": f"OID-{cl_ord_id}",
-        "exec_id": f"EXEC-{cl_ord_id}-ack",
+        "cl_ord_id_hash": cl_ord_id_hash,
+        "order_id_hash": f"OID-{cl_ord_id_hash}",
+        "exec_id_hash": f"EXEC-{cl_ord_id_hash}-ack",
         "exec_type": "New",
         "ord_status": "New",
         "symbol": "AAPL",
@@ -51,13 +53,13 @@ def ack(cl_ord_id: str, at: datetime, **overrides: object) -> ExecutionReportEve
 
 
 def cancel_request(
-    cl_ord_id: str, orig_cl_ord_id: str, at: datetime = _T0
+    cl_ord_id_hash: str, orig_cl_ord_id_hash: str, at: datetime = _T0
 ) -> CancelRequestEvent:
     return CancelRequestEvent(
         **_ENVELOPE,
         event_time_utc=at,
-        cl_ord_id=cl_ord_id,
-        orig_cl_ord_id=orig_cl_ord_id,
+        cl_ord_id_hash=cl_ord_id_hash,
+        orig_cl_ord_id_hash=orig_cl_ord_id_hash,
         symbol="AAPL",
         side="buy",
         order_qty=Decimal(100),
@@ -65,13 +67,13 @@ def cancel_request(
 
 
 def cancel_replace_request(
-    cl_ord_id: str, orig_cl_ord_id: str, at: datetime = _T0
+    cl_ord_id_hash: str, orig_cl_ord_id_hash: str, at: datetime = _T0
 ) -> CancelReplaceEvent:
     return CancelReplaceEvent(
         **_ENVELOPE,
         event_time_utc=at,
-        cl_ord_id=cl_ord_id,
-        orig_cl_ord_id=orig_cl_ord_id,
+        cl_ord_id_hash=cl_ord_id_hash,
+        orig_cl_ord_id_hash=orig_cl_ord_id_hash,
         symbol="AAPL",
         side="buy",
         ord_type="limit",
@@ -79,13 +81,13 @@ def cancel_replace_request(
     )
 
 
-def replaced(cl_ord_id: str, at: datetime) -> ExecutionReportEvent:
+def replaced(cl_ord_id_hash: str, at: datetime) -> ExecutionReportEvent:
     return ExecutionReportEvent(
         **_ENVELOPE,
         event_time_utc=at,
-        cl_ord_id=cl_ord_id,
-        order_id=f"OID-{cl_ord_id}",
-        exec_id=f"EXEC-{cl_ord_id}-replaced",
+        cl_ord_id_hash=cl_ord_id_hash,
+        order_id_hash=f"OID-{cl_ord_id_hash}",
+        exec_id_hash=f"EXEC-{cl_ord_id_hash}-replaced",
         exec_type="Replaced",
         ord_status="Replaced",
         symbol="AAPL",
@@ -93,13 +95,13 @@ def replaced(cl_ord_id: str, at: datetime) -> ExecutionReportEvent:
     )
 
 
-def cancel_confirmed(cl_ord_id: str, at: datetime) -> ExecutionReportEvent:
+def cancel_confirmed(cl_ord_id_hash: str, at: datetime) -> ExecutionReportEvent:
     return ExecutionReportEvent(
         **_ENVELOPE,
         event_time_utc=at,
-        cl_ord_id=cl_ord_id,
-        order_id=f"OID-{cl_ord_id}",
-        exec_id=f"EXEC-{cl_ord_id}-cxl",
+        cl_ord_id_hash=cl_ord_id_hash,
+        order_id_hash=f"OID-{cl_ord_id_hash}",
+        exec_id_hash=f"EXEC-{cl_ord_id_hash}-cxl",
         exec_type="Canceled",
         ord_status="Canceled",
         symbol="AAPL",
@@ -108,13 +110,13 @@ def cancel_confirmed(cl_ord_id: str, at: datetime) -> ExecutionReportEvent:
 
 
 def cancel_rejected(
-    cl_ord_id: str, orig_cl_ord_id: str, at: datetime
+    cl_ord_id_hash: str, orig_cl_ord_id_hash: str, at: datetime
 ) -> CancelRejectEvent:
     return CancelRejectEvent(
         **_ENVELOPE,
         event_time_utc=at,
-        cl_ord_id=cl_ord_id,
-        orig_cl_ord_id=orig_cl_ord_id,
+        cl_ord_id_hash=cl_ord_id_hash,
+        orig_cl_ord_id_hash=orig_cl_ord_id_hash,
     )
 
 
@@ -232,7 +234,7 @@ def test_cancel_success_records_cancel_latency_not_ack_latency() -> None:
     correlator.ingest(ack("ORD-1", at=_T0 + timedelta(milliseconds=5)))
     correlator.ingest(
         cancel_request(
-            "ORD-2", orig_cl_ord_id="ORD-1", at=_T0 + timedelta(milliseconds=10)
+            "ORD-2", orig_cl_ord_id_hash="ORD-1", at=_T0 + timedelta(milliseconds=10)
         )
     )
     correlator.ingest(cancel_confirmed("ORD-2", at=_T0 + timedelta(milliseconds=25)))
@@ -252,12 +254,12 @@ def test_cancel_rejected_via_35_9_records_cancel_latency() -> None:
     correlator.ingest(new_order("ORD-1", at=_T0))
     correlator.ingest(
         cancel_request(
-            "ORD-2", orig_cl_ord_id="ORD-1", at=_T0 + timedelta(milliseconds=10)
+            "ORD-2", orig_cl_ord_id_hash="ORD-1", at=_T0 + timedelta(milliseconds=10)
         )
     )
     correlator.ingest(
         cancel_rejected(
-            "ORD-2", orig_cl_ord_id="ORD-1", at=_T0 + timedelta(milliseconds=18)
+            "ORD-2", orig_cl_ord_id_hash="ORD-1", at=_T0 + timedelta(milliseconds=18)
         )
     )
 
@@ -269,7 +271,9 @@ def test_cancel_rejected_via_35_9_records_cancel_latency() -> None:
 def test_cancel_reject_with_no_matching_request_is_an_orphan() -> None:
     aggregator, correlator, _clock = build()
 
-    correlator.ingest(cancel_rejected("ORD-UNKNOWN", orig_cl_ord_id="ORD-0", at=_T0))
+    correlator.ingest(
+        cancel_rejected("ORD-UNKNOWN", orig_cl_ord_id_hash="ORD-0", at=_T0)
+    )
 
     assert correlator.stats.orphan_responses == 1
     assert aggregator.snapshot("1m", group_by=()) == {}
@@ -285,7 +289,7 @@ def test_cancel_replace_request_is_also_a_cancel_origin() -> None:
     correlator.ingest(ack("ORD-1", at=_T0 + timedelta(milliseconds=5)))
     correlator.ingest(
         cancel_replace_request(
-            "ORD-2", orig_cl_ord_id="ORD-1", at=_T0 + timedelta(milliseconds=10)
+            "ORD-2", orig_cl_ord_id_hash="ORD-1", at=_T0 + timedelta(milliseconds=10)
         )
     )
     correlator.ingest(cancel_confirmed("ORD-2", at=_T0 + timedelta(milliseconds=25)))
@@ -301,7 +305,9 @@ def test_replace_confirmation_itself_records_no_latency() -> None:
     # (not an orphan).
     aggregator, correlator, _clock = build()
 
-    correlator.ingest(cancel_replace_request("ORD-2", orig_cl_ord_id="ORD-1", at=_T0))
+    correlator.ingest(
+        cancel_replace_request("ORD-2", orig_cl_ord_id_hash="ORD-1", at=_T0)
+    )
     correlator.ingest(replaced("ORD-2", at=_T0 + timedelta(milliseconds=10)))
 
     assert aggregator.snapshot("1m", group_by=()) == {}

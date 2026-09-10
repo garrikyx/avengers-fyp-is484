@@ -1,6 +1,10 @@
 """Fixed-boundary latency histogram (spec 004 FR-MET-025/026, FR-QRY-012).
 
-Agent-internal — plain dataclass, not a telemetry_shared contract.
+Shared by agent and backend: the agent records samples directly
+(`Histogram.record`); the backend never records, only reconstructs one from
+a wire-format payload and merges it with others across agents
+(`Histogram.merge`) — both need the exact same boundary set and percentile
+interpolation so a percentile never depends on which side computed it.
 """
 
 from __future__ import annotations
@@ -41,8 +45,11 @@ class Histogram:
         self.buckets[OVERFLOW_BUCKET] += 1
 
     def merge(self, other: Histogram) -> None:
-        """Bucket-wise addition (FR-ING-005) — used when a window snapshot
-        combines several ring-buffer buckets' histograms for one series.
+        """Bucket-wise addition (FR-ING-005, FR-STM-004) — used both when an
+        agent's window snapshot combines several ring-buffer buckets for one
+        series, and when the backend combines the same series across agents.
+        Never averages percentiles; combines the raw buckets so a percentile
+        computed afterwards reflects the true combined distribution.
         """
         self.count += other.count
         self.sum_ms += other.sum_ms

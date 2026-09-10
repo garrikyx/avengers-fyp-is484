@@ -48,7 +48,7 @@ def test_counters_and_latency_coexist_on_one_shared_aggregator() -> None:
     new_order = NewOrderEvent(
         **_ENVELOPE,
         event_time_utc=_T0,
-        cl_ord_id="ORD-1",
+        cl_ord_id_hash="ORD-1",
         symbol="AAPL",
         side="buy",
         ord_type="limit",
@@ -57,9 +57,9 @@ def test_counters_and_latency_coexist_on_one_shared_aggregator() -> None:
     ack = ExecutionReportEvent(
         **_ENVELOPE,
         event_time_utc=_T0 + timedelta(milliseconds=42),
-        cl_ord_id="ORD-1",
-        order_id="OID-1",
-        exec_id="EXEC-1",
+        cl_ord_id_hash="ORD-1",
+        order_id_hash="OID-1",
+        exec_id_hash="EXEC-1",
         exec_type="New",
         ord_status="New",
         symbol="AAPL",
