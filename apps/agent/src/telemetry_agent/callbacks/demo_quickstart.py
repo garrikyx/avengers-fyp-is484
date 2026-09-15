@@ -109,8 +109,14 @@ async def _run_one(
     task.cancel()
 
 
-def _print_counters(dispatcher: CallbackDispatcher) -> None:
+def _print_counters(dispatcher: CallbackDispatcher, *, alert_id: str) -> None:
     print(f"  counters: {dispatcher.counters.snapshot()}")
+    record = dispatcher.tracker.status_of(alert_id)
+    if record is not None:
+        print(
+            f"  delivery status ({alert_id}): {record.status.value} "
+            f"(attempts={record.attempt_count}, last_error={record.last_error})"
+        )
 
 
 def main() -> None:
@@ -130,7 +136,7 @@ def main() -> None:
     dispatcher_1 = CallbackDispatcher(sink, config, secret=b"demo-secret")
     alert_1 = _make_alert(alert_id="alert-1", rule_name="HighRejectRate")
     asyncio.run(_run_one(dispatcher_1, alert_1))
-    _print_counters(dispatcher_1)
+    _print_counters(dispatcher_1, alert_id="alert-1")
 
     _step("2. ParseErrorRate fires warning -> Magic rejects it (permanent, no retry)")
     dispatcher_2 = CallbackDispatcher(sink, config, secret=b"demo-secret")
@@ -138,14 +144,14 @@ def main() -> None:
         alert_id="alert-2", rule_name="ParseErrorRate", severity="warning"
     )
     asyncio.run(_run_one(dispatcher_2, alert_2))
-    _print_counters(dispatcher_2)
+    _print_counters(dispatcher_2, alert_id="alert-2")
 
     _step("3. Oversized alert -> dropped locally, never reaches Magic at all")
     tiny_config = parse_callbacks_config({"endpoint": endpoint, "maxBytes": 10})
     dispatcher_3 = CallbackDispatcher(sink, tiny_config, secret=b"demo-secret")
     alert_3 = _make_alert(alert_id="alert-3", rule_name="AckLatencyBreach")
     asyncio.run(_run_one(dispatcher_3, alert_3))
-    _print_counters(dispatcher_3)
+    _print_counters(dispatcher_3, alert_id="alert-3")
 
     _step(
         "4. AckLatencyBreach fires -> Magic errors twice, then succeeds "
@@ -154,7 +160,7 @@ def main() -> None:
     dispatcher_4 = CallbackDispatcher(sink, config, secret=b"demo-secret")
     alert_4 = _make_alert(alert_id="alert-4", rule_name="AckLatencyBreach")
     asyncio.run(_run_one(dispatcher_4, alert_4, wait_seconds=8.0))
-    _print_counters(dispatcher_4)
+    _print_counters(dispatcher_4, alert_id="alert-4")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
-"""UBS-32/33: dispatches Rule Engine alerts to Magic's callback endpoint,
-retrying transient failures with backoff.
+"""UBS-32/33/34: dispatches Rule Engine alerts to Magic's callback
+endpoint, retrying transient failures with backoff and tracking each
+alert's delivery status.
 
 `enqueue()` is the entry point a future supervisor/pipeline-wiring step
 calls with each `AlertEvent` `RuleEngine.evaluate()`/`apply_rules()`
@@ -23,6 +24,7 @@ from telemetry_agent.callbacks.retry import RetryDecision, classify_http_status
 from telemetry_agent.callbacks.self_metrics import CounterRegistry
 from telemetry_agent.callbacks.signing import sign
 from telemetry_agent.callbacks.sink import CallbackSink
+from telemetry_agent.callbacks.status import DeliveryStatus, DeliveryTracker
 
 
 class CallbackDispatcher:
@@ -33,12 +35,14 @@ class CallbackDispatcher:
         secret: bytes,
         *,
         counters: CounterRegistry | None = None,
+        tracker: DeliveryTracker | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._sink = sink
         self._config = config
         self._secret = secret
         self._counters = counters or CounterRegistry()
+        self._tracker = tracker or DeliveryTracker()
         self._logger = logger or logging.getLogger(__name__)
         self._queue: DropOldestQueue[AlertEvent] = DropOldestQueue(
             config.queue_size,
@@ -56,10 +60,17 @@ class CallbackDispatcher:
     def counters(self) -> CounterRegistry:
         return self._counters
 
+    @property
+    def tracker(self) -> DeliveryTracker:
+        return self._tracker
+
     def enqueue(self, alert: AlertEvent) -> None:
         """Sync, non-blocking — the entry point a future wiring step calls
         from the same site that calls `RuleEngine.evaluate()`.
         """
+        self._tracker.record(
+            alert.alert_id, DeliveryStatus.PENDING, now=datetime.now(UTC)
+        )
         self._queue.put_dropping_oldest(alert)
 
     async def run(self) -> None:
@@ -102,9 +113,18 @@ class CallbackDispatcher:
                 self._config.max_bytes,
             )
             self._counters.increment("callback_failures")
+            self._tracker.record(
+                alert.alert_id,
+                DeliveryStatus.FAILED,
+                now=datetime.now(UTC),
+                error="payload_too_large",
+            )
             return
 
         for attempt in range(1, self._config.max_attempts + 1):
+            self._tracker.record(
+                alert.alert_id, DeliveryStatus.SENT, now=datetime.now(UTC)
+            )
             timestamp = str(int(datetime.now(UTC).timestamp()))
             headers = {
                 "Content-Type": "application/json",
@@ -122,7 +142,15 @@ class CallbackDispatcher:
 
             if decision is RetryDecision.SUCCESS:
                 self._counters.increment("callback_delivered")
+                self._tracker.record(
+                    alert.alert_id, DeliveryStatus.DELIVERED, now=datetime.now(UTC)
+                )
                 return
+
+            if result.status_code is not None:
+                failure_reason = f"http_{result.status_code}"
+            else:
+                failure_reason = result.error_class or "transport_error"
 
             if decision is RetryDecision.PERMANENT_FAILURE:
                 self._logger.error(
@@ -133,6 +161,12 @@ class CallbackDispatcher:
                     result.error_class,
                 )
                 self._counters.increment("callback_failures")
+                self._tracker.record(
+                    alert.alert_id,
+                    DeliveryStatus.FAILED,
+                    now=datetime.now(UTC),
+                    error=failure_reason,
+                )
                 return
 
             if attempt >= self._config.max_attempts:
@@ -145,6 +179,12 @@ class CallbackDispatcher:
                     result.error_class,
                 )
                 self._counters.increment("callback_failures")
+                self._tracker.record(
+                    alert.alert_id,
+                    DeliveryStatus.FAILED,
+                    now=datetime.now(UTC),
+                    error=failure_reason,
+                )
                 return
 
             delay = self._retry_policy.delay_for_attempt(
@@ -159,5 +199,11 @@ class CallbackDispatcher:
                 result.status_code,
                 result.error_class,
                 delay,
+            )
+            self._tracker.record(
+                alert.alert_id,
+                DeliveryStatus.RETRYING,
+                now=datetime.now(UTC),
+                error=failure_reason,
             )
             await asyncio.sleep(delay)

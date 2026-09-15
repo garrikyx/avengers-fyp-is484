@@ -11,6 +11,11 @@ from telemetry_agent.callbacks.sink import (
     DryRunCallbackSink,
     HttpsCallbackSink,
 )
+from telemetry_agent.callbacks.status import (
+    DeliveryRecord,
+    DeliveryStatus,
+    DeliveryTracker,
+)
 
 __all__ = [
     "CallbackConfigError",
@@ -18,6 +23,9 @@ __all__ = [
     "CallbackResult",
     "CallbackSink",
     "CallbacksConfig",
+    "DeliveryRecord",
+    "DeliveryStatus",
+    "DeliveryTracker",
     "DryRunCallbackSink",
     "HttpsCallbackSink",
     "load_callbacks_config",
