@@ -1,8 +1,8 @@
 """FR-CBK-*: the `callbacks:` YAML config section (spec 010), following the
 same load/validate pattern as `rules/config_loader.py`.
 
-UBS-32 scope: transport/dispatch fields only. Retry-specific fields
-(`retry.*`, `maxAttempts`) are added by UBS-33's pass over this file.
+UBS-33 adds the retry fields (`retry.*`, `maxAttempts`) on top of UBS-32's
+transport/dispatch fields.
 """
 
 from __future__ import annotations
@@ -23,6 +23,15 @@ class CallbackConfigError(Exception):
     """
 
 
+class _RetryYaml(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base: str = "1s"
+    factor: float = 2.0
+    cap: str = "60s"
+    jitter: float = 0.2
+
+
 class _CallbacksYaml(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel, populate_by_name=True, extra="forbid"
@@ -34,6 +43,8 @@ class _CallbacksYaml(BaseModel):
     dry_run: bool = False
     connect_timeout: str = "3s"
     timeout: str = "10s"
+    max_attempts: int = 5
+    retry: _RetryYaml = _RetryYaml()
     max_inflight: int = 4
     queue_size: int = 256
     max_bytes: int = 16384
@@ -52,6 +63,11 @@ class CallbacksConfig(BaseModel):
     dry_run: bool
     connect_timeout_seconds: float
     timeout_seconds: float
+    max_attempts: int
+    retry_base_seconds: float
+    retry_factor: float
+    retry_cap_seconds: float
+    retry_jitter: float
     max_inflight: int
     queue_size: int
     max_bytes: int
@@ -81,6 +97,11 @@ def parse_callbacks_config(raw: dict[str, Any]) -> CallbacksConfig:
         dry_run=parsed.dry_run,
         connect_timeout_seconds=_parse_duration_seconds(parsed.connect_timeout),
         timeout_seconds=_parse_duration_seconds(parsed.timeout),
+        max_attempts=parsed.max_attempts,
+        retry_base_seconds=_parse_duration_seconds(parsed.retry.base),
+        retry_factor=parsed.retry.factor,
+        retry_cap_seconds=_parse_duration_seconds(parsed.retry.cap),
+        retry_jitter=parsed.retry.jitter,
         max_inflight=parsed.max_inflight,
         queue_size=parsed.queue_size,
         max_bytes=parsed.max_bytes,

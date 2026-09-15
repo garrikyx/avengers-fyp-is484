@@ -1,12 +1,9 @@
-"""UBS-32: dispatches Rule Engine alerts to Magic's callback endpoint.
+"""UBS-32/33: dispatches Rule Engine alerts to Magic's callback endpoint,
+retrying transient failures with backoff.
 
 `enqueue()` is the entry point a future supervisor/pipeline-wiring step
 calls with each `AlertEvent` `RuleEngine.evaluate()`/`apply_rules()`
 produces; nothing in this repo calls it yet (see docs/plan/scaffold.md).
-
-UBS-32 scope: a single delivery attempt per alert. On anything other than a
-2xx response, the failure is logged and counted — no retry loop yet. That's
-UBS-33's extension to `_deliver()`.
 """
 
 from __future__ import annotations
@@ -18,9 +15,11 @@ from datetime import UTC, datetime
 
 from telemetry_shared.models.alerts import AlertEvent
 
+from telemetry_agent.callbacks.backoff import RetryPolicy
 from telemetry_agent.callbacks.config import CallbacksConfig
 from telemetry_agent.callbacks.payload import from_alert_event
 from telemetry_agent.callbacks.queue import DropOldestQueue
+from telemetry_agent.callbacks.retry import RetryDecision, classify_http_status
 from telemetry_agent.callbacks.self_metrics import CounterRegistry
 from telemetry_agent.callbacks.signing import sign
 from telemetry_agent.callbacks.sink import CallbackSink
@@ -44,6 +43,13 @@ class CallbackDispatcher:
         self._queue: DropOldestQueue[AlertEvent] = DropOldestQueue(
             config.queue_size,
             on_drop=lambda: self._counters.increment("callback_queue_dropped"),
+        )
+        self._retry_policy = RetryPolicy(
+            base_seconds=config.retry_base_seconds,
+            factor=config.retry_factor,
+            cap_seconds=config.retry_cap_seconds,
+            jitter=config.retry_jitter,
+            max_attempts=config.max_attempts,
         )
 
     @property
@@ -76,6 +82,12 @@ class CallbackDispatcher:
             await self._deliver(alert)
 
     async def _deliver(self, alert: AlertEvent) -> None:
+        """Signs and sends `alert`, retrying transient failures with
+        backoff (`FR-CBK-004`/`006`) up to `maxAttempts`. A single fixed
+        `X-Telemetry-Idempotency-Key` covers every attempt of this
+        occurrence (`FR-CBK-003`); each attempt gets its own
+        `X-Telemetry-Delivery-Id` so Magic can distinguish retries in logs.
+        """
         idempotency_key = (
             f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
         )
@@ -92,24 +104,60 @@ class CallbackDispatcher:
             self._counters.increment("callback_failures")
             return
 
-        timestamp = str(int(datetime.now(UTC).timestamp()))
-        headers = {
-            "Content-Type": "application/json",
-            "X-Telemetry-Delivery-Id": str(uuid.uuid4()),
-            "X-Telemetry-Idempotency-Key": idempotency_key,
-            "X-Telemetry-Timestamp": timestamp,
-            "X-Telemetry-Signature": sign(self._secret, timestamp, body),
-        }
-        result = await self._sink.send(body=body, headers=headers)
+        for attempt in range(1, self._config.max_attempts + 1):
+            timestamp = str(int(datetime.now(UTC).timestamp()))
+            headers = {
+                "Content-Type": "application/json",
+                "X-Telemetry-Delivery-Id": str(uuid.uuid4()),
+                "X-Telemetry-Idempotency-Key": idempotency_key,
+                "X-Telemetry-Timestamp": timestamp,
+                "X-Telemetry-Signature": sign(self._secret, timestamp, body),
+            }
+            result = await self._sink.send(body=body, headers=headers)
+            decision = (
+                classify_http_status(result.status_code)
+                if result.status_code is not None
+                else RetryDecision.RETRY  # transport error: never reached Magic
+            )
 
-        if result.status_code is not None and 200 <= result.status_code < 300:
-            self._counters.increment("callback_delivered")
-            return
+            if decision is RetryDecision.SUCCESS:
+                self._counters.increment("callback_delivered")
+                return
 
-        self._logger.error(
-            "callback delivery failed for alert %s: status=%s error=%s",
-            alert.alert_id,
-            result.status_code,
-            result.error_class,
-        )
-        self._counters.increment("callback_failures")
+            if decision is RetryDecision.PERMANENT_FAILURE:
+                self._logger.error(
+                    "callback delivery permanently failed for alert %s: "
+                    "status=%s error=%s",
+                    alert.alert_id,
+                    result.status_code,
+                    result.error_class,
+                )
+                self._counters.increment("callback_failures")
+                return
+
+            if attempt >= self._config.max_attempts:
+                self._logger.error(
+                    "callback delivery failed for alert %s after %d attempts: "
+                    "status=%s error=%s",
+                    alert.alert_id,
+                    attempt,
+                    result.status_code,
+                    result.error_class,
+                )
+                self._counters.increment("callback_failures")
+                return
+
+            delay = self._retry_policy.delay_for_attempt(
+                attempt, retry_after=result.retry_after_seconds
+            )
+            self._logger.warning(
+                "callback delivery attempt %d/%d failed for alert %s: "
+                "status=%s error=%s; retrying in %.1fs",
+                attempt,
+                self._config.max_attempts,
+                alert.alert_id,
+                result.status_code,
+                result.error_class,
+                delay,
+            )
+            await asyncio.sleep(delay)
