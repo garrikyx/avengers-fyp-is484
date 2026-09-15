@@ -1,4 +1,4 @@
-.PHONY: sync parser-test parser-demo metrics-demo metrics-quickstart stream-processor-quickstart lint
+.PHONY: sync parser-test parser-demo metrics-demo metrics-quickstart stream-processor-quickstart callback-test callback-demo lint
 
 sync:
 	uv sync
@@ -14,6 +14,12 @@ parser-demo:
 	  --corpus apps/agent/testdata/fix/demo_logs.txt \
 	  --corpus apps/agent/testdata/magic/ \
 	  --config apps/agent/testdata/magic/demo_config.yaml
+
+callback-test: sync
+	uv run pytest tests/unit/agent/callbacks/ -v
+
+callback-demo:
+	uv run python -m telemetry_agent.callbacks.demo_quickstart
 
 metrics-demo:
 	uv run python -m telemetry_agent.metrics.demo
