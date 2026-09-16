@@ -28,8 +28,8 @@ def new_order(
         "event_time_utc": at,
         "cl_ord_id_hash": cl_ord_id_hash,
         "symbol": "AAPL",
-        "side": "buy",
-        "ord_type": "limit",
+        "side": "Buy",
+        "ord_type": "Limit",
         "order_qty": Decimal(100),
     }
     fields.update(overrides)
@@ -46,7 +46,7 @@ def ack(cl_ord_id_hash: str, at: datetime, **overrides: object) -> ExecutionRepo
         "exec_type": "New",
         "ord_status": "New",
         "symbol": "AAPL",
-        "side": "buy",
+        "side": "Buy",
     }
     fields.update(overrides)
     return ExecutionReportEvent(**fields)  # type: ignore[arg-type]
@@ -61,7 +61,7 @@ def cancel_request(
         cl_ord_id_hash=cl_ord_id_hash,
         orig_cl_ord_id_hash=orig_cl_ord_id_hash,
         symbol="AAPL",
-        side="buy",
+        side="Buy",
         order_qty=Decimal(100),
     )
 
@@ -75,8 +75,8 @@ def cancel_replace_request(
         cl_ord_id_hash=cl_ord_id_hash,
         orig_cl_ord_id_hash=orig_cl_ord_id_hash,
         symbol="AAPL",
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty=Decimal(100),
     )
 
@@ -91,7 +91,7 @@ def replaced(cl_ord_id_hash: str, at: datetime) -> ExecutionReportEvent:
         exec_type="Replaced",
         ord_status="Replaced",
         symbol="AAPL",
-        side="buy",
+        side="Buy",
     )
 
 
@@ -105,7 +105,7 @@ def cancel_confirmed(cl_ord_id_hash: str, at: datetime) -> ExecutionReportEvent:
         exec_type="Canceled",
         ord_status="Canceled",
         symbol="AAPL",
-        side="buy",
+        side="Buy",
     )
 
 

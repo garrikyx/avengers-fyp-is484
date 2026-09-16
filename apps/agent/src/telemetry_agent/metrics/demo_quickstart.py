@@ -55,8 +55,8 @@ def main() -> None:
             event_time_utc=now,
             cl_ord_id_hash="C1",
             symbol="AAPL",
-            side="buy",
-            ord_type="limit",
+            side="Buy",
+            ord_type="Limit",
             order_qty=Decimal(100),
         )
     )
@@ -71,7 +71,7 @@ def main() -> None:
             exec_type="New",
             ord_status="New",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )
     )
     ingest(
@@ -85,7 +85,7 @@ def main() -> None:
             exec_type="Trade",
             ord_status="Filled",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
             last_qty=Decimal(100),
             leaves_qty=Decimal(0),
         )
@@ -101,8 +101,8 @@ def main() -> None:
             event_time_utc=now,
             cl_ord_id_hash="C2",
             symbol="MSFT",
-            side="buy",
-            ord_type="limit",
+            side="Buy",
+            ord_type="Limit",
             order_qty=Decimal(50),
         )
     )
@@ -117,7 +117,7 @@ def main() -> None:
             exec_type="New",
             ord_status="New",
             symbol="MSFT",
-            side="buy",
+            side="Buy",
         )
     )
     ingest(
@@ -131,7 +131,7 @@ def main() -> None:
             exec_type="Trade",
             ord_status="Filled",
             symbol="MSFT",
-            side="buy",
+            side="Buy",
             last_qty=Decimal(50),
             leaves_qty=Decimal(0),
         )
@@ -147,8 +147,8 @@ def main() -> None:
             event_time_utc=now,
             cl_ord_id_hash="C3",
             symbol="GOOG",
-            side="sell",
-            ord_type="market",
+            side="Sell",
+            ord_type="Market",
             order_qty=Decimal(200),
         )
     )
@@ -163,7 +163,7 @@ def main() -> None:
             exec_type="Rejected",
             ord_status="Rejected",
             symbol="GOOG",
-            side="sell",
+            side="Sell",
             reject_reason_code="OrderExceedsLimit",
         )
     )

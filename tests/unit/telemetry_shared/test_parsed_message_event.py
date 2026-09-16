@@ -56,8 +56,8 @@ def test_new_order_event_with_all_required_fields_succeeds() -> None:
         **ENVELOPE,
         cl_ord_id_hash="ORD-1",
         symbol="AAPL",
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty=Decimal(100),
     )
     assert event.msg_type == "NewOrderSingle"
@@ -74,8 +74,8 @@ def test_order_qty_never_coerces_through_float_imprecision() -> None:
         **ENVELOPE,
         cl_ord_id_hash="ORD-1",
         symbol="AAPL",
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty="100.10",  # type: ignore[arg-type]
     )
     assert event.order_qty == Decimal("100.10")
@@ -87,7 +87,7 @@ def test_execution_report_requires_exec_fields() -> None:
             **ENVELOPE,
             cl_ord_id_hash="ORD-1",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )  # type: ignore[call-arg]
 
 
@@ -101,7 +101,7 @@ def test_execution_report_trade_requires_last_qty() -> None:
             exec_type="Trade",
             ord_status="Filled",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )
 
 
@@ -116,7 +116,7 @@ def test_execution_report_rejected_does_not_require_reject_reason() -> None:
         exec_type="Rejected",
         ord_status="Rejected",
         symbol="AAPL",
-        side="buy",
+        side="Buy",
     )
     assert event.reject_reason_code is None
     assert event.reject_reason_text is None
@@ -139,7 +139,7 @@ def test_cancel_replace_event_requires_its_order_fields() -> None:
             cl_ord_id_hash="ORD-1",
             orig_cl_ord_id_hash="ORD-0",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
             order_qty=Decimal(100),
         )  # type: ignore[call-arg]
 
