@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-10
+Status: Live document · Last updated: 2026-09-16
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | M1.5 | Pipeline bridge (monitor → parser) | **Not started** — `apps/agent/src/telemetry_agent/pipeline/` does not exist yet |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics) implemented and tested; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics, per-instance locking, memory estimation/shedding) implemented and tested; `/healthz`/`/readyz` implemented; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -78,15 +78,83 @@ formula-ready but has no producer yet.
 
 ## M4 requirement coverage (Stream Processor & Metric Store)
 
+Renumbered since this table was first written: the original single ticket for this
+work (UBS-79/UBS-88 in earlier drafts) split into UBS-89 (cross-agent merge
+correctness — the rows below) and UBS-90 (store memory & concurrency — its own
+table beneath). UBS-93 (Alert Store) is a separate, later epic.
+
 | ID | Story | Requirement | Status | Verified by |
 | --- | --- | --- | --- | --- |
-| UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
-| UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
+| UBS-89 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
+| UBS-89 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
+| UBS-89 | Per-bucket series cardinality cap (cross-agent) | `FR-MET-030`-equivalent, `NFR-REL-009` | Done | `test_STM_02_merge_semantics.py::test_series_over_the_cardinality_cap_are_dropped_and_counted` |
 
-Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
+UBS-89 note: views are keyed by `instanceId` only, not `(application, instanceId,
+agentId, window)` — `application` is carried on the wire `Snapshot` but not read by
+`MetricStore`. This follows ADR 0005's assumption that cross-replica routing
+(consistent-hash on `instanceId`) already requires `instanceId` to be globally
+unique; `agentId` and window are handled inside reads (contribution keys, range
+queries) rather than as separate top-level store keys. Flagged for confirmation,
+not changed unilaterally.
+
+Known gap, not closed here: the merge-associativity test
+(`test_STM_01_window_alignment.py::test_merge_is_associative_regardless_of_arrival_order`)
+is a hand-picked example, not the `hypothesis` property test spec 012 names for this
+case — `hypothesis` isn't a repo dependency yet.
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-90 | Per-instance ring buffer, bounded memory | `FR-QRY-001`, `FR-QRY-002` | Partial | Ring buffer done (pre-existing); pre-rolled 1m/5m rollups deferred — see note below |
+| UBS-90 | Memory estimation, warn/shed thresholds | `FR-QRY-003`, `NFR-SCA-006` | Done | `test_QRY_03_memory.py` |
+| UBS-90 | Per-instance lock, not one global lock | `FR-QRY-004` | Done | `test_QRY_04_concurrency.py` |
+| UBS-90 | `/readyz` warming state | `FR-QRY-005` | Done | `test_health_endpoints.py` |
+
+UBS-90 note on `FR-QRY-001`'s pre-rolled 1m/5m rollups: deferred. `read()` sums
+whatever 10s canonical buckets fall in the requested range on every query;
+`test_STM_04_efficiency.py` already proves this indexes only the requested span, not
+the whole ring, so a 6h query costs at most ~2160 bucket reads rather than scanning
+the full ring unconditionally. This keeps query cost bounded without a second,
+incrementally-updated rollup structure to keep consistent with the 10s tier.
+Revisit if profiling under real load shows the on-demand sum is too expensive.
+
+UBS-90 note on `estimated_memory_bytes()`: a documented fixed-bytes-per-series
+estimate (`_BYTES_PER_SERIES_CONTRIBUTION` / `_BYTES_PER_BUCKET_OVERHEAD` in
+`metric_store.py`), not `sys.getsizeof` introspection, per `NFR-SCA-006`'s "documented
+as bytes-per-series-per-bucket". `_shed_oldest_tier` evicts the older half of every
+instance's retained buckets uniformly, as a cheap approximation of "the oldest
+retention tier" — not a cross-instance LRU, which would need globally comparable
+bucket ages this store doesn't track. Known undercount: an instance's ring is
+allocated at full `capacity` the moment it's first touched, but the gauge only counts
+buckets that actually hold data (`bucket.start is not None`) — a lightly-used instance's
+empty shell buckets are real allocated objects the gauge currently reports as ~0 bytes.
+At `NFR-SCA-006`'s "100 instances" target and the 24h retention max this is a
+non-trivial, currently-invisible floor. Not fixed in this pass.
+
+UBS-90 fix (post-review): the memory warn/shed mechanism was initially reachable only
+through `MetricStore.tick()`, and nothing in this repo calls `tick()` on a schedule —
+so it was correctly implemented but structurally unreachable from the real write path.
+`merge()` now self-triggers a throttled check (`_maybe_check_memory_pressure`, at most
+once per `_MEMORY_CHECK_INTERVAL_SECONDS`, run *after* releasing the writing instance's
+own lock to avoid deadlocking with `_shed_oldest_tier`) — see
+`test_QRY_03_memory.py::test_merge_alone_can_trigger_shedding_without_an_external_tick`.
+`tick()` remains available for an eventual periodic sweep (useful for retention eviction
+on instances that go quiet, which a write-triggered check alone wouldn't catch), and
+now shares the same throttle state so it doesn't immediately re-trigger after an
+explicit call.
+
+UBS-90 fix (post-review): `StreamProcessor.is_ready()` initially gated only on elapsed
+wall-clock time since process start, which would flip `/readyz` to `ready` even if
+ingestion never delivered anything — exactly the "empty store misread as zero activity"
+case `FR-QRY-005` exists to prevent. It now also requires `MetricStore.has_data`
+(sticky: set once real data is merged, never unset by a later quiet period) — see
+`test_health_endpoints.py`'s `test_is_ready_stays_false_past_warmup_window_if_no_data_ever_arrived`
+and `test_is_ready_stays_true_once_data_has_arrived_even_if_it_later_ages_out`.
+
+Full detail and remaining known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
 §7. Not yet wired: nothing calls `StreamProcessor.process_snapshot()` with real
-data — no agent Backend Publisher and no backend Ingestion Service or HTTP
-layer exist yet (both separate, later work).
+data — no agent Backend Publisher and no backend Ingestion Service exist yet (both
+separate, later work). `main.py` now exposes `/healthz` and `/readyz` only; ingestion
+and query routes are out of scope for UBS-89/90.
 
 ## M5 requirement coverage (RE-01–04)
 

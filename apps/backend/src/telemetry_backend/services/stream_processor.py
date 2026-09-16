@@ -63,12 +63,39 @@ class StreamProcessor:
         self,
         config: StreamProcessorConfig | None = None,
         store: MetricStore | None = None,
+        *,
+        started_at: datetime | None = None,
     ) -> None:
         self._config = config or StreamProcessorConfig()
         self.store = store or MetricStore(self._config)
         # FR-STM-005: dropped (too-old) buckets MUST be observable, not
         # silently discarded. A future `/metrics` endpoint reads this.
         self.dropped_buckets_total = 0
+        # FR-QRY-005: a restart loses all metric state (ADR 0005), so
+        # `/readyz` reports `warming` for `warmupWindow` after *this*
+        # moment rather than reading an empty just-started store as
+        # caught-up-and-idle. Injectable for tests that need a fixed clock.
+        self._started_at = started_at or datetime.now(UTC)
+
+    def is_ready(self, *, now: datetime | None = None) -> bool:
+        """FR-QRY-005: `False` ("warming") until `warmupWindow` has elapsed
+        since this replica started AND at least one snapshot has actually
+        been merged. Elapsed time alone isn't enough: if ingestion never
+        delivers anything (down, misconfigured, no agents connected), a
+        time-only gate would still flip to `ready` with a genuinely empty
+        store — exactly the "empty store misread as zero activity" case
+        this requirement exists to prevent. `store.has_data` is sticky
+        (FR-QRY-005: a restart is what resets it, not a later quiet period
+        with nothing currently resident), so a legitimately idle instance
+        that has already proven data flows once does not flap back to
+        `warming`.
+        """
+        now = now or datetime.now(UTC)
+        elapsed_seconds = (now - self._started_at).total_seconds()
+        return (
+            elapsed_seconds >= self._config.warmup_window_seconds
+            and self.store.has_data
+        )
 
     def process_snapshot(
         self, snapshot: Snapshot, *, now: datetime | None = None

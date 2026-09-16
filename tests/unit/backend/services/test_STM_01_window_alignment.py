@@ -178,6 +178,20 @@ def test_config_rejects_max_bucket_age_greater_than_retention_window() -> None:
         )
 
 
+def test_config_rejects_a_non_positive_memory_limit() -> None:
+    with pytest.raises(ValueError, match="memory_limit_mb"):
+        StreamProcessorConfig(memory_limit_mb=0)
+
+
+def test_config_rejects_a_shed_percent_not_above_warn_percent() -> None:
+    """FR-QRY-003: the shed threshold must be strictly above the warn
+    threshold, or the two would fire in the wrong order under rising
+    memory pressure.
+    """
+    with pytest.raises(ValueError, match="memory_warn_percent"):
+        StreamProcessorConfig(memory_warn_percent=90, memory_shed_percent=75)
+
+
 def test_gauges_take_the_latest_value_by_native_time_not_by_arrival_order() -> None:
     """FR-MET-028 + FR-ING-005 together: gauges are last-write-wins, but
     this stage must accept out-of-order arrival — so "last" has to mean

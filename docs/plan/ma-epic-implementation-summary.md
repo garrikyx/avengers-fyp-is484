@@ -266,13 +266,19 @@ reject-rate case this component's AC requires explicitly. Run:
 clean on every file this component touched (`make lint` itself still only
 runs `mypy apps/agent/src` — it doesn't cover the backend yet).
 
-**Known gaps, not closed here**: the per-bucket contribution maps and the
-per-instance ring dictionary have no cardinality cap or drop counter yet
-(`NFR-REL-009` expects one on every accumulating structure); the merge-
-associativity test is a hand-picked example, not the `hypothesis` property
-test spec 012 names for this case (`hypothesis` isn't a dependency yet);
-and there is no per-instance lock (`FR-QRY-004`) — moot today since nothing
-concurrent calls into this code yet.
+**Known gaps, since closed** (UBS-90, see `implementation-status.md`'s M4 table):
+the per-bucket contribution maps now have a cardinality cap and drop counter
+(`max_series_per_bucket`/`dropped_series_over_cap_total`, `NFR-REL-009`), and
+there is now a per-instance lock (`FR-QRY-004`) plus memory estimation and
+warn/shed thresholds (`FR-QRY-003`) and `/readyz` warm-up reporting
+(`FR-QRY-005`).
+
+**Known gaps, still not closed**: the merge-associativity test is a hand-picked
+example, not the `hypothesis` property test spec 012 names for this case
+(`hypothesis` isn't a dependency yet); and pre-rolled 1m/5m rollups
+(`FR-QRY-001`) are deferred in favour of the existing indexed range-read over
+the 10s canonical ring, which `test_STM_04_efficiency.py` already proves is
+bounded — see `implementation-status.md` for the full note.
 
 **Relationship to neighbouring, unbuilt components** (out of scope here,
 noted only for orientation): nothing yet calls this code with real data —
