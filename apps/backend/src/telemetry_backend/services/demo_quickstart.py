@@ -79,8 +79,8 @@ def _accept_and_fill(
             event_time_utc=now,
             cl_ord_id_hash=cl_ord_id_hash,
             symbol=symbol,
-            side="buy",
-            ord_type="limit",
+            side="Buy",
+            ord_type="Limit",
             order_qty=Decimal(qty),
         )
     )
@@ -95,7 +95,7 @@ def _accept_and_fill(
             exec_type="New",
             ord_status="New",
             symbol=symbol,
-            side="buy",
+            side="Buy",
         )
     )
     ingest(
@@ -109,7 +109,7 @@ def _accept_and_fill(
             exec_type="Trade",
             ord_status="Filled",
             symbol=symbol,
-            side="buy",
+            side="Buy",
             last_qty=Decimal(qty),
             leaves_qty=Decimal(0),
         )
@@ -126,8 +126,8 @@ def _reject(
             event_time_utc=now,
             cl_ord_id_hash=cl_ord_id_hash,
             symbol=symbol,
-            side="sell",
-            ord_type="market",
+            side="Sell",
+            ord_type="Market",
             order_qty=Decimal(qty),
         )
     )
@@ -142,7 +142,7 @@ def _reject(
             exec_type="Rejected",
             ord_status="Rejected",
             symbol=symbol,
-            side="sell",
+            side="Sell",
             reject_reason_code="OrderExceedsLimit",
         )
     )

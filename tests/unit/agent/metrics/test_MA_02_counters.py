@@ -150,7 +150,7 @@ def _exec_report_event(**overrides: object) -> ParsedMessageEvent:
         exec_id_hash="EXEC-1",
         exec_type="Trade",
         symbol="AAPL",
-        side="buy",
+        side="Buy",
         last_qty=Decimal(10),
     )
     fields.update(overrides)

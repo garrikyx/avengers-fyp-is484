@@ -1,4 +1,4 @@
-.PHONY: sync parser-test parser-demo metrics-demo metrics-quickstart stream-processor-quickstart lint
+.PHONY: sync parser-test parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart stream-processor-quickstart lint
 
 sync:
 	uv sync
@@ -20,6 +20,9 @@ metrics-demo:
 
 metrics-quickstart:
 	uv run python -m telemetry_agent.metrics.demo_quickstart
+
+metrics-bridge-quickstart:
+	uv run python -m telemetry_agent.parser.demo_metrics_bridge
 
 stream-processor-quickstart:
 	uv run python -m telemetry_backend.services.demo_quickstart

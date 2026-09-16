@@ -48,8 +48,8 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             event_time_utc=_T0,
             cl_ord_id_hash="ORD-1",
             symbol="AAPL",
-            side="buy",
-            ord_type="limit",
+            side="Buy",
+            ord_type="Limit",
             order_qty=Decimal(100),
         ),
         # 2. orders_acked
@@ -62,7 +62,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             exec_type="New",
             ord_status="New",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         ),
         # 3. executions=1, fills_full=1 (LeavesQty=0), executed_qty += 100
         ExecutionReportEvent(
@@ -74,7 +74,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             exec_type="Trade",
             ord_status="Filled",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
             last_qty=Decimal(100),
             leaves_qty=Decimal(0),
         ),
@@ -84,8 +84,8 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             event_time_utc=_T0,
             cl_ord_id_hash="ORD-2",
             symbol="MSFT",
-            side="sell",
-            ord_type="market",
+            side="Sell",
+            ord_type="Market",
             order_qty=Decimal(50),
         ),
         # 5. executions=1, fills_partial=1 (LeavesQty=30>0), executed_qty += 20
@@ -98,7 +98,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             exec_type="Trade",
             ord_status="PartiallyFilled",
             symbol="MSFT",
-            side="sell",
+            side="Sell",
             last_qty=Decimal(20),
             leaves_qty=Decimal(30),
         ),
@@ -108,8 +108,8 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             event_time_utc=_T0,
             cl_ord_id_hash="ORD-3",
             symbol="GOOG",
-            side="buy",
-            ord_type="limit",
+            side="Buy",
+            ord_type="Limit",
             order_qty=Decimal(10),
         ),
         # 7. orders_rejected=1, rejects_total+=1; reason "OrderExceedsLimit" is
@@ -125,7 +125,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             exec_type="Rejected",
             ord_status="Rejected",
             symbol="GOOG",
-            side="buy",
+            side="Buy",
             reject_reason_code="OrderExceedsLimit",
         ),
         # 8. orders_cancel_requested
@@ -135,7 +135,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             cl_ord_id_hash="ORD-4",
             orig_cl_ord_id_hash="ORD-1",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
             order_qty=Decimal(100),
         ),
         # 9. orders_replaced
@@ -145,8 +145,8 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             cl_ord_id_hash="ORD-5",
             orig_cl_ord_id_hash="ORD-2",
             symbol="MSFT",
-            side="sell",
-            ord_type="market",
+            side="Sell",
+            ord_type="Market",
             order_qty=Decimal(30),
         ),
         # 10. cancel_rejects=1, rejects_total+=1; reason "UnknownOrder" is also
@@ -176,7 +176,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             exec_type="Canceled",
             ord_status="Canceled",
             symbol="TSLA",
-            side="sell",
+            side="Sell",
         ),
         # 13. orders_expired=1
         ExecutionReportEvent(
@@ -188,7 +188,7 @@ def hand_labelled_events() -> list[ParsedMessageEvent]:
             exec_type="Expired",
             ord_status="Expired",
             symbol="AMZN",
-            side="buy",
+            side="Buy",
         ),
         # 14. unclassified_messages
         ParsedMessageEvent(
