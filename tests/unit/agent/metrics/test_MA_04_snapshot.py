@@ -85,8 +85,8 @@ def test_ratio_is_null_when_denominator_is_zero() -> None:
         event_time_utc=_T0,
         cl_ord_id_hash="ORD-1",
         symbol="AAPL",
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty=Decimal(100),
     )
     aggregator.ingest_counters(order, derive_counters(order))
@@ -137,8 +137,8 @@ def test_gauges_reflect_pending_orders_and_event_staleness() -> None:
         event_time_utc=datetime.fromtimestamp(clock(), tz=UTC),
         cl_ord_id_hash="ORD-STUCK",
         symbol="AAPL",
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty=Decimal(100),
     )
     aggregator.ingest_counters(order, derive_counters(order))

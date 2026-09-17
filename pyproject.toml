@@ -12,6 +12,7 @@ dev = [
     "telemetry-agent",
     "telemetry-backend",
     "types-pyyaml",
+    "httpx>=0.27",
 ]
 
 [tool.uv.sources]
