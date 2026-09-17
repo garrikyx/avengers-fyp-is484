@@ -58,14 +58,21 @@ ContributionKey = tuple[str, int]
 
 # NFR-SCA-006: memory MUST be documented as bytes-per-series-per-bucket so
 # capacity can be computed rather than guessed. These are conservative fixed
-# estimates, not `sys.getsizeof` introspection — a `_SeriesContribution`
-# holds a handful of Decimal-valued counters plus an 11-bucket histogram of
-# ints/Decimals, plus CPython dict/dataclass overhead; an empty
-# `_CanonicalBucket` shell (its own dicts/sets) costs far less. Both are
-# rounded up for headroom rather than measured exactly, since `FR-QRY-003`
-# asks for an estimate, not an exact accounting.
+# estimates, not `sys.getsizeof` introspection, rounded up for headroom
+# rather than measured exactly.
+#
+# `_get_or_create_instance` allocates a full `capacity`-length ring of real
+# `_CanonicalBucket` objects the moment an instance is first touched,
+# regardless of how much data that instance ever sends — so the estimate has
+# two tiers: every allocated bucket costs `_BYTES_PER_BUCKET_SHELL` (its own
+# empty dicts/sets) whether or not it currently holds data, and a bucket that
+# *is* occupied costs `_BYTES_PER_OCCUPIED_BUCKET_EXTRA` on top (populated
+# `contributing_agent_ids`/`gauges` entries). Counting only occupied buckets
+# would under-report a lightly-used instance's real footprint by its entire
+# ring allocation once that instance's one bucket ages back out.
 _BYTES_PER_SERIES_CONTRIBUTION = 512
-_BYTES_PER_BUCKET_OVERHEAD = 128
+_BYTES_PER_BUCKET_SHELL = 200
+_BYTES_PER_OCCUPIED_BUCKET_EXTRA = 128
 
 # FR-QRY-003: how often `merge()` itself samples memory pressure. `tick()`
 # alone isn't reachable without an external scheduler this repo doesn't have
@@ -149,6 +156,15 @@ class MetricStore:
         # it — that would defeat the point of per-instance locking above.
         self._memory_check_lock = threading.Lock()
         self._last_memory_check_epoch: float | None = None
+        # FR-QRY-004 for the store's own self-metrics: `dropped_after_
+        # retention_total`, `dropped_series_over_cap_total` and
+        # `shed_buckets_total` below are each incremented from more than one
+        # code path (different instances' per-instance-locked sections, and
+        # `_shed_oldest_tier` calls that can run concurrently via `tick()`
+        # racing a write-triggered check) — a bare `+= 1` across threads can
+        # lose an update. One small dedicated lock for just these three
+        # counters, held only for the increment itself.
+        self._counters_lock = threading.Lock()
         # FR-QRY-005: set once real data has actually been merged in, and
         # never unset — see `is_ready`'s consumer (`StreamProcessor`) for
         # why this must be sticky rather than "is the store non-empty right
@@ -195,10 +211,23 @@ class MetricStore:
     def _existing_instance(
         self, instance_id: str
     ) -> tuple[list[_CanonicalBucket], threading.Lock] | None:
+        """`None` if the instance has never been touched — but also, safely,
+        if a concurrent `_get_or_create_instance` call is caught mid-way
+        through creating it. That method sets `_rings[instance_id]` before
+        `_instance_locks[instance_id]`, both inside one `_locks_guard`
+        section; a lock-free reader here (deliberately not taking
+        `_locks_guard`, to stay off the write path) can observe the ring
+        without the lock in that narrow window. Indexing `_instance_locks`
+        directly there would raise `KeyError` instead of the graceful
+        "nothing here yet" this call already returns for a truly-unknown
+        instance — treating a first-write-in-progress the same way is safe:
+        a query landing in that instant reasonably sees no data yet.
+        """
         ring = self._rings.get(instance_id)
-        if ring is None:
+        lock = self._instance_locks.get(instance_id)
+        if ring is None or lock is None:
             return None
-        return ring, self._instance_locks[instance_id]
+        return ring, lock
 
     def _get_bucket(
         self, ring: list[_CanonicalBucket], canonical_start: int, *, now: datetime
@@ -261,7 +290,8 @@ class MetricStore:
                 ring, self._bucket_index(canonical_start), now=now
             )
             if bucket is None:
-                self.dropped_after_retention_total += 1
+                with self._counters_lock:
+                    self.dropped_after_retention_total += 1
                 return
             self.has_data = True
 
@@ -295,7 +325,8 @@ class MetricStore:
                     dim_key not in bucket.series
                     and len(bucket.series) >= self._config.max_series_per_bucket
                 ):
-                    self.dropped_series_over_cap_total += 1
+                    with self._counters_lock:
+                        self.dropped_series_over_cap_total += 1
                     continue
                 per_contribution = bucket.series.setdefault(dim_key, {})
                 per_contribution[contribution_key] = _SeriesContribution(
@@ -318,18 +349,26 @@ class MetricStore:
         tolerates reading a bucket mid-write, and locking every instance to
         scan the whole store would contend with the write path this
         component exists to keep uncontended.
+
+        Counts every allocated bucket (`_BYTES_PER_BUCKET_SHELL`), not just
+        occupied ones — an instance touched once and otherwise idle still
+        holds a full `capacity`-length ring of real objects, which a
+        count-only-occupied estimate would silently miss.
         """
-        total_buckets = 0
+        total_shell_buckets = 0
+        total_occupied_buckets = 0
         total_contributions = 0
         for ring in self._rings.values():
+            total_shell_buckets += len(ring)
             for bucket in ring:
                 if bucket.start is not None:
-                    total_buckets += 1
+                    total_occupied_buckets += 1
                     total_contributions += sum(
                         len(contributions) for contributions in bucket.series.values()
                     )
         return (
-            total_buckets * _BYTES_PER_BUCKET_OVERHEAD
+            total_shell_buckets * _BYTES_PER_BUCKET_SHELL
+            + total_occupied_buckets * _BYTES_PER_OCCUPIED_BUCKET_EXTRA
             + total_contributions * _BYTES_PER_SERIES_CONTRIBUTION
         )
 
@@ -365,7 +404,8 @@ class MetricStore:
         used_percent = self.estimated_memory_bytes() / limit_bytes * 100
         if used_percent >= self._config.memory_shed_percent:
             shed = self._shed_oldest_tier(now)
-            self.shed_buckets_total += shed
+            with self._counters_lock:
+                self.shed_buckets_total += shed
             logger.warning(
                 "MetricStore memory at %.1f%% of %dMB limit (>= shed "
                 "threshold %.0f%%); shed %d buckets from the oldest "
@@ -389,11 +429,27 @@ class MetricStore:
         buckets — a uniform, cheap approximation of "oldest tier" rather
         than a cross-instance LRU, which would need globally comparable
         bucket ages this store doesn't track.
+
+        `keep_count` is floored at 1: at `capacity < 2`, `capacity // 2`
+        would be 0, which shifts the cutoff one index past "now" and evicts
+        the bucket a caller may have just written in this same cycle.
+        Keeping at least the current bucket means shedding is a genuine
+        no-op rather than a self-destructive full wipe when there is no
+        real "older half" to speak of.
         """
-        shed_before = self._bucket_index(now) - self._capacity // 2 + 1
+        keep_count = max(self._capacity // 2, 1)
+        shed_before = self._bucket_index(now) - keep_count + 1
         shed_count = 0
         for instance_id, ring in list(self._rings.items()):
-            lock = self._instance_locks[instance_id]
+            # `.get()`, not `[]`: same half-created-instance window as
+            # `_existing_instance` — a concurrent `_get_or_create_instance`
+            # call can make the ring visible here before its lock exists.
+            # Nothing to shed yet on an instance with no data, so skipping
+            # it this pass (it'll be picked up on the next) is correct, not
+            # just crash-avoidance.
+            lock = self._instance_locks.get(instance_id)
+            if lock is None:
+                continue
             with lock:
                 for bucket in ring:
                     if bucket.start is not None and bucket.start < shed_before:

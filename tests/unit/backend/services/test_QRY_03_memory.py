@@ -59,11 +59,13 @@ def test_estimated_memory_bytes_grows_with_merged_series_and_shrinks_on_eviction
     used = store.estimated_memory_bytes()
     assert used > 0
 
-    # Advance well past retention and sweep — the merged bucket must be
-    # evicted, and the gauge must reflect that, not just count forever.
+    # Advance well past retention and sweep — the merged bucket's *content*
+    # must be evicted and the gauge must drop accordingly, but the ring's
+    # own allocated shell stays resident (it's reused, not freed) — so the
+    # estimate shrinks, it does not zero out.
     far_future = now + timedelta(seconds=config.retention_window_seconds * 2)
     store.tick(far_future)
-    assert store.estimated_memory_bytes() == 0
+    assert 0 < store.estimated_memory_bytes() < used
 
 
 def test_tick_logs_a_warning_above_memory_warn_percent_but_does_not_shed(
@@ -196,3 +198,77 @@ def test_merges_within_the_throttle_interval_do_not_re_check_memory(
         )
 
     assert calls == 1
+
+
+def test_estimated_memory_bytes_counts_an_idle_instances_allocated_ring_shell() -> (
+    None
+):
+    """`_get_or_create_instance` eagerly allocates a full-`capacity` ring of
+    real `_CanonicalBucket` objects the moment an instance is first touched,
+    regardless of how much data it ever sends. Once this instance's one
+    bucket ages out, the gauge must still reflect the `capacity` real shell
+    objects still resident — not read as 0, which would make a replica with
+    many lightly-used instances invisible to its own memory gauge.
+    """
+    config = StreamProcessorConfig(
+        canonical_bucket_seconds=10,
+        retention_window_seconds=100,  # capacity == 10
+        max_bucket_age_seconds=100,
+    )
+    store = MetricStore(config)
+    now = datetime(2026, 6, 12, 4, 0, 0, tzinfo=UTC)
+    store.merge(
+        _snapshot(instance_id="quiet", bucket_start_utc=now),
+        canonical_start=now,
+        now=now,
+    )
+    used_with_data = store.estimated_memory_bytes()
+
+    far_future = now + timedelta(seconds=config.retention_window_seconds * 2)
+    store.tick(far_future)
+
+    assert len(store._rings["quiet"]) == 10  # the shell is still fully allocated
+    used_after_content_eviction = store.estimated_memory_bytes()
+    # Content is gone, so this is less than it was — but the still-resident
+    # shell must not have vanished from the estimate entirely.
+    assert 0 < used_after_content_eviction < used_with_data
+
+
+def test_shedding_never_evicts_a_bucket_written_in_the_same_cycle_at_small_capacity(
+    monkeypatch,
+) -> None:
+    """At `capacity < 2`, `capacity // 2` is 0 — `_shed_oldest_tier` must
+    still keep at least the current bucket (`keep_count = max(capacity // 2,
+    1)`) rather than shedding the bucket a caller just wrote in this same
+    cycle. Shedding at `capacity == 1` should be a no-op, since there is no
+    real "older half" to speak of.
+    """
+    config = StreamProcessorConfig(
+        canonical_bucket_seconds=10,
+        retention_window_seconds=10,  # capacity == 1
+        max_bucket_age_seconds=10,
+        memory_limit_mb=100,
+        memory_warn_percent=75,
+        memory_shed_percent=90,
+    )
+    store = MetricStore(config)
+    now = datetime(2026, 6, 12, 4, 0, 0, tzinfo=UTC)
+    store.merge(
+        _snapshot(instance_id="target", bucket_start_utc=now),
+        canonical_start=now,
+        now=now,
+    )
+    assert sum(1 for b in store._rings["target"] if b.start is not None) == 1
+
+    monkeypatch.setattr(
+        store, "estimated_memory_bytes", lambda: int(100 * 1024 * 1024 * 0.95)
+    )
+    trigger_now = now + timedelta(seconds=_MEMORY_CHECK_INTERVAL_SECONDS + 1)
+    store.merge(
+        _snapshot(instance_id="target", bucket_start_utc=now),
+        canonical_start=now,
+        now=trigger_now,
+    )
+
+    assert sum(1 for b in store._rings["target"] if b.start is not None) == 1
+    assert store.shed_buckets_total == 0

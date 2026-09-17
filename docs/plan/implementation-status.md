@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-16
+Status: Live document · Last updated: 2026-09-17
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -89,6 +89,48 @@ table beneath). UBS-93 (Alert Store) is a separate, later epic.
 | UBS-89 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
 | UBS-89 | Per-bucket series cardinality cap (cross-agent) | `FR-MET-030`-equivalent, `NFR-REL-009` | Done | `test_STM_02_merge_semantics.py::test_series_over_the_cardinality_cap_are_dropped_and_counted` |
 
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-90 | Per-instance ring buffer, bounded memory | `FR-QRY-001`, `FR-QRY-002` | Partial | Ring buffer + `FR-QRY-002` bounding done; `FR-QRY-001`'s pre-rolled 1m/5m rollups deferred — see note below |
+| UBS-90 | Memory estimation, warn/shed thresholds | `FR-QRY-003`, `NFR-SCA-006` | Done | `test_QRY_03_memory.py` |
+| UBS-90 | Per-instance lock, not one global lock | `FR-QRY-004` | Done | `test_QRY_04_concurrency.py` |
+| UBS-90 | `/readyz` warming state | `FR-QRY-005` | Done | `test_health_endpoints.py`, `main.py` |
+
+**Design notes:**
+
+- **Pre-rolled 1m/5m rollups (`FR-QRY-001`) are deferred.** `read()` sums whatever 10s
+  canonical buckets fall in the requested range on every query; `test_STM_04_efficiency.py`
+  proves this indexes only the requested span, not the whole ring, so a 6h query costs at
+  most ~2160 bucket reads rather than scanning the full ring unconditionally. This keeps
+  query cost bounded without a second, incrementally-updated rollup structure to keep
+  consistent with the 10s tier. Revisit if profiling under real load shows the on-demand
+  sum is too expensive.
+- **`estimated_memory_bytes()`** is a documented fixed-bytes-per-bucket/series estimate
+  (`_BYTES_PER_SERIES_CONTRIBUTION` / `_BYTES_PER_BUCKET_SHELL` /
+  `_BYTES_PER_OCCUPIED_BUCKET_EXTRA` in `metric_store.py`), not `sys.getsizeof`
+  introspection, per `NFR-SCA-006`'s "documented as bytes-per-series-per-bucket". It counts
+  every allocated ring bucket (occupied or not — an instance's ring is allocated at full
+  `capacity` the moment it's first touched, regardless of how much data it ever sends), with
+  occupied buckets costing extra on top.
+- **`_shed_oldest_tier`** evicts the older half of every instance's retained buckets
+  uniformly, as a cheap approximation of "the oldest retention tier" — not a cross-instance
+  LRU, which would need globally comparable bucket ages this store doesn't track.
+  `keep_count` is floored at 1 so shedding at `capacity < 2` is a no-op rather than a
+  self-destructive full wipe.
+
+**Fixes from a post-implementation review pass** (all closed in this same change; see
+`git log` for the original vs. fixed diffs):
+
+| Issue found | Fix | Verified by |
+| --- | --- | --- |
+| Memory warn/shed only reachable via `MetricStore.tick()`, which nothing calls on a schedule — the mechanism was correct but structurally unreachable from the real write path | `merge()` self-triggers a throttled check (`_maybe_check_memory_pressure`, ≤1 per `_MEMORY_CHECK_INTERVAL_SECONDS`, run *after* releasing the writing instance's own lock to avoid deadlocking with `_shed_oldest_tier`) | `test_merge_alone_can_trigger_shedding_without_an_external_tick` |
+| `/readyz` could flip to `ready` from elapsed time alone, even with zero data ever merged (ingestion down/misconfigured) — exactly the "empty store misread as zero activity" case `FR-QRY-005` exists to prevent | `StreamProcessor.is_ready()` also requires `MetricStore.has_data` (sticky: set once, never unset by a later quiet period) | `test_is_ready_stays_false_past_warmup_window_if_no_data_ever_arrived`, `test_is_ready_stays_true_once_data_has_arrived_even_if_it_later_ages_out` |
+| `estimated_memory_bytes()` undercounted lightly-used instances — only occupied buckets were counted, missing the full ring shell allocated on first touch | Gauge now counts every allocated bucket's shell cost, plus extra for occupied ones | `test_estimated_memory_bytes_counts_an_idle_instances_allocated_ring_shell` |
+| `_shed_oldest_tier`'s cutoff degenerated at `capacity < 2` (`capacity // 2 == 0`), could evict a bucket in the same cycle it was written | `keep_count` floored at 1 | `test_shedding_never_evicts_a_bucket_written_in_the_same_cycle_at_small_capacity` |
+| Self-metric counters (`MetricStore`'s `dropped_after_retention_total`, `dropped_series_over_cap_total`, `shed_buckets_total`, and `StreamProcessor.dropped_buckets_total`) incremented via bare `+= 1` — concurrent writes to different instances/requests could lose an increment | Dedicated `_counters_lock` / `_counter_lock`, held only for the increment itself | `test_concurrent_drops_across_many_instances_are_all_counted`, `test_concurrent_stale_rejections_across_many_instances_are_all_counted` |
+| `_existing_instance` and `_shed_oldest_tier` indexed `_instance_locks` directly; `_get_or_create_instance` sets `_rings[id]` before `_instance_locks[id]` (both inside one guarded section), so a call landing in that window would raise `KeyError` instead of the graceful "nothing here yet" every other unknown-instance path returns | Both now use `.get()`, treating a missing lock the same as a missing ring | `test_existing_instance_does_not_raise_on_a_half_created_instance`, `test_shed_oldest_tier_does_not_raise_on_a_half_created_instance` |
+| `max_series_per_bucket` had no lower-bound validation — a misconfigured `0` would silently drop every series as over-cap while `merge()` still set `has_data = True` | `StreamProcessorConfig.__post_init__` now rejects values below 1 | `test_config_rejects_a_non_positive_max_series_per_bucket` |
+
 UBS-89 note: views are keyed by `instanceId` only, not `(application, instanceId,
 agentId, window)` — `application` is carried on the wire `Snapshot` but not read by
 `MetricStore`. This follows ADR 0005's assumption that cross-replica routing
@@ -102,58 +144,10 @@ Known gap, not closed here: the merge-associativity test
 is a hand-picked example, not the `hypothesis` property test spec 012 names for this
 case — `hypothesis` isn't a repo dependency yet.
 
-| ID | Story | Requirement | Status | Verified by |
-| --- | --- | --- | --- | --- |
-| UBS-90 | Per-instance ring buffer, bounded memory | `FR-QRY-001`, `FR-QRY-002` | Partial | Ring buffer done (pre-existing); pre-rolled 1m/5m rollups deferred — see note below |
-| UBS-90 | Memory estimation, warn/shed thresholds | `FR-QRY-003`, `NFR-SCA-006` | Done | `test_QRY_03_memory.py` |
-| UBS-90 | Per-instance lock, not one global lock | `FR-QRY-004` | Done | `test_QRY_04_concurrency.py` |
-| UBS-90 | `/readyz` warming state | `FR-QRY-005` | Done | `test_health_endpoints.py` |
-
-UBS-90 note on `FR-QRY-001`'s pre-rolled 1m/5m rollups: deferred. `read()` sums
-whatever 10s canonical buckets fall in the requested range on every query;
-`test_STM_04_efficiency.py` already proves this indexes only the requested span, not
-the whole ring, so a 6h query costs at most ~2160 bucket reads rather than scanning
-the full ring unconditionally. This keeps query cost bounded without a second,
-incrementally-updated rollup structure to keep consistent with the 10s tier.
-Revisit if profiling under real load shows the on-demand sum is too expensive.
-
-UBS-90 note on `estimated_memory_bytes()`: a documented fixed-bytes-per-series
-estimate (`_BYTES_PER_SERIES_CONTRIBUTION` / `_BYTES_PER_BUCKET_OVERHEAD` in
-`metric_store.py`), not `sys.getsizeof` introspection, per `NFR-SCA-006`'s "documented
-as bytes-per-series-per-bucket". `_shed_oldest_tier` evicts the older half of every
-instance's retained buckets uniformly, as a cheap approximation of "the oldest
-retention tier" — not a cross-instance LRU, which would need globally comparable
-bucket ages this store doesn't track. Known undercount: an instance's ring is
-allocated at full `capacity` the moment it's first touched, but the gauge only counts
-buckets that actually hold data (`bucket.start is not None`) — a lightly-used instance's
-empty shell buckets are real allocated objects the gauge currently reports as ~0 bytes.
-At `NFR-SCA-006`'s "100 instances" target and the 24h retention max this is a
-non-trivial, currently-invisible floor. Not fixed in this pass.
-
-UBS-90 fix (post-review): the memory warn/shed mechanism was initially reachable only
-through `MetricStore.tick()`, and nothing in this repo calls `tick()` on a schedule —
-so it was correctly implemented but structurally unreachable from the real write path.
-`merge()` now self-triggers a throttled check (`_maybe_check_memory_pressure`, at most
-once per `_MEMORY_CHECK_INTERVAL_SECONDS`, run *after* releasing the writing instance's
-own lock to avoid deadlocking with `_shed_oldest_tier`) — see
-`test_QRY_03_memory.py::test_merge_alone_can_trigger_shedding_without_an_external_tick`.
-`tick()` remains available for an eventual periodic sweep (useful for retention eviction
-on instances that go quiet, which a write-triggered check alone wouldn't catch), and
-now shares the same throttle state so it doesn't immediately re-trigger after an
-explicit call.
-
-UBS-90 fix (post-review): `StreamProcessor.is_ready()` initially gated only on elapsed
-wall-clock time since process start, which would flip `/readyz` to `ready` even if
-ingestion never delivered anything — exactly the "empty store misread as zero activity"
-case `FR-QRY-005` exists to prevent. It now also requires `MetricStore.has_data`
-(sticky: set once real data is merged, never unset by a later quiet period) — see
-`test_health_endpoints.py`'s `test_is_ready_stays_false_past_warmup_window_if_no_data_ever_arrived`
-and `test_is_ready_stays_true_once_data_has_arrived_even_if_it_later_ages_out`.
-
 Full detail and remaining known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
 §7. Not yet wired: nothing calls `StreamProcessor.process_snapshot()` with real
 data — no agent Backend Publisher and no backend Ingestion Service exist yet (both
-separate, later work). `main.py` now exposes `/healthz` and `/readyz` only; ingestion
+separate, later work). `main.py` exposes `/healthz` and `/readyz` only; ingestion
 and query routes are out of scope for UBS-89/90.
 
 ## M5 requirement coverage (RE-01–04)
@@ -199,6 +193,7 @@ since no agent supervisor loop exists yet (M1).
 | Stream Processor (window alignment, staleness) | `apps/backend/src/telemetry_backend/services/stream_processor.py` |
 | Metric Store (cross-agent merge, ring buffer) | `apps/backend/src/telemetry_backend/services/metric_store.py` |
 | Stream Processor / Metric Store config | `apps/backend/src/telemetry_backend/config.py` |
+| Backend HTTP entrypoint (`/healthz`, `/readyz`) | `apps/backend/src/telemetry_backend/main.py` |
 | Unit tests (backend services) | `tests/unit/backend/services/` |
 | Unit tests (shared metrics/snapshot model) | `tests/unit/telemetry_shared/metrics/`, `tests/unit/telemetry_shared/models/` |
 | Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |
@@ -212,9 +207,12 @@ since no agent supervisor loop exists yet (M1).
 
 ```bash
 uv sync                  # or: make sync
-make parser-test         
+make parser-test
 make parser-demo
-make lint                # ruff + mypy on agent source
+make stream-processor-quickstart          # UBS-89/90 walkthrough, two agents
+uv run pytest tests/ -v                   # full suite, agent + backend + shared
+make lint                                 # ruff (repo-wide) + mypy on agent source
+uv run mypy apps/backend/src packages/telemetry_shared/src   # mypy on backend (not yet in `make lint`)
 ```
 
 ## Open risks

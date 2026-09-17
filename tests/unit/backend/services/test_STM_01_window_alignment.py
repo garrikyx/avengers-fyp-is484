@@ -183,6 +183,16 @@ def test_config_rejects_a_non_positive_memory_limit() -> None:
         StreamProcessorConfig(memory_limit_mb=0)
 
 
+def test_config_rejects_a_non_positive_max_series_per_bucket() -> None:
+    """A cap below 1 would drop every series as over-cap while `merge()`
+    still marks `has_data = True` (a bucket was validly touched) — a
+    misconfiguration that silently discards all data rather than failing
+    loudly at startup.
+    """
+    with pytest.raises(ValueError, match="max_series_per_bucket"):
+        StreamProcessorConfig(max_series_per_bucket=0)
+
+
 def test_config_rejects_a_shed_percent_not_above_warn_percent() -> None:
     """FR-QRY-003: the shed threshold must be strictly above the warn
     threshold, or the two would fire in the wrong order under rising

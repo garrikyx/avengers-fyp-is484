@@ -261,7 +261,8 @@ wire-format contract in `tests/unit/telemetry_shared/models/test_snapshot.py`
 (5); `test_histogram.py` (6, relocated, unchanged) now proves the shared
 module both sides import. `test_STM_02` includes the two-unequal-volume
 reject-rate case this component's AC requires explicitly. Run:
-`uv run pytest tests/ -v` (223 tests, whole repo) · lint/types:
+`uv run pytest tests/ -v` (288 tests, whole repo, as of the UBS-90 memory/concurrency
+work below) · lint/types:
 `uv run ruff check .` and `uv run mypy apps/backend/src packages/telemetry_shared/src`
 clean on every file this component touched (`make lint` itself still only
 runs `mypy apps/agent/src` — it doesn't cover the backend yet).

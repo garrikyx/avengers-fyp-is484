@@ -23,6 +23,7 @@ avoid elsewhere (`FR-QRY-012`'s `approximate`/`null` conventions).
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -71,6 +72,11 @@ class StreamProcessor:
         # FR-STM-005: dropped (too-old) buckets MUST be observable, not
         # silently discarded. A future `/metrics` endpoint reads this.
         self.dropped_buckets_total = 0
+        # A real Ingestion Service (spec 006 §2) would call process_snapshot/
+        # process_batch from a FastAPI threadpool, same as any other route —
+        # same class of race MetricStore's own counters were fixed for
+        # (a bare `+= 1` across concurrent requests can lose an update).
+        self._counter_lock = threading.Lock()
         # FR-QRY-005: a restart loses all metric state (ADR 0005), so
         # `/readyz` reports `warming` for `warmupWindow` after *this*
         # moment rather than reading an empty just-started store as
@@ -107,7 +113,8 @@ class StreamProcessor:
         age_seconds = (now - canonical_start).total_seconds()
 
         if age_seconds > self._config.max_bucket_age_seconds:
-            self.dropped_buckets_total += 1
+            with self._counter_lock:
+                self.dropped_buckets_total += 1
             age_human = f"{age_seconds:.0f}s"
             limit_human = f"{self._config.max_bucket_age_seconds}s"
             return SnapshotOutcome(

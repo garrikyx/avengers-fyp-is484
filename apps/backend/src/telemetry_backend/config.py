@@ -59,6 +59,12 @@ class StreamProcessorConfig:
                 f"retention_window_seconds ({self.retention_window_seconds})"
             )
             raise ValueError(msg)
+        if self.max_series_per_bucket < 1:
+            msg = (
+                f"max_series_per_bucket ({self.max_series_per_bucket}) must be "
+                "at least 1, or every series would be dropped as over-cap"
+            )
+            raise ValueError(msg)
         if self.memory_limit_mb <= 0:
             msg = f"memory_limit_mb ({self.memory_limit_mb}) must be positive"
             raise ValueError(msg)

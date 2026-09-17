@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from telemetry_backend.config import StreamProcessorConfig
 from telemetry_backend.services.metric_store import MetricStore
+from telemetry_backend.services.stream_processor import StreamProcessor
 from telemetry_shared.models.snapshot import SeriesEntry, Snapshot
 
 BUCKET_START = datetime(2026, 6, 12, 4, 0, 0, tzinfo=UTC)
@@ -29,6 +30,36 @@ def _snapshot(*, instance_id: str, agent_id: str, symbol: str) -> Snapshot:
             )
         ],
     )
+
+
+def test_existing_instance_does_not_raise_on_a_half_created_instance() -> None:
+    """`_get_or_create_instance` sets `_rings[instance_id]` before
+    `_instance_locks[instance_id]`, both inside one `_locks_guard` section.
+    A lock-free reader (`_existing_instance`, used by `read`/`gauges`/
+    `is_warming_up`/`restarted_bucket_count`) can observe the ring without
+    the lock existing yet if it lands in that window — it must return
+    `None` (nothing here yet), not raise `KeyError`. Simulated directly
+    rather than raced, since the real window is a handful of bytecodes wide
+    and not reliably hittable by thread-timing luck.
+    """
+    store = MetricStore(StreamProcessorConfig())
+    store._rings["half-created"] = []  # ring present, lock deliberately absent
+
+    assert store._existing_instance("half-created") is None
+
+
+def test_shed_oldest_tier_does_not_raise_on_a_half_created_instance() -> None:
+    """`_shed_oldest_tier` iterates `_rings.items()` and indexed
+    `_instance_locks` directly — the same half-created-instance window as
+    `_existing_instance`. A shed pass racing a brand-new instance's first
+    write must skip it gracefully, not raise `KeyError`.
+    """
+    store = MetricStore(StreamProcessorConfig())
+    store._rings["half-created"] = []
+
+    shed_count = store._shed_oldest_tier(BUCKET_START)
+
+    assert shed_count == 0
 
 
 def test_two_instances_get_two_independent_locks() -> None:
@@ -118,3 +149,70 @@ def test_concurrent_merges_into_the_same_instance_do_not_lose_updates() -> None:
     )
     assert len(groups) == len(symbols)
     assert sum(group.counters["orders_submitted"] for group in groups) == len(symbols)
+
+
+def test_concurrent_drops_across_many_instances_are_all_counted() -> None:
+    """`dropped_after_retention_total` is a single store-wide counter
+    incremented from many different instances' own per-instance-locked
+    sections — a bare `+= 1` there could lose an update when different
+    instances are written to concurrently (each holding a *different* lock,
+    so the increments themselves race). `_counters_lock` must prevent that.
+    """
+    config = StreamProcessorConfig(
+        canonical_bucket_seconds=10,
+        retention_window_seconds=10,  # capacity == 1
+        max_bucket_age_seconds=10,
+    )
+    store = MetricStore(config)
+    far_future = BUCKET_START + timedelta(seconds=config.retention_window_seconds * 5)
+    instance_count = 50
+
+    def drop_one(instance_id: str) -> None:
+        # canonical_start (BUCKET_START) is far outside retention relative
+        # to `now` (far_future) — every one of these is rejected as too old.
+        store.merge(
+            _snapshot(instance_id=instance_id, agent_id="agent-1", symbol="AAA"),
+            canonical_start=BUCKET_START,
+            now=far_future,
+        )
+
+    threads = [
+        threading.Thread(target=drop_one, args=(f"instance-{i}",))
+        for i in range(instance_count)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert store.dropped_after_retention_total == instance_count
+
+
+def test_concurrent_stale_rejections_across_many_instances_are_all_counted() -> None:
+    """`StreamProcessor.dropped_buckets_total` is incremented outside any
+    per-instance lock — the same race class `MetricStore`'s own counters
+    were fixed for. A real Ingestion Service would call `process_snapshot`
+    from a FastAPI threadpool, so concurrent requests are the realistic
+    case, not an edge case.
+    """
+    config = StreamProcessorConfig(max_bucket_age_seconds=10)
+    processor = StreamProcessor(config)
+    far_future = BUCKET_START + timedelta(seconds=config.max_bucket_age_seconds * 5)
+    instance_count = 50
+
+    def reject_one(instance_id: str) -> None:
+        processor.process_snapshot(
+            _snapshot(instance_id=instance_id, agent_id="agent-1", symbol="AAA"),
+            now=far_future,
+        )
+
+    threads = [
+        threading.Thread(target=reject_one, args=(f"instance-{i}",))
+        for i in range(instance_count)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert processor.dropped_buckets_total == instance_count
