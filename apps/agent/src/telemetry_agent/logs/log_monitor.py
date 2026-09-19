@@ -12,21 +12,6 @@ from telemetry_agent.logs.status import FileReadStatus
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class FileReadStatus:
-    """Offset, size and read lag for one file. See docs/plan/ubs30-notes.md."""
-
-    path: str
-    offset: int
-    size: int | None
-    last_read_at: datetime | None
-    read_lag_ms: float | None
-
-    @property
-    def has_read_any_line(self) -> bool:
-        return self.last_read_at is not None
-
-
 class Harvester:
     """Reads lines from a single open file descriptor bound to a specific OS inode fingerprint."""
 
@@ -61,7 +46,6 @@ class Harvester:
                 return
 
             self.offset = self.handle.tell()
-            self.last_read_at = datetime.now(UTC)
             self.last_read_at = datetime.now(UTC)
             yield line.rstrip("\r\n")
 
@@ -258,7 +242,6 @@ class LogMonitor:
                 harvester.close()
         self._startup_backfill_harvesters = []
 
-    def poll_lines(self) -> Generator[str]:
     def poll_lines(self) -> Generator[str]:
         """Polls for new log lines and manages Harvester lifecycle events."""
         # If rotation happened while the process was stopped, the active path
