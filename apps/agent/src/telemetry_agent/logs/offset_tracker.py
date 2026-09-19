@@ -26,7 +26,7 @@ class OffsetTracker:
 
     def load(self) -> None:
         """Loads state registry into memory
-        
+
         Supports Filebeat's native JSON list array schema (`[{"source": ..., "fileStateOS": ...}]`)
         and handles corrupted files safely by defaulting to an empty registry.
         """
@@ -59,7 +59,11 @@ class OffsetTracker:
         key = self._make_key(dev, ino)
         state = self._states.get(key)
         if state:
-            return state.get("offset", 0)
+            offset = state.get("offset", 0)
+            # Registries may have been hand-edited or created by an older
+            # agent; never seek using an untrusted JSON value.
+            if type(offset) is int and offset >= 0:
+                return offset
         return 0
 
     def update_offset(self, source_path: str, dev:int, ino:int, offset:int) -> None:
@@ -89,5 +93,3 @@ class OffsetTracker:
             os.replace(temp_path, self.registry_path)
         except OSError as e:
             logger.error(f"Failed to save state registry '{self.registry_path}': {e}")
-
-        
