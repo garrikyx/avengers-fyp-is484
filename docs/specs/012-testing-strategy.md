@@ -11,14 +11,14 @@ MUST report any requirement ID with no referencing test.
 
 | Level | Scope | Tooling |
 | --- | --- | --- |
-| Unit | Parser, aggregator, rule evaluation, config validation, query engine | `go test`, `pytest` |
-| Property / fuzz | Parser robustness, bucket merge associativity | `testing/quick`, Go fuzzing, `hypothesis` |
-| Contract | Agent payloads validate against `/contracts` schemas, and vice versa | Shared JSON Schema, `schemathesis` |
-| Component | Agent against a fake log writer and a mock backend; backend against synthetic batches | `go test` + `httptest`, `pytest` + `httpx` |
+| Unit | Parser, aggregator, rule evaluation, config validation, query engine | `pytest` |
+| Property / fuzz | Parser robustness, bucket merge associativity | `hypothesis`, optional `pytest-benchmark` |
+| Contract | Agent payloads validate against shared Pydantic models | `packages/telemetry_shared/`, `schemathesis` |
+| Component | Agent against a fake log writer and a mock backend; backend against synthetic batches | `pytest` + `httpx` |
 | End-to-end | Real agent → real backend → query and NL answer | Docker Compose harness |
 | Load | Throughput, CPU, RSS, latency targets | Synthetic FIX generator (§5) |
 | Chaos | Rotation, truncation, backend outage, restart, slow callback endpoint | Scripted fault injection in the E2E harness |
-| Security | Data-leak assertions, dependency scan, secret scan | Custom sentinel test (§4), `govulncheck`, `pip-audit`, `gitleaks` |
+| Security | Data-leak assertions, dependency scan, secret scan | Custom sentinel test (§4), `pip-audit`, `gitleaks` |
 
 ## 2. What must be tested, not merely reviewed
 
@@ -37,7 +37,7 @@ The failure modes with the worst consequences are not the obvious ones:
 
 ## 3. FIX parser corpus
 
-`FR-TST-002`: `agent/testdata/fix/` MUST contain a synthetic, hand-authored corpus. It MUST
+`FR-TST-002`: `apps/agent/testdata/fix/` MUST contain a synthetic, hand-authored corpus. It MUST
 NOT contain production data, ever, under any anonymisation claim.
 
 Required cases:
@@ -139,11 +139,11 @@ every commit, and its failure MUST NOT block merges (it reports drift instead).
 
 | Gate | Blocking |
 | --- | --- |
-| Unit + component tests, race detector on (`go test -race`) | yes |
+| Unit + component tests | yes |
 | Contract tests (payloads vs `/contracts`) | yes |
 | Data-leak sentinel test | yes |
 | Config defaults golden-file diff (`NFR-CFG-004`) | yes |
-| Lint (`golangci-lint`, `ruff`, `mypy --strict` on backend) | yes |
+| Lint (`ruff`, `mypy --strict`) | yes |
 | Requirement-coverage report (IDs with no test) | yes |
 | Dependency and secret scans | yes on high severity |
 | E2E acceptance scenario | yes on main, nightly for branches |

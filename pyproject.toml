@@ -9,7 +9,14 @@ dev = [
     "pytest>=8",
     "ruff>=0.11",
     "mypy>=1.15",
+    "telemetry-agent",
+    "telemetry-backend",
+    "types-pyyaml",
 ]
+
+[tool.uv.sources]
+telemetry-agent = { workspace = true }
+telemetry-backend = { workspace = true }
 
 [tool.uv.workspace]
 members = [

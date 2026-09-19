@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-07-31
+Status: Live document · Last updated: 2026-09-10
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -9,124 +9,149 @@ is recorded here rather than by quietly editing the spec.
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| M0 | Repository foundation, CI gates, contracts | Partial — Makefile and module layout exist; CI, `contracts/` and the requirement-coverage reporter do not |
-| **M1** | **Log monitor and configuration** | **Implemented** — `agent/internal/logmon`, `agent/internal/config`, `agent/cmd/telemetry-agent` |
-| M2 | FIX parser | Not started |
-| M3 | Metrics aggregation | Not started |
-| M4 | Backend ingestion, store, query | Not started |
-| M5 | Rules, alerts, callbacks | Not started |
+| M0 | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/` exist; CI and requirement-coverage reporter do not |
+| M1 | Log monitor and configuration | **Not started** — `apps/agent/src/telemetry_agent/logs/` does not exist yet |
+| M1.5 | Pipeline bridge (monitor → parser) | **Not started** — `apps/agent/src/telemetry_agent/pipeline/` does not exist yet |
+| **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
+| **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics) implemented and tested; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
+| **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
 
-## M1 requirement coverage
+## M2 requirement coverage (UBS-40–42)
 
-| ID | Requirement | Status | Verified by |
-| --- | --- | --- | --- |
-| `FR-LOG-001` | Configurable paths and globs, tagged per instance | Done | `TestAppendedLinesAreRead`, `TestMultipleFilesInOneSet` |
-| `FR-LOG-002` | Tail and interval read modes | **Partial** — both modes work, but tail mode polls rather than using filesystem notifications (see §4.1) | `TestIntervalModeReadsContent`, `TestRunReadsAppendsDiscoversAndCheckpoints` |
-| `FR-LOG-003` | Byte offset per file, resumed after restart | Done | `TestRestartResumesFromCheckpoint`, `TestRunResumesAfterRestart` |
-| `FR-LOG-004` | Identify files by identity, not path | Done — `os.SameFile` while open, head fingerprint across restarts (`FR-LOG-023`) | `TestRotationWithIdenticalHeaderReadsNewFileFromStart`, `TestFingerprintStableAsFileGrows` |
-| `FR-LOG-005` | Detect rotation and drain the rotated file first | Done for rename-and-create and copy-truncate | `TestRotationRenameAndCreateDrainsOldFile` |
-| `FR-LOG-006` | Detect truncation and reset the offset | Done | `TestCopyTruncateRotation`, `TestRestartAfterTruncationDoesNotReplay` |
-| `FR-LOG-007` | Emit complete lines; hold fragments until newline or timeout | Done | `TestPartialLineHeldUntilNewline`, `TestPartialLineFlushedAfterTimeout`, `TestLineSplitAcrossWritesJoins` |
-| `FR-LOG-008` | Cap line length, count and flag once | Done | `TestOverLongLineTruncatedOnce` |
-| `FR-LOG-009` | Read-only, no locking that blocks Magic | Done on POSIX | `TestRotationRenameAndCreateDrainsOldFile` (rename succeeds while open) |
-| `FR-LOG-010` | Report read lag and offset progress | Done | `TestFileStatusReportsOffsetAndLag` |
-| `FR-LOG-011` | Discover new files; close vanished ones without error | Done | `TestFileDiscoveredMidRunIsReadFromStart`, `TestVanishedFileIsClosedCleanly` |
-| `FR-LOG-012` | First-ever start begins at EOF unless configured otherwise | Done | `TestStartAtEndSkipsExistingContent` |
-| `FR-LOG-020` | Atomic offset checkpointing | Done | `TestStateStoreRoundTrip`, `TestFlushLeavesNoTemporaryFiles`, `TestFlushDoesNotLoseConcurrentUpdate` |
-| `FR-LOG-021` | Bounded re-read after restart | Done | `TestRestartResumesFromCheckpoint` |
-| `FR-LOG-022` | Missing or corrupt state starts cleanly and reports a reset | Done | `TestCorruptStateFileResetsCleanly`, `TestUnknownStateVersionResets` |
-| `FR-PUB-004` | Bounded queues, drop oldest, count drops | Done for the monitor's output channels | `TestBoundedQueueDropsAndCounts` |
-| `FR-CFG-002` | Unknown configuration keys are a startup error | Done | `TestUnknownKeyIsRejected` |
-| `FR-CFG-003` | Unique names, per-set validation, overlap detection | Done — overlap detection compares identical patterns only, not general glob intersection | `TestValidationFailures` |
-| `FR-CFG-004` | Duration and bound validation | Done | `TestValidationFailures` |
-| `FR-CFG-020` | `--check-config` prints the effective configuration | Done | `TestRedactedRoundTrips`, `agent/scripts/m1-demo.sh` |
-| `NFR-CFG-002` | Refuse to start on invalid configuration | Done | `TestValidationFailures` |
-| `NFR-CFG-004` | Code defaults match documented defaults | Done | `TestDefaultsMatchSpecifiedValues` |
-| `NFR-OPS-003` | `--check-config` and `--dry-run` modes | Done | `agent/scripts/m1-demo.sh` |
-| `NFR-OPS-004` | Version reported in `--version` and logs | Done | manual, `--version` |
-| `NFR-REL-008` | A configured file that does not exist yet is not an error | Done | `TestMissingFileIsNotAnError` |
-| `NFR-SEC-001` | No raw log content persisted, transmitted or logged | Done for M1's surfaces | `TestStateFileHoldsNoLogContent`, demo sentinel check |
-| `NFR-SEC-003` | State file holds only offsets and identities | Done | `TestStateFileHoldsNoLogContent` |
-| `NFR-SEC-015` | Configured paths confined to `allowedRoots`, symlinks resolved first | Done | `TestSymlinkOutsideAllowedRootsIsRefused` |
-| `NFR-OBS-002` | Every discard has a counter | Done | `TestBoundedQueueDropsAndCounts`, `Stats` |
-| `NFR-OBS-003` | Structured JSON logs | Done | demo output |
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-40 | Parser plugin interface and registry | `FR-PRS-030`–`032`, `FR-PRS-003` | Done | `tests/unit/agent/parser/test_FR_PRS_030_registry.py` |
+| UBS-41 | Classify log lines before FIX parsing | `FR-PRS-010`, `FR-PRS-011` | Done | `tests/unit/agent/parser/test_FR_PRS_010_classify.py` |
+| UBS-42 | Frame FIX messages from log lines | `FR-PRS-012`–`016` | Done | `tests/unit/agent/parser/test_FR_PRS_012_frame.py`, `apps/agent/testdata/fix/` |
+| UBS-43 | Allowlisted field extraction | `FR-PRS-020` | Done | `tests/unit/agent/parser/test_FR_PRS_020_fields.py`, `parser/fix/fields.py` |
+| UBS-44 | Identifier hashing | `FR-PRS-021` | Done | `tests/unit/agent/parser/test_FR_PRS_021_identifiers.py`, `parser/fix/identifiers.py` |
+| UBS-45 | Enum mapping + tag-58 rejection labels | `FR-PRS-022`–`024` | Done | `test_FR_PRS_022_normalize.py`, `test_FR_PRS_023_enums.py`, `test_FR_PRS_024_rejection.py`, `test_UBS45_integration.py` |
+| UBS-46 | FIX timestamps + sequence gaps | `FR-PRS-025`–`027` | Done | `test_FR_PRS_025_timestamps.py`, `test_FR_PRS_027_seq_tracker.py` |
+| UBS-47 | Parse errors without stopping agent | `FR-PRS-017`–`019` | Done | `test_FR_PRS_017_019_errors.py` |
 
-Deferred within M1's area: `FR-LOG-023` covers the persisted-identity mechanism and is
-implemented; `NFR-PERF-010` (Windows share flags) and the Windows half of the rotation harness
-are untested because CI does not yet run on Windows.
+### Magic applog demo (not UBS-45–47)
 
-## New requirements added while implementing
-
-| ID | Requirement | Why it was needed |
+| Area | Status | Notes |
 | --- | --- | --- |
-| `FR-LOG-023` | Persisted file identity MUST be a digest of a recorded-length prefix of the file head, and MUST be invalidated when the head changes | `os.SameFile` cannot be serialised into the state file, so restart-time identity needs its own mechanism. See spec 002 §2.2. |
+| Magic line classification | Done | `test_FR_PRS_010_magic_venue_lines.py`, config in `apps/agent/testdata/magic/demo_config.yaml` |
+| `%` template error signatures | Done | `parser/applog/signatures.py`, `test_applog_signature_templates.py` |
+| Full AppLogParser plugin | Not started | Demo uses FixParser classification + CLI signature matcher |
 
-## Deviations from the specs
+### Remaining M2 gaps
 
-### 4.1 Tail mode polls instead of using filesystem notifications
-
-`FR-LOG-002` specifies tail mode as event-driven via `fsnotify` with a polling fallback. M1
-implements the polling path only, at `pollInterval` (default 1s for tail mode).
-
-Why this is acceptable for now: the read path is identical either way, notifications only change
-*when* a read is triggered, and the resulting latency (up to `pollInterval`) is well inside the
-5-second end-to-end target of `NFR-PERF-002`. Polling also avoids a dependency and the
-platform-specific failure modes of watch descriptors on rotated files.
-
-What it costs: one `stat` per file per interval, and up to one poll interval of extra latency.
-Adding `fsnotify` later is a change to the trigger only, not to the reader, so it does not
-affect the wire contract or any test above.
-
-### 4.2 Glob overlap detection is exact-match only
-
-`FR-CFG-003` requires overlapping globs across file sets to be reported. The implementation
-detects identical patterns. Two different patterns that match the same file (`fix*.log` and
-`*.log`) are not detected, and would cause that file to be read twice under two file set names.
-Deciding glob intersection in general is not worth the complexity; a better approximation is to
-warn when two sets resolve to the same canonical path at discovery time, which M3 should add
-once double-counting has a visible cost in metrics.
-
-## Defects found and fixed during M1
-
-Recorded because each one is a silent-data-corruption class of bug, and each now has a
-regression test.
-
-| Defect | Symptom it would have caused | Found by | Test |
-| --- | --- | --- | --- |
-| Line-length cap applied only to buffered fragments | A long line arriving whole in one read was emitted uncapped, defeating `FR-LOG-008` | Unit test | `TestOverLongLineTruncatedOnce` |
-| Checkpoint used a boolean dirty flag | A `Put` during an in-flight flush was marked written but never persisted, so offsets silently went stale and files were re-read after restart | Integration test | `TestFlushDoesNotLoseConcurrentUpdate` |
-| Fingerprint digested "whatever is there now" | A file shorter than 256 bytes changed identity as it grew, so every restart re-read it from the beginning | Integration test | `TestFingerprintStableAsFileGrows` |
-| Fingerprint not invalidated on truncation | After an in-place truncation the checkpoint described content that no longer existed; the next start failed to recognise the file and re-read it | Demo script | `TestRestartAfterTruncationDoesNotReplay` |
-| Rotation consulted the checkpoint for the new file | A replacement file sharing the old one's first bytes would resume at the old offset and skip its beginning | Reasoning during review | `TestRotationWithIdenticalHeaderReadsNewFileFromStart` |
-| Path refusal counted and reported every discovery pass | A permanently misconfigured path emitted an event every interval, an event storm against `NFR-OBS-004` | Demo script | `TestSymlinkOutsideAllowedRootsIsRefused` |
-
-## Measurements
-
-`go test ./internal/logmon/ -bench . -benchmem` on darwin/arm64 (Apple silicon, warm page
-cache, so treat as an upper bound):
-
-| Benchmark | Result | Interpretation |
+| Area | Requirements | Notes |
 | --- | --- | --- |
-| `BenchmarkReadThroughput` | 3.12 ms per 20 000 lines, 1 069 MB/s | ≈ 6.4 M lines/sec through the full read path |
-| `BenchmarkConsumeOnly` | 39.7 µs per 512 lines, 2 153 MB/s | ≈ 12.9 M lines/sec for splitting alone |
-| Allocations | 20 007 per 20 000 lines | Exactly one allocation per line |
+| Leak sentinel | `FR-TST-005` | Lands with full corpus gate |
+| Parser → MA-01 event bridge | spec 004 | ParsedMessageEvent construction from FixTelemetry not wired |
 
-Against `NFR-PERF-001` (5 000 lines/sec sustained on under one core), the read path has roughly
-three orders of magnitude of headroom, so the parser and aggregator in M2 and M3 will dominate
-cost. The single allocation per line is the copy made when handing a line to the consumer, which
-is required because the read buffer is reused; if it ever matters it becomes a buffer pool, but
-it should not be optimised before the parser exists.
+## Planned: pipeline bridge (M1.5)
 
-These figures are not a substitute for the load test in spec 012 §5, which must run against
-`tools/fixgen` on representative hardware once [Q-1](./open-questions.md) is answered.
+Spec: [002-agent.md §1.1](../specs/002-agent.md), ADR [0006](../adr/0006-agent-in-python.md).
+
+| ID | Requirement | Status |
+| --- | --- | --- |
+| `FR-PIP-001` | Non-blocking monitor enqueue; drop-oldest on full line queue | Not started |
+| `FR-PIP-002` | Asymmetric queue sizing (line queue 2048 > event queue 256) | Not started |
+| `FR-PIP-003` | Parser worker pool (`min(2, cpu_count)`) | Not started |
+| `FR-PIP-004` | Bounded event queue to aggregator | Not started |
+| `FR-PIP-005` | Queue depth + drop counters on heartbeat/metrics | Not started |
+
+Target modules: `apps/agent/src/telemetry_agent/pipeline/line_queue.py`, `workers.py`,
+`supervisor.py`.
+
+## M3 requirement coverage (MA-01–04)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| MA-01 | Bucketed counter/histogram store | `FR-MET-024`–`030` | Done | `test_MA_01_aggregator.py` |
+| MA-02 | Order/execution/reject counters | spec 004 §4.1 | Done | `test_MA_02_counters.py` |
+| MA-03 | Order correlation and latency | spec 004 §4.4 | Done | `test_MA_03_correlation.py`, `test_histogram.py` |
+| MA-04 | Calculated indicators and snapshot output | `FR-QRY-007`, `FR-QRY-010`, `FR-QRY-012` | Done | `test_MA_04_snapshot.py` |
+
+Full detail and an alert-readiness mapping: `docs/plan/ma-epic-implementation-summary.md`.
+Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor) and M1.5 (pipeline
+bridge) — field extraction itself is done (UBS-43–47); `parseErrorRate` is
+formula-ready but has no producer yet.
+
+## M4 requirement coverage (Stream Processor & Metric Store)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
+| UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
+
+Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
+§7. Not yet wired: nothing calls `StreamProcessor.process_snapshot()` with real
+data — no agent Backend Publisher and no backend Ingestion Service or HTTP
+layer exist yet (both separate, later work).
+
+## M5 requirement coverage (RE-01–04)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| RE-01 | Rule and alert lifecycle types, multi-tier schema | `FR-RUL-001`–`003`, `FR-RUL-015` | Done | `test_RE_01_fsm.py` |
+| RE-02 | Rule evaluation and the alert lifecycle FSM | `FR-RUL-004`–`007`, `012`–`014`, `016`–`022` | Done | `test_RE_01_fsm.py`, `test_RE_02_evaluators.py`, `test_RE_03_safety.py` |
+| RE-03 | The 14 default rules | `FR-RUL-010` | Done | `test_RE_04_default_rules.py` |
+
+Full detail and the alert-readiness table: `docs/plan/re-epic-implementation-summary.md`.
+Not yet wired: consecutive-failure streak tracking (no rule kind or
+producer), session-message counters (`logouts`, `heartbeat_timeouts`,
+`seq_gaps`, `clock_skew_events`), Callback Dispatcher and Backend Publisher
+(so their self-health rules have no data). `config/rules.yaml` loading and
+SIGHUP reload are implemented (`config_loader.py`); only the call to
+`SighupRuleReloader.install()` from a real running process is unwired,
+since no agent supervisor loop exists yet (M1).
+
+## Code locations
+
+| Component | Path |
+| --- | --- |
+| Parser protocol + registry | `apps/agent/src/telemetry_agent/parser/protocol.py`, `registry.py` |
+| FIX classification | `apps/agent/src/telemetry_agent/parser/fix/classify.py` |
+| FIX framing | `apps/agent/src/telemetry_agent/parser/fix/frame.py` |
+| FIX field extraction + hashing | `apps/agent/src/telemetry_agent/parser/fix/fields.py`, `identifiers.py` |
+| FIX enums, rejection, timestamps, seq gaps | `apps/agent/src/telemetry_agent/parser/fix/enums.py`, `normalize.py`, `rejection.py`, `timestamps.py`, `seq_tracker.py`, `enrich.py`, `telemetry.py` |
+| FIX parser plugin | `apps/agent/src/telemetry_agent/parser/fix/parser.py` |
+| Applog signature matcher (demo) | `apps/agent/src/telemetry_agent/parser/applog/signatures.py` |
+| Parser CLI + visual display | `apps/agent/src/telemetry_agent/parser/cli.py`, `display.py` |
+| Demo config loader | `apps/agent/src/telemetry_agent/parser/config.py` |
+| Demo metrics sink | `apps/agent/src/telemetry_agent/metrics/demo_sink.py` |
+| Synthetic FIX corpus | `apps/agent/testdata/fix/demo_logs.txt` |
+| Magic applog corpus + config | `apps/agent/testdata/magic/` |
+| Unit tests (parser) | `tests/unit/agent/parser/` |
+| Metrics aggregator, counters, correlation, histogram | `apps/agent/src/telemetry_agent/metrics/` |
+| Calculated indicators and snapshot output | `apps/agent/src/telemetry_agent/metrics/snapshot.py` |
+| Shared snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/metrics.py` |
+| Unit tests (metrics) | `tests/unit/agent/metrics/` |
+| Shared histogram, ratios, latency summary | `packages/telemetry_shared/src/telemetry_shared/metrics/` |
+| Shared wire-format snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/snapshot.py` |
+| Stream Processor (window alignment, staleness) | `apps/backend/src/telemetry_backend/services/stream_processor.py` |
+| Metric Store (cross-agent merge, ring buffer) | `apps/backend/src/telemetry_backend/services/metric_store.py` |
+| Stream Processor / Metric Store config | `apps/backend/src/telemetry_backend/config.py` |
+| Unit tests (backend services) | `tests/unit/backend/services/` |
+| Unit tests (shared metrics/snapshot model) | `tests/unit/telemetry_shared/metrics/`, `tests/unit/telemetry_shared/models/` |
+| Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |
+| Rule config loading, SIGHUP reload | `apps/agent/src/telemetry_agent/rules/config_loader.py`, `config/rules.yaml` |
+| Shared alert contract | `packages/telemetry_shared/src/telemetry_shared/models/alerts.py` |
+| Unit tests (rules) | `tests/unit/agent/rules/` |
+| Unit tests (shared models) | `tests/unit/telemetry_shared/` |
+| Cross-component integration tests | `tests/integration/agent/` |
 
 ## How to verify
 
 ```bash
-make test    # unit and integration tests
-make race    # the same suite under the race detector
-make bench   # throughput and allocation figures
-make demo    # end-to-end run: rotation, truncation, restart, security assertions
+uv sync                  # or: make sync
+make parser-test         
+make parser-demo
+make lint                # ruff + mypy on agent source
 ```
+
+## Open risks
+
+| Risk | Mitigation |
+| --- | --- |
+| [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples |
+| Python agent footprint unproven at load | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply |

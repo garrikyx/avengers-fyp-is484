@@ -12,6 +12,21 @@ from telemetry_agent.logs.status import FileReadStatus
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class FileReadStatus:
+    """Offset, size and read lag for one file. See docs/plan/ubs30-notes.md."""
+
+    path: str
+    offset: int
+    size: int | None
+    last_read_at: datetime | None
+    read_lag_ms: float | None
+
+    @property
+    def has_read_any_line(self) -> bool:
+        return self.last_read_at is not None
+
+
 class Harvester:
     """Reads lines from a single open file descriptor bound to a specific OS inode fingerprint."""
 
@@ -29,7 +44,7 @@ class Harvester:
         self.last_read_at = None
         self.handle.seek(self.offset)
 
-    def read_lines(self) -> Generator[str, None, None]:
+    def read_lines(self) -> Generator[str]:
         """Reads available complete lines from the file handle until EOF."""
         while True:
             line_start = self.handle.tell()
@@ -46,6 +61,7 @@ class Harvester:
                 return
 
             self.offset = self.handle.tell()
+            self.last_read_at = datetime.now(UTC)
             self.last_read_at = datetime.now(UTC)
             yield line.rstrip("\r\n")
 
@@ -90,7 +106,7 @@ class LogMonitor:
         self._startup_recovery_pending = True
         self._startup_backfill_harvesters: list[Harvester] = []
 
-    def _get_file_stat(self) -> Optional[os.stat_result]:
+    def _get_file_stat(self) -> os.stat_result | None:
         try:
             return self.file_path.stat()
         except FileNotFoundError:
@@ -242,6 +258,7 @@ class LogMonitor:
                 harvester.close()
         self._startup_backfill_harvesters = []
 
+    def poll_lines(self) -> Generator[str]:
     def poll_lines(self) -> Generator[str]:
         """Polls for new log lines and manages Harvester lifecycle events."""
         # If rotation happened while the process was stopped, the active path

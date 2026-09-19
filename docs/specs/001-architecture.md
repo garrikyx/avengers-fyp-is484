@@ -1,6 +1,6 @@
 # 001 — Architecture
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 ## 1. Shape of the system
 
@@ -15,7 +15,7 @@ Two deployable units:
 Magic host                                        Central
 ┌──────────────────────────────┐                  ┌────────────────────────────────┐
 │ Magic app ──► log files      │                  │ Telemetry Backend              │
-│                  │           │                  │  ingest ─► metric store        │
+│                  │           │                  │  ingest ─► stream proc. ─► metric store │
 │                  ▼           │  HTTPS/JSON      │            alert store         │
 │  ┌────────────────────────┐  │  batches         │              │                 │
 │  │ Telemetry Agent        │──┼─────────────────►│              ▼                 │
@@ -29,6 +29,8 @@ Magic host                                        Central
 └──────────────────────────────┘
 ```
 
+*The "stream proc." stage above is the Stream Processor — window alignment and cross-agent merge (counters sum, ratios recompute from summed numerator/denominator, histograms combine bucket-wise) — between the Ingestion Service and the Metric Store. See §2's component table and spec 006 §3.*
+
 Key property: **alerting does not depend on the backend.** The rule engine and callback
 dispatcher run in the agent, so a backend outage degrades querying but not alerting
 (`NFR-REL-003`).
@@ -39,6 +41,7 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 | Component           | Responsibility                                                                         | Outputs                                                   | Spec     |
 | ------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------- |
 | Log Monitor         | Tail and interval-scan configured files; track offsets; detect rotation and truncation | Log lines with source metadata, rotation events, read lag | 002      |
+| Pipeline bridge     | Bounded line queue between monitor and parser; non-blocking monitor enqueue; parser worker pool | Enqueued log lines, drop counters              | 002 §1.1 |
 | Parser Engine       | Classify each line; parse FIX; extract allowlisted fields; emit parse errors           | Structured message events, parse error events             | 003      |
 | Metrics Aggregator  | Maintain bucketed counters, gauges and latency histograms across dimensions            | Metric snapshots per bucket                               | 004      |
 | Rule Engine         | Evaluate thresholds, patterns, absence and latency conditions with hysteresis          | Alert firing / resolved state transitions                 | 005      |
@@ -46,6 +49,7 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 | Backend Publisher   | Batch, compress and publish snapshots/events; buffer while offline                     | Ingestion requests, publish queue metrics                 | 002      |
 | Health Reporter     | Heartbeat and agent self-metrics                                                       | Heartbeat documents                                       | 011      |
 | Ingestion Service   | Authenticate agents, validate payloads, normalise, fan into stores                     | Accept/reject responses                                   | 006      |
+| Stream Processor    | Align snapshots to canonical window grid; merge cross-agent counters/ratios/histograms correctly (never naive sum/average); handle late/out-of-order data and warm-up state | Merged, bucketed metric views | 006      |
 | Metric Store        | In-memory rolling time buckets per dimension set                                       | Query-ready aggregates                                    | 006      |
 | Alert Store         | Active and recent alert state per instance                                             | Alert query results                                       | 006      |
 | Query Service       | Filter, aggregate, group and summarise                                                 | Query responses                                           | 006, 007 |
@@ -59,13 +63,13 @@ dispatcher run in the agent, so a backend outage degrades querying but not alert
 
 | Concern           | Choice                                             | Rationale / ADR                                                                                                                      |
 | ----------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Agent language    | Go 1.23+, no CGO, single static binary             | Bounded footprint, trivial deployment next to Magic, cross-compiles to Linux and Windows — [ADR 0001](../adr/0001-agent-in-go.md)    |
+| Agent language    | Python 3.12+, uv workspace package under `apps/agent/` | Shared monorepo with backend, Pydantic models, team scaffold — [ADR 0006](../adr/0006-agent-in-python.md) |
 | Backend language  | Python 3.12, FastAPI, Uvicorn, Pydantic v2         | Fast iteration, first-class OpenAPI for the Copilot plugin, strong validation — [ADR 0002](../adr/0002-backend-in-python-fastapi.md) |
 | Agent → backend   | HTTPS/1.1 + JSON, gzip, batched every 10s          | Debuggable, proxy-friendly; gRPC is a Day-2 swap behind the same interface — [ADR 0003](../adr/0003-https-json-transport-day-1.md)   |
 | Agent → Magic     | HTTPS POST, HMAC-SHA256 signed                     | Magic-owned contract, pending [Q-2](../plan/open-questions.md)                                                                       |
 | Backend storage   | Process-local ring of time buckets, 24h max        | No DB on Day-1 — [ADR 0005](../adr/0005-in-memory-metric-store.md)                                                                   |
 | Config            | YAML file + env var overrides, SIGHUP reload       | Spec 010                                                                                                                             |
-| Agent packaging   | Static binary + systemd unit / Windows service     | Spec 011                                                                                                                             |
+| Agent packaging   | Container image or managed venv + systemd unit / Windows service | ADR 0006; no static binary |
 | Backend packaging | Container image, N replicas behind a load balancer | §5                                                                                                                                   |
 
 
@@ -110,8 +114,9 @@ Day-1 implements scatter-gather with a documented replica registry.
 Full sequences are in specs 002 (ingestion), 005 (alert/callback) and 008 (NL query). In
 short:
 
-1. **Ingestion:** log line → classify → parse → allowlisted fields → bucket counters →
-  rule evaluation → 10s snapshot → backend → in-memory views → queryable.
+1. **Ingestion:** log line → bounded line queue → classify → parse → allowlisted fields →
+  bucket counters → rule evaluation → 10s snapshot → backend ingestion service → stream processor (window
+  alignment, cross-agent merge) → in-memory metric store → queryable.
 2. **Alert:** rule condition true for its `for` duration → alert fires → signed callback to
   Magic with retry → alert included in next publish → resolved when condition clears.
 3. **Query:** question → intent + filters + time range → structured query → in-memory

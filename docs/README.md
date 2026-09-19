@@ -2,8 +2,10 @@
 
 This directory is the **source of truth** for the Telemetry System supporting the Magic
 trading application. Specs are written first, then implemented against them (spec-driven
-development). Milestone M1, the agent's log monitor, is implemented; everything downstream of it
-is still specification only. See
+development). The stack is a **Python 3.12+ monorepo** — agent and backend both Python;
+backend uses FastAPI ([ADR 0002](./adr/0002-backend-in-python-fastapi.md),
+[ADR 0006](./adr/0006-agent-in-python.md)). M2 parser classify+frame is partially
+implemented; M1 log monitor and M1.5 pipeline bridge are not started yet. See
 [plan/implementation-status.md](./plan/implementation-status.md) for the current position.
 
 If you are an AI agent working in this repository, read `docs/specs/000-overview.md` and
@@ -11,6 +13,8 @@ If you are an AI agent working in this repository, read `docs/specs/000-overview
 `.cursor/rules/spec-driven-workflow.mdc`.
 
 ## Architecture at a glance
+
+See [architecture.md](./architecture.md) and the diagram below.
 
 ![High-level architecture and flows](./assets/architecture-overview.png)
 
@@ -39,8 +43,8 @@ rationale, and the conditions that would reverse it.
 
 | ADR | Decision |
 | --- | --- |
-| [0001](./adr/0001-agent-in-go.md) | Telemetry Agent is written in Go |
-| [0002](./adr/0002-backend-in-python-fastapi.md) | Backend is Python 3.12 + FastAPI |
+| [0006](./adr/0006-agent-in-python.md) | **Telemetry Agent is Python 3.12+** with asyncio monitor + thread-pool parser workers |
+| [0002](./adr/0002-backend-in-python-fastapi.md) | **Unified Python stack** — backend is FastAPI + Pydantic v2 |
 | [0003](./adr/0003-https-json-transport-day-1.md) | Agent → backend transport is HTTPS/JSON batches on Day-1, gRPC deferred |
 | [0004](./adr/0004-no-raw-log-persistence.md) | Raw log content is never persisted or transmitted |
 | [0005](./adr/0005-in-memory-metric-store.md) | Backend metric store is in-memory time buckets, no database on Day-1 |
@@ -49,7 +53,7 @@ rationale, and the conditions that would reverse it.
 
 | Document | Contents |
 | --- | --- |
-| [plan/implementation-status.md](./plan/implementation-status.md) | What is built, requirement coverage, deviations from these specs, and measurements |
+| [plan/implementation-status.md](./plan/implementation-status.md) | What is built, requirement coverage, deviations from these specs |
 | [plan/scaffold.md](./plan/scaffold.md) | Target repository layout and milestone-by-milestone build order |
 | [plan/open-questions.md](./plan/open-questions.md) | Unresolved decisions blocking or shaping implementation, with owners |
 
@@ -60,4 +64,4 @@ rationale, and the conditions that would reverse it.
   renumbered or reused; superseded requirements are marked `(withdrawn)` in place.
 - Commits, pull requests, and tests reference the requirement IDs they implement or verify.
 - Times and timestamps are UTC, ISO-8601, millisecond precision (`2026-06-12T04:00:00.123Z`).
-- Durations in configuration use Go duration syntax (`5s`, `1m`, `250ms`).
+- Durations in configuration use human-readable strings (`5s`, `1m`, `250ms`) parsed by the agent.

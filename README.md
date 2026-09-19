@@ -55,8 +55,9 @@ apps/agent/src/telemetry_agent/
 Feature folders will include:
 
 ```text
-monitor/       # Log monitoring, offsets, rotation
-parsers/       # FIX parsing / future binary parsing
+logs/          # Log monitoring, offsets, rotation (M1)
+pipeline/      # Bounded queues + parser worker pool (M1.5)
+parser/        # FIX parsing / future binary parsing (M2)
 metrics/       # Rolling metrics and aggregation
 rules/         # Day-1 threshold alerts
 callbacks/     # Callback delivery
@@ -174,7 +175,7 @@ apps/agent/
 Imports should look like:
 
 ```python
-from telemetry_agent.parsers.fix import FixParser
+from telemetry_agent.parser.fix import FixParser
 ```
 
 not:
@@ -205,7 +206,7 @@ from src.telemetry_agent.parsers.fix import FixParser
 Current stack:
 
 ```text
-Python 3.12+
+Python 3.14+
 FastAPI
 Pydantic
 Redis
@@ -253,11 +254,23 @@ uv sync
 # Run tests
 uv run pytest
 
-# Lint & format
-uv run ruff check .
-uv run ruff format .
+# Parser tests
+make parser-test
 
-# Type check
-uv run mypy .
+export MAGIC_TELEMETRY_ID_HASH_KEY=dev-only
+make parser-demo
 
+# Lint
+make lint
+```
+
+Or without Make:
+
+```bash
+export MAGIC_TELEMETRY_ID_HASH_KEY=dev-only
+uv run pytest tests/unit/agent/parser/ -v
+uv run python -m telemetry_agent.parser.cli \
+  --corpus apps/agent/testdata/fix/demo_logs.txt \
+  --corpus apps/agent/testdata/magic/ \
+  --config apps/agent/testdata/magic/demo_config.yaml
 ```

@@ -1,0 +1,21 @@
+appLogPatterns:
+  - '^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]\]'
+
+parsing:
+  maxClockSkew: 5m
+  maxRejectReasonLabels: 50
+  maxDynamicSignatureLabels: 50
+  rejectReasonPatterns:
+    - label: price_exceeds_limit
+      match: "price.*(exceeds|outside).*limit"
+    - label: unknown_symbol
+      match: "unknown (symbol|instrument)"
+    - label: market_closed
+      match: "market (is )?closed|exchange closed"
+  errorSignatures:
+    - label: "%_connection_disconnected"
+      match: '(\w+) connection disconnected'
+    - label: connect_timeout
+      match: "timed out after"
+    - label: venue_connect_failed
+      match: "failed to complete connection"

@@ -1,6 +1,6 @@
 # 005 — Rule Engine, Alerting and Callbacks
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-09-07
 
 Alerting lives in the **agent**, not the backend, so that alerts survive a backend outage
 (`NFR-REL-003`). The backend receives alert state changes for querying and summarisation but
@@ -21,6 +21,14 @@ and a spec update; new *instances* of a kind are configuration only.
 
 ### 1.1 Rule definition
 
+`FR-RUL-002`: A rule declares one or more **severity tiers** sharing a
+single condition shape (same metric/numerator/denominator/window/operator),
+ordered least→most severe. Two conditions that differ only in threshold
+value are one rule with multiple tiers, not two separate rules — they
+represent one operational incident that escalates or de-escalates in
+severity, not two independently-open alerts. `alertId`/dedup identity is
+per-rule (§2), so a tier change never opens a second alert.
+
 ```yaml
 rules:
   - name: HighRejectRate
@@ -30,10 +38,13 @@ rules:
     window: 5m
     minSamples: 20
     operator: ">"
-    threshold: 0.05
+    tiers:
+      - severity: warning
+        threshold: 0.03
+      - severity: critical
+        threshold: 0.05
     for: 2m                  # condition must hold this long before firing
     resolveAfter: 5m         # condition must be false this long before resolving
-    severity: critical
     groupBy: [instanceId]    # one alert per instance, not per symbol
     callback: true
     scheduleRef: trading-hours
@@ -43,7 +54,7 @@ rules:
 
 | ID | Requirement |
 | --- | --- |
-| `FR-RUL-003` | Every rule MUST declare `name`, `kind`, `window`, `severity` and `for`. `name` MUST be unique and stable — it appears in callbacks and queries. |
+| `FR-RUL-003` | Every rule MUST declare `name`, `kind`, `window`, `tiers` (at least one) and `for`. `name` MUST be unique and stable — it appears in callbacks and queries. |
 | `FR-RUL-004` | `for` (fire delay) and `resolveAfter` (resolve delay) MUST both be supported to prevent flapping. Defaults: `for: 1m`, `resolveAfter: 5m`. |
 | `FR-RUL-005` | `groupBy` MUST default to `[instanceId]`. Allowing `symbol` in `groupBy` MUST also require `maxAlertsPerRule` (default 10) to avoid one bad session producing hundreds of alerts. |
 | `FR-RUL-006` | Rate and latency rules MUST NOT fire when the sample count is below `minSamples`; they report `insufficient_data` instead. |
@@ -53,26 +64,35 @@ rules:
 
 ### 1.2 Day-1 default rule set
 
-`FR-RUL-010`: These rules ship as defaults. Values are provisional pending
-[Q-5](../plan/open-questions.md).
+`FR-RUL-010`: These rules ship as defaults. `HighRejectRate`,
+`AckLatencyBreach`, and `ParseErrorRate`'s tier thresholds are
+client-confirmed values, not provisional placeholders. Remaining values are
+provisional pending [Q-5](../plan/open-questions.md).
 
-| Rule | Kind | Condition (default) | Severity |
+| Rule | Kind | Tiers (severity @ threshold) | Window |
 | --- | --- | --- | --- |
-| `HighRejectRate` | rate | reject rate > 5% over 5m, ≥ 20 samples, for 2m | critical |
-| `RejectSpike` | threshold | `orders_rejected` > 50 in 1m | warning |
-| `CancelRejectSpike` | threshold | `cancel_rejects` > 20 in 5m | warning |
-| `SessionRejects` | threshold | `session_rejects` > 5 in 5m | critical |
-| `AckLatencyBreach` | latency | p95 `ack_latency_ms` > 500 over 5m, ≥ 50 samples | warning |
-| `AckLatencySevere` | latency | p95 `ack_latency_ms` > 2000 over 5m, ≥ 50 samples | critical |
-| `ParseErrorRate` | rate | `parse_errors` / `log_lines_read` > 1% over 5m | warning |
-| `ParserBroken` | rate | same ratio > 25% over 5m | critical |
-| `NoLogActivity` | absence | `log_lines_read` == 0 for 5m within trading hours | critical |
-| `NoExecutions` | absence | `executions` == 0 for 15m while `orders_submitted` > 0 | warning |
-| `FixSessionDown` | threshold | `logouts` ≥ 1 or `heartbeat_timeouts` ≥ 1 in 1m | critical |
-| `SeqGapDetected` | threshold | `seq_gaps` > 0 in 1m | warning |
-| `ClockSkew` | threshold | `clock_skew_events` > 10 in 5m | warning |
-| `CallbackFailing` | threshold | `callback_failures` > 3 in 5m | warning |
-| `BackendUnreachable` | threshold | `publish_failures` > 5 consecutive | warning |
+| `HighRejectRate` | rate | warning @ >3%, critical @ >5% | 5m, ≥ 20 samples, for 2m |
+| `RejectSpike` | threshold | warning @ `orders_rejected` > 50 | 1m |
+| `CancelRejectSpike` | threshold | warning @ `cancel_rejects` > 20 | 5m |
+| `SessionRejects` | threshold | critical @ `session_rejects` > 5 | 5m |
+| `PendingOrderTimeout` | threshold (gauge) | warning @ `oldestPendingAgeSeconds` > 30s | — |
+| `AckLatencyBreach` | latency | warning @ p95 > 500ms, critical @ p95 > 1000ms | 5m, ≥ 50 samples |
+| `ParseErrorRate` | rate | warning @ `parse_errors`/`log_lines_read` > 1%, critical @ > 25% | 5m, ≥ 20 samples |
+| `NoLogActivity` | absence | critical @ `messages_total` == 0 | 1m (60s) within trading hours |
+| `NoExecutions` | absence | warning @ `executions` == 0 while `orders_submitted` > 0 | 15m |
+| `FixSessionDown` | threshold | critical @ `logouts` ≥ 1 or `heartbeat_timeouts` ≥ 1 | 1m |
+| `SeqGapDetected` | threshold | warning @ `seq_gaps` > 0 | 1m |
+| `ClockSkew` | threshold | warning @ `clock_skew_events` > 10 | 5m |
+| `CallbackFailing` | threshold | warning @ `callback_failures` > 3 | 5m |
+| `BackendUnreachable` | threshold | warning @ `publish_failures` > 5 | 1m (approximates spec's original "5 consecutive" as "5 within the shortest window" — this stays `threshold`, not a 6th rule kind) |
+
+`PendingOrderTimeout` evaluates a gauge (time since a tracked order's first
+response — ack or cancel outcome — not time-to-fill, so a resting limit
+order is never penalized), added for connectivity-issue detection alongside
+`SessionRejects`. `NoLogActivity` uses `messages_total` (every classified
+log line, admin messages included) rather than a dedicated
+`log_lines_read` counter, and a 60s/1m window rather than 5m, to catch a
+dead pipeline faster.
 
 `FR-RUL-030` (backend-side): The backend MUST additionally raise `AgentHeartbeatMissing` when
 no heartbeat has arrived from a known agent for `missingHeartbeatThreshold` (default `60s`).
@@ -100,6 +120,7 @@ inactive ─────────────► pending ──────�
 | `FR-RUL-015` | An alert MUST carry: `alertId`, `ruleName`, `severity`, `status`, `matchedCondition` (human-readable, e.g. `rejectRate > 0.05 for 5 minutes`), `observedValue`, `threshold`, `firstObservedUtc`, `lastObservedUtc`, `instanceId`, `groupBy` values, and a `metricContext` object of at most 10 supporting numbers. |
 | `FR-RUL-016` | `metricContext` MUST be built from allowlisted metrics only — never from raw log lines or FIX text. |
 | `FR-RUL-017` | Global alert output MUST be capped at `maxActiveAlerts` (default 100); beyond that the agent emits one `AlertStorm` meta-alert and suppresses further new alerts until it drops below the cap. |
+| `FR-RUL-022` | For a multi-tier rule (§1.1), the matched tier is the *highest* tier whose condition currently holds. While `firing`, a change in which tier matches MUST update `severity` and emit exactly one notification immediately — independent of `renotifyInterval` and without incrementing past what that renotify would produce — while `alertId` and `firstObservedUtc` stay unchanged; this is not a new occurrence. |
 
 ## 3. Callback dispatch
 
