@@ -9,6 +9,7 @@ dependencies = [
 
 [project.scripts]
 telemetry-parser = "telemetry_agent.parser.cli:main"
+telemetry-agent-heartbeat = "telemetry_agent.health.demo:main"
 
 [build-system]
 requires = ["hatchling"]

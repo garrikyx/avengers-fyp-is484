@@ -111,6 +111,21 @@ SIGHUP reload are implemented (`config_loader.py`); only the call to
 `SighupRuleReloader.install()` from a real running process is unwired,
 since no agent supervisor loop exists yet (M1).
 
+## Health Reporter coverage (UBS-30, UBS-58)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-30 | Per-file read lag in the Health Reporter | `FR-LOG-010`, `FR-HLT-001` (read-lag slice) | Done | `tests/unit/agent/health/test_reporter.py`, `tests/integration/agent/test_ubs30_health_integration.py` |
+| UBS-58 | Emit periodic heartbeat | `FR-HLT-001` (interval, idle emission), `FR-HLT-002`/`003` (status + reasons, read-lag rule), `FR-HLT-004` (gaps as `null`), spec 004 s6 wire shape | Done (agent side) | `tests/unit/agent/health/test_heartbeat.py`, `test_status.py`, `test_health_config.py` |
+| UBS-59 | Parse error rate in heartbeat | `FR-HLT-001`/`002` (parse-error slice) | Not started | - |
+| UBS-60 | Publish queue depth in heartbeat | `FR-HLT-001`/`002` (queue slice), `FR-PIP-005` | Not started | - |
+
+Decisions and the missing-downstream list: `docs/plan/ubs58-notes.md`. Heartbeats
+currently reach a backend only through the stdlib `HttpHeartbeatSink` (no Publisher,
+spec 002 s6) and are received only by `scripts/heartbeat_receiver_stub.py` (no
+Ingestion Service, UBS-66/87; no health read side, UBS-69). The UBS-58 ticket's two
+backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
+
 ## Code locations
 
 | Component | Path |
@@ -145,6 +160,10 @@ since no agent supervisor loop exists yet (M1).
 | Unit tests (rules) | `tests/unit/agent/rules/` |
 | Unit tests (shared models) | `tests/unit/telemetry_shared/` |
 | Cross-component integration tests | `tests/integration/agent/` |
+| Health Reporter, heartbeat emitter, health config | `apps/agent/src/telemetry_agent/health/` |
+| Shared heartbeat contract | `packages/telemetry_shared/src/telemetry_shared/models/health.py` |
+| Heartbeat demo / stub receiver | `telemetry-agent-heartbeat` (`health/demo.py`), `scripts/heartbeat_receiver_stub.py` |
+| Unit tests (health) | `tests/unit/agent/health/` |
 
 ## How to verify
 

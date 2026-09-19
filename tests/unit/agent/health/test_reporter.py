@@ -8,7 +8,7 @@ from telemetry_agent.logs.offset_tracker import OffsetTracker
 
 def make_monitor(tmp_path: Path, name: str, content: str) -> LogMonitor:
     log_path = tmp_path / name
-    log_path.write_text(content)
+    log_path.write_text(content, newline="\n")
     tracker = OffsetTracker(registry_path=tmp_path / f"{name}.offsets.json")
     return LogMonitor(log_path, offset_tracker=tracker)
 
@@ -23,8 +23,8 @@ def test_file_statuses_keys_match_monitor_names(tmp_path: Path) -> None:
 
     assert set(statuses.keys()) == {"Fix.log", "Application.log"}
     assert statuses["Fix.log"].offset == len("35=D|11=ORD-1|\n")
-    assert statuses["Fix.log"].last_read_at is not None
-    assert statuses["Application.log"].last_read_at is None
+    assert statuses["Fix.log"].last_line_at_utc is not None
+    assert statuses["Application.log"].last_line_at_utc is None
 
 
 def test_overall_read_lag_ignores_files_with_no_reads_yet(tmp_path: Path) -> None:
@@ -34,7 +34,7 @@ def test_overall_read_lag_ignores_files_with_no_reads_yet(tmp_path: Path) -> Non
 
     reporter = HealthReporter({"Fix.log": fix, "Application.log": app})
     statuses = reporter.file_statuses()
-    fix_read_at = statuses["Fix.log"].last_read_at
+    fix_read_at = statuses["Fix.log"].last_line_at_utc
     assert fix_read_at is not None
 
     later = fix_read_at + timedelta(seconds=2)
@@ -63,7 +63,7 @@ def test_degraded_reasons_flag_files_over_threshold(tmp_path: Path) -> None:
     assert reporter.degraded_reasons(healthy_statuses) == []
     assert reporter.is_degraded(healthy_statuses) is False
 
-    stale_now = healthy_statuses["Fix.log"].last_read_at + timedelta(seconds=6)
+    stale_now = healthy_statuses["Fix.log"].last_line_at_utc + timedelta(seconds=6)
     stale_statuses = reporter.file_statuses(now=stale_now)
 
     reasons = reporter.degraded_reasons(stale_statuses)
@@ -77,7 +77,8 @@ def test_degraded_threshold_is_configurable(tmp_path: Path) -> None:
     list(fix.poll_lines())
 
     strict_reporter = HealthReporter({"Fix.log": fix}, degraded_threshold_ms=1.0)
-    baseline = strict_reporter.file_statuses()["Fix.log"].last_read_at
+    baseline = strict_reporter.file_statuses()["Fix.log"].last_line_at_utc
+    assert baseline is not None
     stale_now = baseline + timedelta(milliseconds=50)
     statuses = strict_reporter.file_statuses(now=stale_now)
 

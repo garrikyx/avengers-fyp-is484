@@ -31,8 +31,8 @@ def test_multi_file_health_reflects_real_tailing(tmp_path: Path) -> None:
     """HealthReporter wired to a real MultiLogMonitor, not a hand-built dict."""
     fix_path = tmp_path / "Fix.log"
     app_path = tmp_path / "Application.log"
-    fix_path.write_text("35=D|11=ORD-1|\n")
-    app_path.write_text("")
+    fix_path.write_text("35=D|11=ORD-1|\n", newline="\n")
+    app_path.write_text("", newline="\n")
 
     multi = MultiLogMonitor(
         [fix_path, app_path], registry_path=tmp_path / "offsets.json"
@@ -45,8 +45,8 @@ def test_multi_file_health_reflects_real_tailing(tmp_path: Path) -> None:
         statuses = reporter.file_statuses()
 
         assert statuses["Fix.log"].offset == len("35=D|11=ORD-1|\n")
-        assert statuses["Fix.log"].last_read_at is not None
-        assert statuses["Application.log"].last_read_at is None
+        assert statuses["Fix.log"].last_line_at_utc is not None
+        assert statuses["Application.log"].last_line_at_utc is None
         assert reporter.is_degraded(statuses) is False
     finally:
         multi.close()
@@ -55,7 +55,7 @@ def test_multi_file_health_reflects_real_tailing(tmp_path: Path) -> None:
 def test_health_reporter_survives_log_rotation(tmp_path: Path) -> None:
     """Simulates logrotate: old file renamed away, new file created at the same path."""
     log_path = tmp_path / "app.log"
-    log_path.write_text("old-1\nold-2\n")
+    log_path.write_text("old-1\nold-2\n", newline="\n")
     tracker = OffsetTracker(registry_path=tmp_path / "offsets.json")
     monitor = LogMonitor(log_path, offset_tracker=tracker)
     reporter = HealthReporter({"app.log": monitor})
@@ -63,18 +63,18 @@ def test_health_reporter_survives_log_rotation(tmp_path: Path) -> None:
     list(monitor.poll_lines())
     pre_rotate = reporter.file_statuses()["app.log"]
     assert pre_rotate.offset == len("old-1\nold-2\n")
-    assert pre_rotate.last_read_at is not None
+    assert pre_rotate.last_line_at_utc is not None
 
     log_path.rename(tmp_path / "app.log.1")
-    log_path.write_text("new-1\n")
+    log_path.write_text("new-1\n", newline="\n")
 
     lines = list(monitor.poll_lines())
     assert [line.text for line in lines] == ["new-1"]
 
     post_rotate = reporter.file_statuses()["app.log"]
     assert post_rotate.offset == len("new-1\n")
-    assert post_rotate.last_read_at is not None
-    assert post_rotate.last_read_at >= pre_rotate.last_read_at
+    assert post_rotate.last_line_at_utc is not None
+    assert post_rotate.last_line_at_utc >= pre_rotate.last_line_at_utc
     monitor.close()
 
 
@@ -82,7 +82,7 @@ def test_health_reporter_handles_truncation(tmp_path: Path) -> None:
     """Same inode, smaller size in place - e.g. a logger truncates instead
     of rotating."""
     log_path = tmp_path / "app.log"
-    log_path.write_text("aaaa\nbbbb\n")
+    log_path.write_text("aaaa\nbbbb\n", newline="\n")
     tracker = OffsetTracker(registry_path=tmp_path / "offsets.json")
     monitor = LogMonitor(log_path, offset_tracker=tracker)
     reporter = HealthReporter({"app.log": monitor})
@@ -90,7 +90,7 @@ def test_health_reporter_handles_truncation(tmp_path: Path) -> None:
     list(monitor.poll_lines())
     assert reporter.file_statuses()["app.log"].offset == len("aaaa\nbbbb\n")
 
-    with open(log_path, "w") as f:
+    with open(log_path, "w", newline="\n") as f:
         f.write("c\n")
 
     list(monitor.poll_lines())
@@ -113,7 +113,7 @@ def test_offset_persists_across_simulated_restart(tmp_path: Path) -> None:
     """
     log_path = tmp_path / "app.log"
     registry_path = tmp_path / "offsets.json"
-    log_path.write_text("line-1\nline-2\n")
+    log_path.write_text("line-1\nline-2\n", newline="\n")
 
     tracker1 = OffsetTracker(registry_path=registry_path)
     monitor1 = LogMonitor(log_path, offset_tracker=tracker1)
@@ -127,51 +127,48 @@ def test_offset_persists_across_simulated_restart(tmp_path: Path) -> None:
 
     pre_poll_status = reporter.file_statuses()["app.log"]
     assert pre_poll_status.offset == len("line-1\nline-2\n")
-    assert pre_poll_status.last_read_at is None
+    assert pre_poll_status.last_line_at_utc is None
     assert pre_poll_status.read_lag_ms is None
 
-    with open(log_path, "a") as f:
+    with open(log_path, "a", newline="\n") as f:
         f.write("line-3\n")
     list(monitor2.poll_lines())
 
     post_poll_status = reporter.file_statuses()["app.log"]
     assert post_poll_status.offset == len("line-1\nline-2\nline-3\n")
-    assert post_poll_status.last_read_at is not None
+    assert post_poll_status.last_line_at_utc is not None
     monitor2.close()
 
 
 def test_degraded_status_flows_into_heartbeat_payload(tmp_path: Path) -> None:
     """FR-HLT-001: degraded read lag has to survive the actual heartbeat wire format."""
     log_path = tmp_path / "Fix.log"
-    log_path.write_text("35=D|11=ORD-1|\n")
+    log_path.write_text("35=D|11=ORD-1|\n", newline="\n")
     tracker = OffsetTracker(registry_path=tmp_path / "offsets.json")
     monitor = LogMonitor(log_path, offset_tracker=tracker)
     reporter = HealthReporter({"Fix.log": monitor}, degraded_threshold_ms=5_000.0)
 
     list(monitor.poll_lines())
-    last_read_at = reporter.file_statuses()["Fix.log"].last_read_at
-    assert last_read_at is not None
+    last_line_at = reporter.file_statuses()["Fix.log"].last_line_at_utc
+    assert last_line_at is not None
 
-    stale_now = last_read_at + timedelta(seconds=6)
+    stale_now = last_line_at + timedelta(seconds=6)
     statuses = reporter.file_statuses(now=stale_now)
     assert reporter.is_degraded(statuses) is True
 
-    heartbeat = AgentHeartbeat(
-        agent_id="agent-1",
-        instance_id="instance-1",
-        timestamp=stale_now,
-        cpu_percent=12.5,
-        memory_mb=256.0,
-        queue_depth=0,
-        files=list(statuses.values()),
-        read_lag_ms=reporter.overall_read_lag_ms(statuses.values()),
-    )
+    heartbeat = reporter.build_heartbeat(now=stale_now)
+    assert heartbeat.status == "degraded"
+    assert heartbeat.status_reasons and "Fix.log" in heartbeat.status_reasons[0]
 
-    # Round-trip through JSON: the actual wire format the heartbeat is published as.
-    rehydrated = AgentHeartbeat.model_validate_json(heartbeat.model_dump_json())
+    # Round-trip through JSON: the actual wire format the heartbeat is published as
+    # (camelCase per spec 004 §6).
+    wire = heartbeat.model_dump_json(by_alias=True)
+    assert '"sentAtUtc"' in wire and '"statusReasons"' in wire
+    rehydrated = AgentHeartbeat.model_validate_json(wire)
     assert rehydrated.read_lag_ms is not None
     assert rehydrated.read_lag_ms > 5_000.0
     assert rehydrated.files[0].path == str(log_path)
+    assert rehydrated.files[0].state == "reading"
     monitor.close()
 
 
@@ -180,8 +177,8 @@ def test_multi_file_group_tolerates_one_file_disappearing(tmp_path: Path) -> Non
     the health report."""
     fix_path = tmp_path / "Fix.log"
     app_path = tmp_path / "Application.log"
-    fix_path.write_text("line\n")
-    app_path.write_text("line\n")
+    fix_path.write_text("line\n", newline="\n")
+    app_path.write_text("line\n", newline="\n")
 
     multi = MultiLogMonitor(
         [fix_path, app_path], registry_path=tmp_path / "offsets.json"
