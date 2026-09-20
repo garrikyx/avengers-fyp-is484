@@ -7,8 +7,10 @@ tracked in docs/plan/ubs58-notes.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
+
+from pydantic import field_validator
 
 from telemetry_shared.models._base import CamelModel
 
@@ -54,3 +56,12 @@ class AgentHeartbeat(CamelModel):
     dropped_events_last5_min: int | None = None
     active_alert_count: int | None = None
     resource_usage: ResourceUsage | None = None
+
+    @field_validator("sent_at_utc")
+    @classmethod
+    def _aware_utc(cls, value: datetime) -> datetime:
+        # The backend orders heartbeats by this field; a naive value would
+        # be incomparable with aware ones. Reject at the contract boundary.
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("sentAtUtc must be timezone-aware")
+        return value.astimezone(UTC)

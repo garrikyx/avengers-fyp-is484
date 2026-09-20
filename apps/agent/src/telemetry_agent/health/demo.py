@@ -81,9 +81,13 @@ async def _poll_forever(monitors: dict[str, LogMonitor], stop: asyncio.Event) ->
 
 async def _main_async(args: argparse.Namespace) -> None:
     heartbeat_cfg, thresholds = load_health_config(args.config)
+    if args.interval is not None and args.interval <= 0:
+        raise SystemExit("--interval must be > 0")
     if args.interval is not None or args.agent_id is not None:
         heartbeat_cfg = HeartbeatConfig(
-            interval_seconds=args.interval or heartbeat_cfg.interval_seconds,
+            interval_seconds=args.interval
+            if args.interval is not None
+            else heartbeat_cfg.interval_seconds,
             agent_id=args.agent_id or heartbeat_cfg.agent_id,
             instance_ids=heartbeat_cfg.instance_ids,
             agent_version=heartbeat_cfg.agent_version,
@@ -94,9 +98,14 @@ async def _main_async(args: argparse.Namespace) -> None:
     tracker = OffsetTracker(registry_path=args.state_dir / "offsets.json")
     monitors: dict[str, LogMonitor] = {}
     for path in paths:
+        key = str(path)
+        if key in monitors:
+            raise SystemExit(f"--log given twice: {key}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch(exist_ok=True)
-        monitors[path.name] = LogMonitor(path, offset_tracker=tracker)
+        # Keyed by the full path, not the basename: two Fix.log files in
+        # different directories are two files.
+        monitors[key] = LogMonitor(path, offset_tracker=tracker)
 
     reporter = HealthReporter(monitors, thresholds=thresholds, heartbeat=heartbeat_cfg)
     emitter = HeartbeatEmitter(reporter, _make_sink(args.sink))

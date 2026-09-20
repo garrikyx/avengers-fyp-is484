@@ -61,10 +61,14 @@ class HeartbeatEmitter:
 
     async def run(self, stop: asyncio.Event | None = None) -> None:
         """Tick every `interval_seconds` until `stop` is set. First tick is
-        immediate so a freshly started agent shows up without waiting."""
+        immediate so a freshly started agent shows up without waiting.
+
+        `tick()` runs in a worker thread: sinks do blocking I/O (the stdlib
+        HTTP sink can sit in `urlopen` for its whole timeout), and that must
+        not stall whatever else shares the loop (the demo's file polling)."""
         stop = stop or asyncio.Event()
         while not stop.is_set():
-            self.tick()
+            await asyncio.to_thread(self.tick)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=self.interval_seconds)
             except TimeoutError:
