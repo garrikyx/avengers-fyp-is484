@@ -27,7 +27,8 @@ class SlidingWindowCounter:
             raise ValueError("bucket_seconds must not exceed window_seconds")
         self.window_seconds = window_seconds
         self.bucket_seconds = bucket_seconds
-        self.capacity = max(1, int(window_seconds // bucket_seconds))
+        # round(), not //: 300 // 0.1 is 2999.999... -> 2999 in float math.
+        self.capacity = max(1, round(window_seconds / bucket_seconds))
         self._clock = clock or (lambda: datetime.now(UTC))
         self._buckets: dict[int, int] = {}
 

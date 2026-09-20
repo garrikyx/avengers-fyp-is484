@@ -70,9 +70,10 @@ Spec wins wherever the two conflict (same policy as UBS-30's `log_read_lag_ms` c
   both with a reason like `parse error rate 2.0% (2/100 lines in last 300s) exceeds 1%`.
   Thresholds and window come from `health.parseErrorRateDegraded` /
   `parseErrorRateUnhealthy` / `rollingWindow` in `config/agent.yaml`.
-- **Bucketed, so approximate at the edge.** With 1s buckets an event can be reported
-  for up to 1s longer than exactly 300s. Acceptable for a health gauge; the same
-  trade-off the Metrics Aggregator makes with 10s buckets.
+- **Bucketed, so approximate at the edge.** The window is the current (partial) 1s
+  bucket plus the 299 before it, so an event leaves the count up to 1s *early*
+  (recorded at t=0.9s, gone at t=300.0s) and is never held past 300s. Acceptable for
+  a health gauge; the same trade-off the Metrics Aggregator makes with 10s buckets.
 
 ## Missing downstream / upstream (what this branch cannot prove)
 

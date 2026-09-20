@@ -84,8 +84,10 @@ class HealthThresholds:
                 "health.publishQueueHighWatermark must be below "
                 "publishQueueCriticalWatermark"
             )
-        if self.rolling_window_seconds <= 0:
-            raise HealthConfigError("health.rollingWindow must be > 0")
+        # The window is bucketed at 1s (SlidingWindowCounter default); anything
+        # shorter cannot be represented and would fail later, at reporter build.
+        if self.rolling_window_seconds < 1:
+            raise HealthConfigError("health.rollingWindow must be >= 1s")
 
 
 # --- YAML shape -------------------------------------------------------------
