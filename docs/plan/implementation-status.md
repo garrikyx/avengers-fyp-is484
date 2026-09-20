@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | M1.5 | Pipeline bridge (monitor → parser) | **Not started** — `apps/agent/src/telemetry_agent/pipeline/` does not exist yet |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics) implemented and tested; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), plus the basic FastAPI ingestion contract and bounded asynchronous hand-off, are implemented and tested. Authentication, dedupe/rate/body limits, allowlists, agent-registry write-through, the agent's Backend Publisher, and query HTTP remain unstarted. |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -82,11 +82,14 @@ formula-ready but has no producer yet.
 | --- | --- | --- | --- | --- |
 | UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
 | UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
+| UBS-66 | Ingestion API and payload contract | `POST /telemetry/batch`, `/events`, `/heartbeat`; basic schema validation; bounded hand-off | Done | `tests/unit/backend/api/test_ingestion.py` |
 
 Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
-§7. Not yet wired: nothing calls `StreamProcessor.process_snapshot()` with real
-data — no agent Backend Publisher and no backend Ingestion Service or HTTP
-layer exist yet (both separate, later work).
+§7. The backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
+accepted snapshots. No agent Backend Publisher exists yet, and events, alerts, and heartbeats
+remain queued typed payloads until their dedicated stores are implemented. Authentication,
+dedupe/rate/body limits, dimension/field allowlists, and Agent Registry write-through remain
+separate ingestion stories (UBS-85–87).
 
 ## M5 requirement coverage (RE-01–04)
 
