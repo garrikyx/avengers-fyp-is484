@@ -1,5 +1,5 @@
-"""Health Reporter: per-file read lag (UBS-30) + status rollup and heartbeat
-payload (UBS-58, FR-HLT-001..004).
+"""Health Reporter: per-file read lag (UBS-30), status rollup and heartbeat
+payload (UBS-58, FR-HLT-001..004), rolling parse-error window (UBS-59).
 
 See docs/plan/ubs30-notes.md and docs/plan/ubs58-60-notes.md. UBS-33/34
 additionally surface callback delivery failures here (`failed_deliveries`),
@@ -18,7 +18,9 @@ from datetime import UTC, datetime
 
 from telemetry_agent.callbacks.status import DeliveryStatus, DeliveryTracker
 from telemetry_agent.health.config import HealthThresholds, HeartbeatConfig
+from telemetry_agent.health.window import SlidingWindowCounter
 from telemetry_agent.logs.log_monitor import LogMonitor
+from telemetry_agent.parser.protocol import ParseResult
 from telemetry_shared.models.health import AgentHeartbeat, AgentStatus, FileReadHealth
 
 # spec 011 §1.1: "Log read lag | log_read_lag_ms | < 1s | > 5s sustained"
@@ -51,6 +53,22 @@ class HealthSignals:
     dropped_events: int | None = None
 
 
+def is_parse_error(result: ParseResult) -> bool:
+    """What the heartbeat counts as a parse error (UBS-59).
+
+    Same definition as the Metrics Aggregator's `parse_errors` counter
+    (`metrics/demo_sink.py`), so `parseErrorCountLast5Min` and
+    `parseErrorRate` agree: a closed-set `ParseResult.error`, or a framed
+    message whose timestamp or MsgType could not be interpreted. Warnings
+    (`body_length_mismatch`, `malformed_field`) are not errors — the line
+    still yielded usable telemetry.
+    """
+    if result.error is not None:
+        return True
+    tel = result.telemetry
+    return tel is not None and bool(tel.bad_timestamp or tel.unknown_msg_type)
+
+
 class HealthReporter:
     """Aggregates agent health signals and derives spec 011 §2 status."""
 
@@ -73,6 +91,13 @@ class HealthReporter:
         self.heartbeat_config = heartbeat or HeartbeatConfig()
         self._clock = clock or _utc_now
         self.started_at = self._clock()
+        # UBS-59: bounded rolling windows behind the `...Last5Min` fields.
+        # `_lines_read` is the denominator for parse_error_rate (spec 004 s4.5
+        # `parse_errors / log_lines_read`), sampled over the same window.
+        window = self.thresholds.rolling_window_seconds
+        self._parse_errors = SlidingWindowCounter(window, clock=self._clock)
+        self._lines_read = SlidingWindowCounter(window, clock=self._clock)
+        self._parse_signal_seen = False
 
     @property
     def degraded_threshold_ms(self) -> float:
@@ -120,26 +145,73 @@ class HealthReporter:
     def is_degraded(self, statuses: dict[str, FileReadHealth] | None = None) -> bool:
         return len(self.degraded_reasons(statuses)) > 0
 
+    # --- UBS-59: parse-error intake ---------------------------------------------
+    #
+    # There is no event bus yet (pipeline bridge is M1.5); whoever drives the
+    # parser calls one of these per line. Until the first call the parse
+    # signals stay None on the wire (FR-HLT-004): "nobody is measuring" must
+    # not read as "no errors".
+
+    def record_parse_result(
+        self, result: ParseResult, now: datetime | None = None
+    ) -> None:
+        """Count one parsed line, and a parse error if `is_parse_error(result)`."""
+        now = now or self._clock()
+        self._parse_signal_seen = True
+        self._lines_read.record(now)
+        if is_parse_error(result):
+            self._parse_errors.record(now)
+
+    def record_parse_error(self, now: datetime | None = None) -> None:
+        """Count a parse error from a producer that does not hand over a
+        `ParseResult` (still counts the line so the rate stays honest)."""
+        now = now or self._clock()
+        self._parse_signal_seen = True
+        self._lines_read.record(now)
+        self._parse_errors.record(now)
+
+    def record_lines_read(self, n: int = 1, now: datetime | None = None) -> None:
+        """Count successfully parsed lines in bulk (denominator only)."""
+        self._parse_signal_seen = True
+        self._lines_read.record(now or self._clock(), n)
+
     # --- UBS-58: rollup + heartbeat ------------------------------------------
 
     def snapshot(self, now: datetime | None = None) -> HealthSignals:
         """Sample every signal this reporter currently has a producer for."""
         now = now or self._clock()
         statuses = self.file_statuses(now=now)
+        errors, lines, rate = self._parse_signals(now)
         return HealthSignals(
             sampled_at=now,
             files=statuses,
             read_lag_ms=self.overall_read_lag_ms(statuses.values()),
+            parse_error_count=errors,
+            lines_read=lines,
+            parse_error_rate=rate,
         )
+
+    def _parse_signals(
+        self, now: datetime
+    ) -> tuple[int | None, int | None, float | None]:
+        """(errors, lines, rate) over the rolling window; all None until a
+        producer has reported at least once."""
+        if not self._parse_signal_seen:
+            return None, None, None
+        errors = self._parse_errors.count(now)
+        lines = self._lines_read.count(now)
+        # spec 004 s4.5: a ratio with no denominator is null, not 0.
+        return errors, lines, (errors / lines if lines > 0 else None)
 
     def derive_status(self, signals: HealthSignals) -> tuple[AgentStatus, list[str]]:
         """FR-HLT-002 rollup for the signals that exist; FR-HLT-003 reasons.
 
-        Each rule only fires on a non-None signal. The parse-error and
-        publish-queue rules are added by UBS-59 / UBS-60.
+        Each rule only fires on a non-None signal. The publish-queue rule is
+        added by UBS-60.
         """
         unhealthy: list[str] = []
         degraded: list[str] = self._read_lag_reasons(signals.files)
+        self._parse_error_reasons(signals, unhealthy, degraded)
 
         if unhealthy:
             return "unhealthy", unhealthy + degraded
@@ -171,6 +243,27 @@ class HealthReporter:
         )
 
     # --- rules ---------------------------------------------------------------
+
+    def _parse_error_reasons(
+        self, signals: HealthSignals, unhealthy: list[str], degraded: list[str]
+    ) -> None:
+        """spec 011 s2: parse error rate > 25% unhealthy, > 1% degraded."""
+        rate = signals.parse_error_rate
+        if rate is None:
+            return
+        window = self.thresholds.rolling_window_seconds
+        detail = (
+            f"parse error rate {rate:.1%} ({signals.parse_error_count}/"
+            f"{signals.lines_read} lines in last {window:.0f}s)"
+        )
+        if rate > self.thresholds.parse_error_rate_unhealthy:
+            unhealthy.append(
+                f"{detail} exceeds {self.thresholds.parse_error_rate_unhealthy:.0%}"
+            )
+        elif rate > self.thresholds.parse_error_rate_degraded:
+            degraded.append(
+                f"{detail} exceeds {self.thresholds.parse_error_rate_degraded:.0%}"
+            )
 
     def _read_lag_reasons(self, statuses: dict[str, FileReadHealth]) -> list[str]:
         threshold = self.thresholds.read_lag_degraded_ms

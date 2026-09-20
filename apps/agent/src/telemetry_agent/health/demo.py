@@ -6,9 +6,11 @@
 Heartbeats keep coming with zero log activity (FR-HLT-001). Append lines to a
 tailed file and the next heartbeat's `files[]` / `readLagMs` move; stop
 appending for > readLagDegraded and `status` flips to `degraded` with a
-reason. Pair it with `scripts/heartbeat_receiver_stub.py` to see the wire
-format validated on the receiving side. Not the production entrypoint —
-pipeline wiring is M1.5.
+reason. Every tailed line is also run through the FIX parser (UBS-59): append
+garbage and `parseErrorCountLast5Min` / the parse-error-rate reasons follow.
+Pair it with `scripts/heartbeat_receiver_stub.py` to see the wire format
+validated on the receiving side. Not the production entrypoint — pipeline
+wiring is M1.5.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import argparse
 import asyncio
 import logging
 import signal
+from datetime import UTC, datetime
 from pathlib import Path
 
 from telemetry_agent.health.config import HeartbeatConfig, load_health_config
@@ -29,6 +32,8 @@ from telemetry_agent.health.heartbeat import (
 from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.logs.offset_tracker import OffsetTracker
+from telemetry_agent.parser.fix.parser import FixParser
+from telemetry_agent.parser.protocol import SourceMeta
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -67,12 +72,23 @@ def _make_sink(spec: str) -> HeartbeatSink:
     raise SystemExit(f"--sink must be 'stdout' or an http(s) URL, got {spec!r}")
 
 
-async def _poll_forever(monitors: dict[str, LogMonitor], stop: asyncio.Event) -> None:
-    """Drain each tailed file every 250ms so read lag / offsets stay honest."""
+async def _poll_forever(
+    monitors: dict[str, LogMonitor], reporter: HealthReporter, stop: asyncio.Event
+) -> None:
+    """Drain each tailed file every 250ms so read lag / offsets stay honest, and
+    feed every line through the FIX parser into the reporter. This is the demo's
+    stand-in for the pipeline bridge (M1.5)."""
+    parser = FixParser()
     while not stop.is_set():
-        for monitor in monitors.values():
-            for _ in monitor.poll_lines():
-                pass
+        for name, monitor in monitors.items():
+            for line in monitor.poll_lines():
+                meta = SourceMeta(
+                    instance_id="demo",
+                    path=name,
+                    log_type="fix",
+                    read_at=datetime.now(UTC),
+                )
+                reporter.record_parse_result(parser.parse(line.encode(), meta))
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.25)
         except TimeoutError:
@@ -126,7 +142,7 @@ async def _main_async(args: argparse.Namespace) -> None:
         ", ".join(str(p) for p in paths),
     )
     try:
-        await asyncio.gather(emitter.run(stop), _poll_forever(monitors, stop))
+        await asyncio.gather(emitter.run(stop), _poll_forever(monitors, reporter, stop))
     finally:
         for monitor in monitors.values():
             monitor.close()
