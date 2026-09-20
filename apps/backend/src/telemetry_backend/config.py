@@ -121,22 +121,27 @@ class BackendHealthConfig:
         return self._split(self.internal_listen)
 
 
-class _Strict(BaseModel):
+class _Lenient(BaseModel):
+    # spec 010's `backend:` / `store:` / `alerting:` sections also carry keys
+    # owned by other components (workers, retentionWindow, ...), so unknown
+    # keys are tolerated here - unlike the agent's health sections, which
+    # are ours alone and refuse typos. A misspelt key of *ours* therefore
+    # silently keeps its default; `--check-config` prints the effective values.
     model_config = ConfigDict(
         alias_generator=to_camel, populate_by_name=True, extra="allow"
     )
 
 
-class _BackendYaml(_Strict):
+class _BackendYaml(_Lenient):
     listen: str | None = None
     internal_listen: str | None = None
 
 
-class _StoreYaml(_Strict):
+class _StoreYaml(_Lenient):
     warmup_window: str | int | float | None = None
 
 
-class _AlertingYaml(_Strict):
+class _AlertingYaml(_Lenient):
     missing_heartbeat_threshold: str | int | float | None = None
 
 

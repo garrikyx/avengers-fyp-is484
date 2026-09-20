@@ -77,7 +77,12 @@ def main() -> None:
     if args.check_config:
         print(f"config ok: {config}")
         return
-    asyncio.run(_serve(AppDeps(config=config), args.log_level))
+    try:
+        asyncio.run(_serve(AppDeps(config=config), args.log_level))
+    except KeyboardInterrupt:
+        # Two uvicorn servers each capture SIGINT and re-raise it on exit; the
+        # last re-raise reaches asyncio.run. Same handling as uvicorn.run().
+        logger.info("shutdown complete")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ End-to-end picture: [`health-reporter-overview.md`](./health-reporter-overview.m
 
 | File | Role |
 | --- | --- |
-| `config.py` (extended) | `BackendHealthConfig` (`missing_heartbeat_threshold_seconds`, `warmup_window_seconds`, `listen`, `internal_listen`) + `load_backend_health_config(config/backend.yaml)`. Same strict-pydantic pattern as the agent: our sections refuse unknown keys, siblings pass through. |
+| `config.py` (extended) | `BackendHealthConfig` (`missing_heartbeat_threshold_seconds`, `warmup_window_seconds`, `listen`, `internal_listen`) + `load_backend_health_config(config/backend.yaml)`. Unlike the agent's loader, unknown keys inside `backend:`/`store:`/`alerting:` are **tolerated**, because spec 010 puts other components' keys (`workers`, `retentionWindow`, …) in the same sections; a misspelt key of ours keeps its default, so use `telemetry-backend --check-config` to see effective values. |
 | `deps.py` | `AppDeps` — the one object both apps share (`config`, `clock`, `registry`; UBS-96 adds `self_metrics`, `warmup`). `get_deps(request)` is the FastAPI dependency. Injectable clock is what makes every staleness test deterministic. |
 | `app.py` | The two factories. Public app: `health` + `ingest_placeholder` routers. Internal app: empty until UBS-96. |
 | `main.py` | `telemetry-backend` console script: two `uvicorn.Server`s in one asyncio loop bound to `listen` / `internalListen` (`FR-HLT-012`). `--check-config` for the install runbook. |

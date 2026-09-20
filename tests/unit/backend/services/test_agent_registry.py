@@ -66,15 +66,29 @@ def test_records_last_heartbeat_and_version() -> None:
     assert registry.status_of(rec) == "degraded"
 
 
-def test_older_heartbeat_delivered_late_does_not_roll_back() -> None:
+def test_late_older_heartbeat_keeps_newer_doc_but_refreshes_liveness() -> None:
     registry, clock = make()
     registry.record_heartbeat(hb(sent_at=T0 + timedelta(seconds=30), status="degraded"))
     clock.advance(5)
     registry.record_heartbeat(hb(sent_at=T0, status="healthy"))  # stale on the wire
     rec = registry.get("magic-agent-sg-01")
     assert rec is not None
-    assert rec.heartbeat.status == "degraded"
-    assert rec.received_at == T0  # not refreshed by the old document
+    assert rec.heartbeat.status == "degraded"  # view does not roll back
+    assert rec.received_at == T0 + timedelta(seconds=5)  # but the agent is alive
+
+
+def test_agent_clock_stepped_backwards_does_not_go_missing() -> None:
+    """NTP corrects the agent host back by 5 minutes: sentAtUtc goes backwards on
+    every subsequent heartbeat, yet the agent is heartbeating and must stay live."""
+    registry, clock = make(threshold=60)
+    registry.record_heartbeat(hb(sent_at=T0 + timedelta(minutes=5)))
+    for i in range(1, 12):  # 110s of 10s heartbeats, all "older" than the first
+        clock.advance(10)
+        registry.record_heartbeat(hb(sent_at=T0 + timedelta(seconds=10 * i)))
+    rec = registry.get("magic-agent-sg-01")
+    assert rec is not None
+    assert registry.status_of(rec) == "healthy"
+    assert registry.heartbeat_age_ms(rec) == 0
 
 
 def test_missing_after_threshold_measured_on_backend_clock() -> None:

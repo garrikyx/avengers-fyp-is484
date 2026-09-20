@@ -75,11 +75,17 @@ class AgentRegistry:
                     heartbeat=heartbeat,
                 )
                 return True
-            # A late-delivered older heartbeat must not roll the view backwards.
-            if heartbeat.sent_at_utc < existing.heartbeat.sent_at_utc:
-                return False
+            # Liveness is the backend's own observation: the agent just spoke,
+            # so `received_at` always moves forward. The *document* is only
+            # replaced if it is not older than the stored one, so a
+            # late-delivered heartbeat (retry buffer, out-of-order network)
+            # cannot roll the reported status backwards - and an agent whose
+            # clock was stepped back keeps being seen as alive meanwhile.
+            newer_doc = heartbeat.sent_at_utc >= existing.heartbeat.sent_at_utc
             self._agents[heartbeat.agent_id] = replace(
-                existing, received_at=received_at, heartbeat=heartbeat
+                existing,
+                received_at=received_at,
+                heartbeat=heartbeat if newer_doc else existing.heartbeat,
             )
             return False
 
