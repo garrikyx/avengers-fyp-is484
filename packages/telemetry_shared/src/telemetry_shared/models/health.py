@@ -2,7 +2,7 @@
 
 `None` on any signal field means "no producer for this signal yet", which the
 backend must not read as zero (FR-HLT-004). Which producers exist today is
-tracked in docs/plan/ubs58-59-notes.md.
+tracked in docs/plan/ubs58-60-notes.md.
 """
 
 from __future__ import annotations

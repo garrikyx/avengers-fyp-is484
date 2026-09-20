@@ -1,7 +1,8 @@
 """Health Reporter: per-file read lag (UBS-30), status rollup and heartbeat
-payload (UBS-58, FR-HLT-001..004), rolling parse-error window (UBS-59).
+payload (UBS-58, FR-HLT-001..004), rolling parse-error window (UBS-59),
+publish queue depth (UBS-60).
 
-See docs/plan/ubs30-notes.md and docs/plan/ubs58-59-notes.md.
+See docs/plan/ubs30-notes.md and docs/plan/ubs58-60-notes.md.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import Literal
 
 from telemetry_agent.health.config import HealthThresholds, HeartbeatConfig
 from telemetry_agent.health.window import SlidingWindowCounter
@@ -20,6 +22,9 @@ from telemetry_shared.models.health import AgentHeartbeat, AgentStatus, FileRead
 DEFAULT_DEGRADED_THRESHOLD_MS = HealthThresholds().read_lag_degraded_ms
 
 Clock = Callable[[], datetime]
+# UBS-60: whatever owns the publish queue answers "how deep is it right now".
+QueueDepthProvider = Callable[[], int]
+QueueTrend = Literal["rising", "draining", "flat"]
 
 
 def _utc_now() -> datetime:
@@ -42,6 +47,8 @@ class HealthSignals:
     lines_read: int | None = None
     parse_error_rate: float | None = None
     publish_queue_depth: int | None = None
+    # Direction since the previous snapshot; None on the first sample.
+    publish_queue_trend: QueueTrend | None = None
     callback_failures: int | None = None
     dropped_events: int | None = None
 
@@ -73,6 +80,7 @@ class HealthReporter:
         thresholds: HealthThresholds | None = None,
         heartbeat: HeartbeatConfig | None = None,
         clock: Clock | None = None,
+        queue_depth_provider: QueueDepthProvider | None = None,
     ) -> None:
         self.monitors = monitors
         base = thresholds or HealthThresholds()
@@ -91,6 +99,10 @@ class HealthReporter:
         self._parse_errors = SlidingWindowCounter(window, clock=self._clock)
         self._lines_read = SlidingWindowCounter(window, clock=self._clock)
         self._parse_signal_seen = False
+        # UBS-60: no Publisher exists yet (M4); until one registers itself the
+        # queue fields stay None on the wire (FR-HLT-004).
+        self._queue_depth_provider = queue_depth_provider
+        self._last_queue_depth: int | None = None
 
     @property
     def degraded_threshold_ms(self) -> float:
@@ -168,6 +180,29 @@ class HealthReporter:
         self._parse_signal_seen = True
         self._lines_read.record(now or self._clock(), n)
 
+    # --- UBS-60: publish queue depth ---------------------------------------------
+
+    def set_queue_depth_provider(self, provider: QueueDepthProvider | None) -> None:
+        """Register (or remove) the Publisher's queue-depth callback."""
+        self._queue_depth_provider = provider
+        self._last_queue_depth = None
+
+    def _queue_signals(self) -> tuple[int | None, QueueTrend | None]:
+        """(depth, trend) sampled now; trend compares with the previous sample
+        so consecutive heartbeats show rising vs draining (spec 011 s1.1
+        "growing monotonically" is the warning sign, not the level alone)."""
+        if self._queue_depth_provider is None:
+            return None, None
+        depth = max(0, int(self._queue_depth_provider()))
+        previous, self._last_queue_depth = self._last_queue_depth, depth
+        if previous is None:
+            return depth, None
+        if depth > previous:
+            return depth, "rising"
+        if depth < previous:
+            return depth, "draining"
+        return depth, "flat"
+
     # --- UBS-58: rollup + heartbeat ------------------------------------------
 
     def snapshot(self, now: datetime | None = None) -> HealthSignals:
@@ -175,6 +210,7 @@ class HealthReporter:
         now = now or self._clock()
         statuses = self.file_statuses(now=now)
         errors, lines, rate = self._parse_signals(now)
+        queue_depth, queue_trend = self._queue_signals()
         return HealthSignals(
             sampled_at=now,
             files=statuses,
@@ -182,6 +218,8 @@ class HealthReporter:
             parse_error_count=errors,
             lines_read=lines,
             parse_error_rate=rate,
+            publish_queue_depth=queue_depth,
+            publish_queue_trend=queue_trend,
         )
 
     def _parse_signals(
@@ -199,12 +237,12 @@ class HealthReporter:
     def derive_status(self, signals: HealthSignals) -> tuple[AgentStatus, list[str]]:
         """FR-HLT-002 rollup for the signals that exist; FR-HLT-003 reasons.
 
-        Each rule only fires on a non-None signal. The publish-queue rule is
-        added by UBS-60.
+        Each rule only fires on a non-None signal.
         """
         unhealthy: list[str] = []
         degraded: list[str] = self._read_lag_reasons(signals.files)
         self._parse_error_reasons(signals, unhealthy, degraded)
+        self._queue_depth_reasons(signals, unhealthy, degraded)
 
         if unhealthy:
             return "unhealthy", unhealthy + degraded
@@ -236,6 +274,29 @@ class HealthReporter:
         )
 
     # --- rules ---------------------------------------------------------------
+
+    def _queue_depth_reasons(
+        self, signals: HealthSignals, unhealthy: list[str], degraded: list[str]
+    ) -> None:
+        """spec 011 s1.1: publish queue depth >= critical watermark unhealthy,
+        >= high watermark degraded. Trend is appended so an operator can tell
+        a draining backlog from a stalled Publisher without a second query."""
+        depth = signals.publish_queue_depth
+        if depth is None:
+            return
+        trend = (
+            f", {signals.publish_queue_trend}" if signals.publish_queue_trend else ""
+        )
+        if depth >= self.thresholds.publish_queue_critical_watermark:
+            unhealthy.append(
+                f"publish queue depth {depth}{trend} at or above critical "
+                f"watermark {self.thresholds.publish_queue_critical_watermark}"
+            )
+        elif depth >= self.thresholds.publish_queue_high_watermark:
+            degraded.append(
+                f"publish queue depth {depth}{trend} at or above high "
+                f"watermark {self.thresholds.publish_queue_high_watermark}"
+            )
 
     def _parse_error_reasons(
         self, signals: HealthSignals, unhealthy: list[str], degraded: list[str]
