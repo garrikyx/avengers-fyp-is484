@@ -59,6 +59,11 @@ def test_event_older_than_window_is_dropped() -> None:
     assert len(w) == 1
 
 
+def test_capacity_is_rounded_not_floored() -> None:
+    assert SlidingWindowCounter(window_seconds=300, bucket_seconds=0.1).capacity == 3000
+    assert SlidingWindowCounter(window_seconds=300, bucket_seconds=1).capacity == 300
+
+
 def test_uses_injected_clock_when_now_omitted() -> None:
     now = at(0)
     w = SlidingWindowCounter(window_seconds=10, clock=lambda: now)

@@ -89,3 +89,5 @@ def test_threshold_ordering_is_enforced() -> None:
         )
     with pytest.raises(HealthConfigError):
         HeartbeatConfig(interval_seconds=0)
+    with pytest.raises(HealthConfigError, match=">= 1s"):
+        HealthThresholds(rolling_window_seconds=0.5)  # below bucket size
