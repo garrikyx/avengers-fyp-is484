@@ -184,7 +184,15 @@ def test_query_latency_is_observed_by_route_template(
     assert f'{count}{{route="/telemetry/health/agents/{{agent_id}}"}} 1.0' in body
     assert f'{count}{{route="/telemetry/health/agents"}} 1.0' in body
     assert 'route="unmatched"' in body
-    assert "magic-agent-sg-01" not in body.split("telemetry_backend_query_latency")[1]
+    latency_lines = [
+        line
+        for line in body.splitlines()
+        if line.startswith("telemetry_backend_query_latency_seconds")
+    ]
+    assert latency_lines  # the histogram is there ...
+    assert not any(
+        "magic-agent-sg-01" in line for line in latency_lines
+    )  # ... unlabelled by id
 
 
 # --- FR-HLT-012: listener split ---------------------------------------------------

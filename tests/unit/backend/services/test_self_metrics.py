@@ -72,3 +72,37 @@ def test_warmup_gauge_follows_tracker() -> None:
     assert b"warming_up 1.0" in m.exposition(w)[0]
     w.mark_ingest()
     assert b"warming_up 0.0" in m.exposition(w)[0]
+
+
+def test_concurrent_scrapes_never_produce_a_torn_exposition() -> None:
+    """Every scrape must show one age line per registered agent, even while
+    other scrapes are rebuilding the per-agent gauges."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from telemetry_shared.models.health import AgentHeartbeat
+
+    reg = AgentRegistry(clock=lambda: T0)
+    for i in range(20):
+        reg.record_heartbeat(
+            AgentHeartbeat(
+                agent_id=f"agent-{i:02d}",
+                instance_ids=["i"],
+                sent_at_utc=T0,
+                agent_version="0",
+                uptime_seconds=1,
+                status="healthy",
+            )
+        )
+    m = SelfMetrics(reg, clock=lambda: T0)
+
+    def scrape(_: int) -> int:
+        body = m.exposition()[0].decode()
+        return sum(
+            1
+            for line in body.splitlines()
+            if line.startswith("telemetry_backend_agent_heartbeat_age_seconds{")
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        counts = list(pool.map(scrape, range(200)))
+    assert set(counts) == {20}

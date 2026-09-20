@@ -17,6 +17,7 @@ activity". See docs/plan/ubs69-96-notes.md.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -81,6 +82,9 @@ class SelfMetrics:
         self._agent_registry = registry
         self._clock = clock or _utc_now
         self.registry = CollectorRegistry()
+        # /metrics is a sync endpoint served from a threadpool; two overlapping
+        # scrapes must not interleave clear()+labels() with generate_latest().
+        self._scrape_lock = threading.Lock()
         ns = "telemetry_backend"
 
         # --- ingestion (UBS-66 / 85 / 87 call these) ---------------------------
@@ -189,7 +193,8 @@ class SelfMetrics:
 
     def exposition(self, warmup: WarmupTracker | None = None) -> tuple[bytes, str]:
         """(body, content-type) for `GET /metrics`."""
-        self.refresh_agent_gauges()
-        if warmup is not None:
-            self.warmup_state.set(int(warmup.status().state == "warming"))
-        return generate_latest(self.registry), CONTENT_TYPE_LATEST
+        with self._scrape_lock:
+            self.refresh_agent_gauges()
+            if warmup is not None:
+                self.warmup_state.set(int(warmup.status().state == "warming"))
+            return generate_latest(self.registry), CONTENT_TYPE_LATEST
