@@ -163,6 +163,10 @@ def load_health_config(
     health = parsed.health or _HealthYaml()
 
     instance_ids: tuple[str, ...] | None = None
+    if agent.instance_ids is not None and agent.instance_id is not None:
+        raise HealthConfigError(
+            f"{file}: agent.instanceIds and agent.instanceId both set"
+        )
     if agent.instance_ids is not None:
         instance_ids = tuple(agent.instance_ids)
     elif agent.instance_id is not None:

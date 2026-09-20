@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -134,17 +134,18 @@ def test_sink_failure_is_counted_not_raised(caplog: pytest.LogCaptureFixture) ->
 def test_run_emits_on_interval_with_no_log_activity() -> None:
     """AC: an idle agent still heartbeats; N ticks in ~N intervals."""
     sink = Collect()
-    emitter = HeartbeatEmitter(_reporter(FakeClock()), sink, interval_seconds=0.02)
+    emitter = HeartbeatEmitter(_reporter(FakeClock()), sink, interval_seconds=0.05)
 
     async def scenario() -> None:
         stop = asyncio.Event()
         task = asyncio.create_task(emitter.run(stop))
-        await asyncio.sleep(0.11)
+        await asyncio.sleep(0.32)
         stop.set()
         await asyncio.wait_for(task, timeout=1)
 
     asyncio.run(scenario())
-    assert 4 <= len(sink.items) <= 8  # first tick immediate + ~5 intervals
+    # first tick immediate + ~6 intervals; wide bounds for Windows' ~16ms timer
+    assert 4 <= len(sink.items) <= 9
     assert all(hb.agent_id == "magic-agent-sg-01" for hb in sink.items)
 
 
@@ -214,3 +215,55 @@ def test_http_sink_posts_json_and_raises_on_4xx() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- review fixes ----------------------------------------------------------------
+
+
+def test_naive_sent_at_is_rejected_and_aware_is_normalised_to_utc() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        AgentHeartbeat.model_validate_json(
+            '{"agentId":"a","instanceIds":["i"],"sentAtUtc":"2026-09-20T04:00:00",'
+            '"agentVersion":"0","uptimeSeconds":1,"status":"healthy"}'
+        )
+    sg = datetime(2026, 9, 20, 12, 0, tzinfo=timezone(timedelta(hours=8)))
+    hb = AgentHeartbeat(
+        agent_id="a",
+        instance_ids=["i"],
+        sent_at_utc=sg,
+        agent_version="0",
+        uptime_seconds=1,
+        status="healthy",
+    )
+    assert hb.sent_at_utc == datetime(2026, 9, 20, 4, 0, tzinfo=UTC)
+    assert hb.sent_at_utc.tzinfo == UTC
+
+
+def test_slow_sink_does_not_block_the_event_loop() -> None:
+    """A sink stuck in blocking I/O must not starve other coroutines."""
+    import time
+
+    def slow(_: AgentHeartbeat) -> None:
+        time.sleep(0.3)
+
+    emitter = HeartbeatEmitter(_reporter(FakeClock()), slow, interval_seconds=10)
+    beats = 0
+
+    async def other() -> None:
+        nonlocal beats
+        for _ in range(10):
+            await asyncio.sleep(0.02)
+            beats += 1
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(emitter.run(stop))
+        await other()
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+
+    asyncio.run(scenario())
+    assert beats == 10
+    assert emitter.sent_count >= 1
