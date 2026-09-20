@@ -1,11 +1,12 @@
-# Health Reporter — end-to-end overview (UBS-30 → UBS-58 → UBS-59 → UBS-60)
+# Health Reporter — end-to-end overview (UBS-30 → 58 → 59 → 60 → 69)
 
 Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` → `UBS-69-Backend-Health-Endpoints` (stacked, pushed, no PRs yet)
 
-This is the reference for the agent-side Health Reporter: what each ticket added, which
+This is the reference for the Health Reporter end to end: what each ticket added, which
 functions do the work, why they are shaped that way, and how the pieces connect from a
-log file on disk to a heartbeat document arriving at the backend. Decision rationale
-lives in [`ubs30-notes.md`](./ubs30-notes.md) and [`ubs58-60-notes.md`](./ubs58-60-notes.md);
+log file on disk, through a heartbeat document, to the backend's per-agent health view.
+Decision rationale lives in [`ubs30-notes.md`](./ubs30-notes.md),
+[`ubs58-60-notes.md`](./ubs58-60-notes.md) and [`ubs69-96-notes.md`](./ubs69-96-notes.md);
 this document is the map.
 
 ---
@@ -17,9 +18,11 @@ stalls, parses garbage, or cannot reach the backend, every metric downstream is 
 while looking healthy. The Health Reporter is the agent's own self-diagnosis
 (spec 002 §7, spec 011): it turns internal signals into one `status` plus a list of
 `statusReasons`, packages them as a **heartbeat** (spec 004 §6), and sends it on a
-fixed interval **even when there is nothing else to say** (`FR-HLT-001`).
+fixed interval **even when there is nothing else to say** (`FR-HLT-001`). The backend
+keeps the last heartbeat per agent and is the only party that can notice an agent has
+gone silent — a dead agent cannot report its own death (`FR-ING-010`).
 
-Four tickets built it, in dependency order:
+Five tickets built it, in dependency order (agent side first, then backend):
 
 | Ticket | Adds | Requirement IDs |
 | --- | --- | --- |
@@ -27,6 +30,7 @@ Four tickets built it, in dependency order:
 | UBS-58 | The **heartbeat** itself: spec-shaped payload, status rollup with reasons, an emitter that ticks on an interval, pluggable sinks, config | `FR-HLT-001`, `FR-HLT-002`, `FR-HLT-003`, `FR-HLT-004`, spec 004 §6 |
 | UBS-59 | **Parse error rate** over a rolling 5-minute window, feeding status | `FR-HLT-002` (parse slice), spec 004 §4.5 `parseErrorRate` |
 | UBS-60 | **Publish queue depth** with watermarks and trend | `FR-HLT-002` (queue slice), spec 011 §1.1 |
+| UBS-69 | **Backend read side**: FastAPI app skeleton, agent registry, `GET /telemetry/health/agents[/{agentId}]`, backend-side `missing` detection, `dataCompleteness` inputs | `FR-ING-010` (read side), spec 007 §5.1/§5.2, `FR-HLT-011`, `FR-QRY-015` |
 
 ---
 
@@ -215,7 +219,7 @@ agent looked identical to the backend.
 ### 4.5 Receiving side
 
 Originally a stdlib stub script; since UBS-69 the real backend receives heartbeats on a
-placeholder `POST /telemetry/heartbeat` route (see §6b) and the stub is gone.
+placeholder `POST /telemetry/heartbeat` route (see §7) and the stub is gone.
 
 ---
 
@@ -266,7 +270,7 @@ until batches are dropped. Depth is the leading indicator; drops are the lagging
 
 ---
 
-## 6b. UBS-69 — backend health read side
+## 7. UBS-69 — backend health read side
 
 **Problem.** An agent that dies cannot report its own death. Something on the backend has
 to notice silence and say so, and an operator needs one place to see every agent's last
@@ -282,7 +286,7 @@ word. Full rationale: [`ubs69-96-notes.md`](./ubs69-96-notes.md).
 | `data_completeness.build(registry, at, …)` | `agentsExpected / agentsReporting / staleAgents / confidence`. | Ready for UBS-91 to drop into every query response (`FR-QRY-015`). |
 | `create_public_app()` / `create_internal_app()` + `AppDeps` | Two FastAPI apps, one shared deps object, router per file. | Public API and operator probes never share a socket (`FR-HLT-012`); parallel tickets add routers without touching each other. |
 
-## 7. Status rollup — the one table
+## 8. Status rollup — the one table
 
 `derive_status()` today, with the producer for each rule:
 
@@ -300,7 +304,7 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 ---
 
-## 8. What is still missing (so nobody is surprised)
+## 9. What is still missing (so nobody is surprised)
 
 | Gap | Effect today | Owner |
 | --- | --- | --- |
@@ -315,7 +319,7 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 ---
 
-## 9. How to verify / demo
+## 10. How to verify / demo
 
 ```bash
 uv run pytest tests/unit/agent/health -q            # 71 tests across the four tickets
