@@ -65,3 +65,56 @@ class AgentHeartbeat(CamelModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("sentAtUtc must be timezone-aware")
         return value.astimezone(UTC)
+
+
+# --- Backend health read side (UBS-69, spec 007 s5.1 / s5.2) ------------------------
+#
+# `missing` is the backend's verdict when no heartbeat has arrived within
+# `missingHeartbeatThreshold`; the other three are whatever the agent last said.
+
+RegistryStatus = Literal["healthy", "degraded", "unhealthy", "missing"]
+
+
+class AgentHealthSummary(CamelModel):
+    agent_id: str
+    status: RegistryStatus
+    instance_ids: list[str]
+    last_heartbeat_utc: datetime
+    heartbeat_age_ms: int
+    agent_version: str
+
+
+class HealthCounts(CamelModel):
+    healthy: int = 0
+    degraded: int = 0
+    unhealthy: int = 0
+    missing: int = 0
+
+
+class AgentHealthList(CamelModel):
+    agents: list[AgentHealthSummary]
+    counts: HealthCounts
+
+
+class AgentHealthDetail(CamelModel):
+    """spec 007 s5.2: the last heartbeat, re-keyed for the API, plus the
+    backend's own view (`status`, `heartbeatAgeMs`, `firstSeenUtc`)."""
+
+    agent_id: str
+    status: RegistryStatus
+    instance_ids: list[str]
+    last_heartbeat_utc: datetime
+    heartbeat_age_ms: int
+    first_seen_utc: datetime
+    agent_version: str
+    uptime_seconds: float
+    reported_status: AgentStatus
+    status_reasons: list[str]
+    log_read_lag_ms: float | None
+    parse_error_count_last5_min: int | None
+    callback_failures_last5_min: int | None
+    publish_queue_depth: int | None
+    dropped_events_last5_min: int | None
+    active_alert_count: int | None
+    files: list[FileReadHealth]
+    resource_usage: ResourceUsage | None

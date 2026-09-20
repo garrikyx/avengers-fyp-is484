@@ -1,6 +1,6 @@
 # Health Reporter — end-to-end overview (UBS-30 → UBS-58 → UBS-59 → UBS-60)
 
-Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` (stacked, pushed, no PRs yet)
+Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` → `UBS-69-Backend-Health-Endpoints` (stacked, pushed, no PRs yet)
 
 This is the reference for the agent-side Health Reporter: what each ticket added, which
 functions do the work, why they are shaped that way, and how the pieces connect from a
@@ -61,10 +61,12 @@ flowchart LR
         MODEL["models/health.py\nAgentHeartbeat · FileReadHealth\n(CamelModel → spec 004 §6 JSON)"]
     end
 
-    subgraph backend["Backend (not built yet)"]
-        STUB["scripts/heartbeat_receiver_stub.py\n(placeholder: validates, tracks STALE)"]
-        ING["Ingestion Service\nUBS-66 / UBS-87"]
-        HEALTHAPI["GET /telemetry/health/agents\nUBS-69"]
+    subgraph backend["Backend (apps/backend/src/telemetry_backend)"]
+        PH["api/ingest_placeholder.py\nPOST /telemetry/heartbeat\n(temporary, UBS-66 replaces)"]
+        ING["Ingestion Service\nUBS-66 / UBS-87 (future)"]
+        REG["services/agent_registry.py\nAgentRegistry\nrecord_heartbeat() · status_of() · stale_agents()"]
+        HEALTHAPI["api/health.py (UBS-69)\nGET /telemetry/health/agents\nGET /telemetry/health/agents/{id}"]
+        DC["services/data_completeness.py\nbuild() → for UBS-91"]
     end
 
     FIX --> LM1
@@ -82,8 +84,10 @@ flowchart LR
     REP -- "AgentHeartbeat" --> EMIT
     EMIT --> BUF --> HTTP
     MODEL -. "wire shape" .-> REP
-    HTTP -- "JSON, every 10s" --> STUB
-    HTTP -. "future" .-> ING --> HEALTHAPI
+    HTTP -- "JSON, every 10s" --> PH --> REG
+    HTTP -. "future" .-> ING -.-> REG
+    REG --> HEALTHAPI
+    REG --> DC
 ```
 
 Reading the diagram:
@@ -96,8 +100,8 @@ Reading the diagram:
 - **`AgentHeartbeat` in `telemetry_shared` is the contract.** Both agent and backend
   import the same Pydantic model (`FR-ING-022`), so a schema drift fails at validation,
   not in production.
-- **The backend column is mostly future.** Today the stub receiver stands in for UBS-66/87
-  (ingestion) and previews UBS-69 (health read side).
+- **The backend column is real since UBS-69**, except ingestion: the placeholder route stands
+  in for UBS-66/87 until the batch path lands and calls the same `record_heartbeat()`.
 
 ### 2.1 One heartbeat tick, as a sequence
 
@@ -111,7 +115,7 @@ sequenceDiagram
     participant Q as queue_depth_provider
     participant S as BufferingHeartbeatSink
     participant H as HttpHeartbeatSink
-    participant B as Backend / stub
+    participant B as Backend POST /telemetry/heartbeat
 
     loop every heartbeat.interval (default 10s), even if idle
         E->>R: build_heartbeat(now)
@@ -208,14 +212,10 @@ agent looked identical to the backend.
 | `HttpHeartbeatSink(url)` | `POST /telemetry/heartbeat` (spec 007 §2.3) with stdlib `urllib`; raises on non-2xx. | Zero new dependencies for a placeholder transport. Raising (instead of returning False) is what lets `tick()` count it as failed and lets `BufferingHeartbeatSink` keep the item queued. |
 | `heartbeat_json(hb)` | `model_dump_json(by_alias=True)`. | One function so every sink and test serialise identically. |
 
-### 4.5 Placeholder receiver — `scripts/heartbeat_receiver_stub.py`
+### 4.5 Receiving side
 
-Not part of the product. A stdlib `http.server` that (a) validates every POST body against
-`AgentHeartbeat` and returns **400 with the pydantic error on any drift**, (b) keeps
-`{agentId: lastHeartbeatUtc, status}` and serves it on `GET /telemetry/health/agents`,
-(c) prints `STALE <agentId>` after `--stale-after` seconds of silence. It exists because
-UBS-66/87/69 don't, and it is deleted when they do. Its output shape is *not* the UBS-69
-contract.
+Originally a stdlib stub script; since UBS-69 the real backend receives heartbeats on a
+placeholder `POST /telemetry/heartbeat` route (see §6b) and the stub is gone.
 
 ---
 
@@ -266,6 +266,22 @@ until batches are dropped. Depth is the leading indicator; drops are the lagging
 
 ---
 
+## 6b. UBS-69 — backend health read side
+
+**Problem.** An agent that dies cannot report its own death. Something on the backend has
+to notice silence and say so, and an operator needs one place to see every agent's last
+word. Full rationale: [`ubs69-96-notes.md`](./ubs69-96-notes.md).
+
+| Piece | Purpose | Why |
+| --- | --- | --- |
+| `AgentRegistry.record_heartbeat(hb, received_at)` | Stores the last document per `agentId`; stamps `received_at` from the **backend** clock; returns `True` on first contact. Ignores documents older than the stored one. | Staleness must be judged on the backend's clock, never the agent's `sentAtUtc` (clock skew). First-contact boolean lets the ingestion path (UBS-87) emit the `FR-ING-010` event. |
+| `AgentRegistry.status_of(record, at)` | `missing` if `now − received_at > missingHeartbeatThreshold` (60s), else the agent's own last `status`. | Missing-heartbeat detection is backend-side, at read time — no sweeper needed for the endpoint. |
+| `AgentRegistry.stale_agents(at)` | IDs past the threshold. | Input for `dataCompleteness.staleAgents` (UBS-91) and `AgentHeartbeatMissing` (UBS-95). |
+| `GET /telemetry/health/agents` | Spec 007 §5.1 list + `counts{healthy,degraded,unhealthy,missing}`. | One call answers "is the fleet OK". |
+| `GET /telemetry/health/agents/{agentId}` | Spec 007 §5.2 detail: backend verdict `status`, plus the agent's `reportedStatus` / `statusReasons` / every heartbeat field. 404 `{code: not_found}` if unknown. | Operator sees "missing — and the last thing it said was X". `FR-HLT-011`: `files[].path` is the only path-like field (tested). |
+| `data_completeness.build(registry, at, …)` | `agentsExpected / agentsReporting / staleAgents / confidence`. | Ready for UBS-91 to drop into every query response (`FR-QRY-015`). |
+| `create_public_app()` / `create_internal_app()` + `AppDeps` | Two FastAPI apps, one shared deps object, router per file. | Public API and operator probes never share a socket (`FR-HLT-012`); parallel tickets add routers without touching each other. |
+
 ## 7. Status rollup — the one table
 
 `derive_status()` today, with the producer for each rule:
@@ -288,8 +304,9 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 | Gap | Effect today | Owner |
 | --- | --- | --- |
-| Backend ingestion (`POST /telemetry/heartbeat`) | Heartbeats reach only the stub receiver | UBS-66 / UBS-87 |
-| Backend health read side (`lastHeartbeatUtc`, `unresponsive`, `/telemetry/health/agents`) | Stub only; UBS-58's two backend ACs live here now | UBS-69 |
+| Real backend ingestion (batch path, auth, limits) | Heartbeats arrive only via the placeholder route | UBS-66 / UBS-87 |
+| Query API + `dataCompleteness` wiring | helper built, nothing calls it | UBS-91 |
+| `AgentHeartbeatMissing` alert | staleness reported, not alerted | UBS-95 |
 | Backend Publisher | `HttpHeartbeatSink` + `BufferingHeartbeatSink` are stand-ins; `publishBufferBytes` `null` | M4 |
 | Pipeline bridge (monitor → parser → reporter in a real process) | Only the demo calls `record_parse_result()` | M1.5 |
 | Callback Dispatcher wired | `callbackFailuresLast5Min` `null` | UBS-32–34 |
@@ -304,19 +321,21 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 uv run pytest tests/unit/agent/health -q            # 71 tests across the four tickets
 uv run pytest tests/integration/agent/test_ubs30_health_integration.py -q
 
-# terminal 1 — placeholder backend
-uv run python scripts/heartbeat_receiver_stub.py --stale-after 6
-# terminal 2 — agent demo, 2s heartbeats, POSTing to the stub
-uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8000/telemetry/heartbeat
+uv run pytest tests/unit/backend tests/integration/backend -q   # UBS-69
+
+# terminal 1 — backend (public :8080, internal :8081)
+uv run telemetry-backend
+# terminal 2 — agent demo, 2s heartbeats, POSTing to the backend
+uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8080/telemetry/heartbeat
 ```
 
 Then, in order:
 
-1. Watch terminal 1: `202 … status=healthy readLag=n/a files=1` every 2s with no log activity (**UBS-58**).
-2. `echo '8=FIX.4.2|9=61|35=D|49=C|56=B|11=ORD-1|55=ABC|54=1|38=100|44=50.00|10=072|' >> demo_logs/Fix.log` → next heartbeat shows `readLag=<ms>`; wait > 5s → `status=degraded reasons=['Fix.log: read lag …']` (**UBS-30**).
-3. `echo '8=FIX.4.2|9=61|35=ZZ|11=ORD-9|10=072|' >> demo_logs/Fix.log` → `parseErrorCountLast5Min` becomes 1 and a `parse error rate …` reason appears (**UBS-59**).
-4. Ctrl-C terminal 1, wait ~30s, restart it → heartbeats arrive in a burst, the ones built during the outage carry `publishQueueDepth` rising past 10 with `degraded` / `unhealthy`, then the queue drains and status recovers (**UBS-60**).
-5. Ctrl-C terminal 2 → terminal 1 prints `STALE magic-agent-local` after 6s (preview of **UBS-69**).
+1. `curl -s localhost:8080/telemetry/health/agents` → the agent is listed `healthy` with a small `heartbeatAgeMs`, with no log activity (**UBS-58**, **UBS-69**).
+2. `echo '8=FIX.4.2|9=61|35=D|49=C|56=B|11=ORD-1|55=ABC|54=1|38=100|44=50.00|10=072|' >> demo_logs/Fix.log` → `…/agents/magic-agent-local` shows `logReadLagMs`; wait > 5s → `status: degraded`, `statusReasons: ['Fix.log: read lag …']` (**UBS-30**).
+3. `echo '8=FIX.4.2|9=61|35=ZZ|11=ORD-9|10=072|' >> demo_logs/Fix.log` → `parseErrorCountLast5Min` becomes 1 and a `parse error rate …` reason appears in the detail (**UBS-59**).
+4. Ctrl-C terminal 1 (backend), wait ~30s, restart it → heartbeats arrive in a burst, the ones built during the outage carry `publishQueueDepth` rising past 10 with `degraded` / `unhealthy`, then the queue drains and status recovers (**UBS-60**).
+5. Ctrl-C terminal 2 (agent) → after 60s the list shows `status: missing`, `counts.missing: 1`, and the detail still carries the agent's last `reportedStatus` (**UBS-69**).
 
 Every number you see in step 1–4 is produced by the code paths in sections 3–6; nothing
 is mocked in the demo.

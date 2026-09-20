@@ -1,18 +1,18 @@
 """Live heartbeat demo (UBS-58): tail files, emit heartbeats on an interval.
 
     uv run telemetry-agent-heartbeat --interval 2 --log demo_logs/Fix.log
-    uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8000/telemetry/heartbeat
+    uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8080/telemetry/heartbeat
 
 Heartbeats keep coming with zero log activity (FR-HLT-001). Append lines to a
 tailed file and the next heartbeat's `files[]` / `readLagMs` move; stop
 appending for > readLagDegraded and `status` flips to `degraded` with a
 reason. Every tailed line is also run through the FIX parser (UBS-59): append
 garbage and `parseErrorCountLast5Min` / the parse-error-rate reasons follow.
-Pair it with `scripts/heartbeat_receiver_stub.py` to see the wire format
-validated on the receiving side. With an http sink the heartbeats that fail to
-send are queued (UBS-60): stop the receiver and `publishQueueDepth` rises until
-the watermark reasons appear; start it again and the queue drains. Not the
-production entrypoint — pipeline wiring is M1.5.
+Pair it with the backend (`uv run telemetry-backend`) and read the result back
+from `GET /telemetry/health/agents` (UBS-69). With an http sink the heartbeats
+that fail to send are queued (UBS-60): stop the backend and `publishQueueDepth`
+rises until the watermark reasons appear; start it again and the queue drains.
+Not the production entrypoint — pipeline wiring is M1.5.
 """
 
 from __future__ import annotations

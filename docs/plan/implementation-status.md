@@ -111,7 +111,7 @@ SIGHUP reload are implemented (`config_loader.py`); only the call to
 `SighupRuleReloader.install()` from a real running process is unwired,
 since no agent supervisor loop exists yet (M1).
 
-## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
+## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60, UBS-69)
 
 | ID | Story | Requirement | Status | Verified by |
 | --- | --- | --- | --- | --- |
@@ -119,12 +119,13 @@ since no agent supervisor loop exists yet (M1).
 | UBS-58 | Emit periodic heartbeat | `FR-HLT-001` (interval, idle emission), `FR-HLT-002`/`003` (status + reasons, read-lag rule), `FR-HLT-004` (gaps as `null`), spec 004 s6 wire shape | Done (agent side) | `tests/unit/agent/health/test_heartbeat.py`, `test_status.py`, `test_health_config.py` |
 | UBS-59 | Parse error rate in heartbeat | `FR-HLT-001`/`002` (parse-error slice), spec 004 s4.5 `parseErrorRate` | Done (agent side; no production producer until M1.5) | `tests/unit/agent/health/test_window.py`, `test_parse_errors.py` |
 | UBS-60 | Publish queue depth in heartbeat | `FR-HLT-001`/`002` (queue slice); `FR-PIP-005` pipeline queues still pending M1.5 | Done (agent side; provider hook, Publisher itself is M4) | `tests/unit/agent/health/test_queue_depth.py` |
+| UBS-69 | Backend health endpoints and agent liveness | `FR-ING-010` (registry read side), spec 007 s5.1/s5.2, `FR-HLT-011`, `FR-QRY-015` (staleAgents input) | Done (app skeleton + registry + endpoints; ingestion is UBS-66/87, query envelope UBS-91) | `tests/unit/backend/api/test_health_api.py`, `tests/unit/backend/services/test_agent_registry.py`, `test_data_completeness.py`, `tests/integration/backend/test_heartbeat_roundtrip.py` |
 
-Decisions and the missing-downstream list: `docs/plan/ubs58-60-notes.md`. Heartbeats
-currently reach a backend only through the stdlib `HttpHeartbeatSink` (no Publisher,
-spec 002 s6) and are received only by `scripts/heartbeat_receiver_stub.py` (no
-Ingestion Service, UBS-66/87; no health read side, UBS-69). The UBS-58 ticket's two
-backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
+Decisions and the missing-downstream lists: `docs/plan/ubs58-60-notes.md` (agent side),
+`docs/plan/ubs69-96-notes.md` (backend side). Heartbeats reach the backend through the
+stdlib `HttpHeartbeatSink` (no Publisher, spec 002 s6) into a placeholder
+`POST /telemetry/heartbeat` route (real ingestion is UBS-66/87) and are read back from
+`GET /telemetry/health/agents[/{agentId}]` with backend-side `missing` detection.
 
 ## Code locations
 
@@ -162,7 +163,11 @@ backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
 | Cross-component integration tests | `tests/integration/agent/` |
 | Health Reporter, heartbeat emitter, health config | `apps/agent/src/telemetry_agent/health/` |
 | Shared heartbeat contract | `packages/telemetry_shared/src/telemetry_shared/models/health.py` |
-| Heartbeat demo / stub receiver | `telemetry-agent-heartbeat` (`health/demo.py`), `scripts/heartbeat_receiver_stub.py` |
+| Heartbeat demo | `telemetry-agent-heartbeat` (`health/demo.py`) |
+| Backend app factories, deps, entrypoint | `apps/backend/src/telemetry_backend/{app,deps,main}.py` (`telemetry-backend`) |
+| Agent registry, data completeness | `apps/backend/src/telemetry_backend/services/{agent_registry,data_completeness}.py` |
+| Health API, placeholder heartbeat ingest | `apps/backend/src/telemetry_backend/api/{health,ingest_placeholder}.py` |
+| Unit tests (backend api/config) | `tests/unit/backend/api/`, `tests/unit/backend/test_backend_health_config.py` |
 | Unit tests (health) | `tests/unit/agent/health/` |
 
 ## How to verify

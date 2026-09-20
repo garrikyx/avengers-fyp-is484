@@ -1,0 +1,13 @@
+# Backend configuration (spec 010 s2). Uncomment to override defaults.
+# Sections read today: backend:, store.warmupWindow, alerting.missingHeartbeatThreshold
+# (UBS-69/96). Other sections are reserved for their components.
+
+# backend:
+#   listen: 0.0.0.0:8080
+#   internalListen: 127.0.0.1:8081     # /metrics, /healthz, /readyz (FR-HLT-012)
+
+# store:
+#   warmupWindow: 2m                   # /readyz reports `warming` until this much data exists
+
+# alerting:
+#   missingHeartbeatThreshold: 60s     # agent is `missing` after this much silence (FR-RUL-030)

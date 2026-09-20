@@ -3,8 +3,8 @@
 Ticks on a fixed interval regardless of log activity: an idle agent must still
 be distinguishable from a dead one. The sink is pluggable because the real
 transport is the Backend Publisher (spec 002 §6, not built yet); until then the
-two sinks here cover local demos and the stub receiver in
-`scripts/heartbeat_receiver_stub.py`. See docs/plan/ubs58-60-notes.md.
+sinks here cover local demos against the backend's placeholder
+`POST /telemetry/heartbeat` route (UBS-69). See docs/plan/ubs58-60-notes.md.
 """
 
 from __future__ import annotations
