@@ -17,7 +17,7 @@ is recorded here rather than by quietly editing the spec.
 | **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics) implemented and tested; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
-| M7 | Operability hardening | Not started |
+| M7 | Operability hardening | Partial — `/healthz`, `/readyz` (warm-up), `/metrics` on an internal-only listener (UBS-96); TLS, packaging, runbook automation not started |
 
 ## M2 requirement coverage (UBS-40–42)
 
@@ -111,7 +111,7 @@ SIGHUP reload are implemented (`config_loader.py`); only the call to
 `SighupRuleReloader.install()` from a real running process is unwired,
 since no agent supervisor loop exists yet (M1).
 
-## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60, UBS-69)
+## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60, UBS-69, UBS-96)
 
 | ID | Story | Requirement | Status | Verified by |
 | --- | --- | --- | --- | --- |
@@ -120,6 +120,7 @@ since no agent supervisor loop exists yet (M1).
 | UBS-59 | Parse error rate in heartbeat | `FR-HLT-001`/`002` (parse-error slice), spec 004 s4.5 `parseErrorRate` | Done (agent side; no production producer until M1.5) | `tests/unit/agent/health/test_window.py`, `test_parse_errors.py` |
 | UBS-60 | Publish queue depth in heartbeat | `FR-HLT-001`/`002` (queue slice); `FR-PIP-005` pipeline queues still pending M1.5 | Done (agent side; provider hook, Publisher itself is M4) | `tests/unit/agent/health/test_queue_depth.py` |
 | UBS-69 | Backend health endpoints and agent liveness | `FR-ING-010` (registry read side), spec 007 s5.1/s5.2, `FR-HLT-011`, `FR-QRY-015` (staleAgents input) | Done (app skeleton + registry + endpoints; ingestion is UBS-66/87, query envelope UBS-91) | `tests/unit/backend/api/test_health_api.py`, `tests/unit/backend/services/test_agent_registry.py`, `test_data_completeness.py`, `tests/integration/backend/test_heartbeat_roundtrip.py` |
+| UBS-96 | Backend self-metrics and warm-up reporting | `FR-HLT-010`, `FR-HLT-012`, `FR-QRY-005` (`/readyz warming`), spec 007 s5.3 | Done (probes + Prometheus exposition; ingest/store producers report 0 until UBS-66/85/90 call the hooks) | `tests/unit/backend/api/test_internal_api.py`, `tests/unit/backend/services/test_self_metrics.py` |
 
 Decisions and the missing-downstream lists: `docs/plan/ubs58-60-notes.md` (agent side),
 `docs/plan/ubs69-96-notes.md` (backend side). Heartbeats reach the backend through the
@@ -167,6 +168,7 @@ stdlib `HttpHeartbeatSink` (no Publisher, spec 002 s6) into a placeholder
 | Backend app factories, deps, entrypoint | `apps/backend/src/telemetry_backend/{app,deps,main}.py` (`telemetry-backend`) |
 | Agent registry, data completeness | `apps/backend/src/telemetry_backend/services/{agent_registry,data_completeness}.py` |
 | Health API, placeholder heartbeat ingest | `apps/backend/src/telemetry_backend/api/{health,ingest_placeholder}.py` |
+| Operator probes, self-metrics, warm-up | `apps/backend/src/telemetry_backend/api/internal.py`, `services/self_metrics.py` |
 | Unit tests (backend api/config) | `tests/unit/backend/api/`, `tests/unit/backend/test_backend_health_config.py` |
 | Unit tests (health) | `tests/unit/agent/health/` |
 

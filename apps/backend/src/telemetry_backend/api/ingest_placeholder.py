@@ -37,4 +37,7 @@ def post_heartbeat(
     # FastAPI validates the body against the shared model: schema drift is a
     # 422 with a field-level error list (FR-ING-003's shape, not its 400 code).
     first = deps.registry.record_heartbeat(heartbeat, received_at=deps.clock())
+    deps.self_metrics.heartbeats_received.inc()
+    # Deliberately no `deps.warmup.mark_ingest()`: a heartbeat is not store
+    # data, and /readyz must stay `warming` until real telemetry arrives.
     return HeartbeatAccepted(first_contact=first)

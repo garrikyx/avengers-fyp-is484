@@ -1,6 +1,6 @@
-# Health Reporter — end-to-end overview (UBS-30 → 58 → 59 → 60 → 69)
+# Health Reporter — end-to-end overview (UBS-30 → 58 → 59 → 60 → 69 → 96)
 
-Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` → `UBS-69-Backend-Health-Endpoints` (stacked, pushed, no PRs yet)
+Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` → `UBS-69-Backend-Health-Endpoints` → `UBS-96-Backend-Self-Metrics` (stacked, pushed, no PRs yet)
 
 This is the reference for the Health Reporter end to end: what each ticket added, which
 functions do the work, why they are shaped that way, and how the pieces connect from a
@@ -22,7 +22,7 @@ fixed interval **even when there is nothing else to say** (`FR-HLT-001`). The ba
 keeps the last heartbeat per agent and is the only party that can notice an agent has
 gone silent — a dead agent cannot report its own death (`FR-ING-010`).
 
-Five tickets built it, in dependency order (agent side first, then backend):
+Six tickets built it, in dependency order (agent side first, then backend):
 
 | Ticket | Adds | Requirement IDs |
 | --- | --- | --- |
@@ -31,6 +31,7 @@ Five tickets built it, in dependency order (agent side first, then backend):
 | UBS-59 | **Parse error rate** over a rolling 5-minute window, feeding status | `FR-HLT-002` (parse slice), spec 004 §4.5 `parseErrorRate` |
 | UBS-60 | **Publish queue depth** with watermarks and trend | `FR-HLT-002` (queue slice), spec 011 §1.1 |
 | UBS-69 | **Backend read side**: FastAPI app skeleton, agent registry, `GET /telemetry/health/agents[/{agentId}]`, backend-side `missing` detection, `dataCompleteness` inputs | `FR-ING-010` (read side), spec 007 §5.1/§5.2, `FR-HLT-011`, `FR-QRY-015` |
+| UBS-96 | **Backend self-health**: `/healthz`, `/readyz` with warm-up, Prometheus `/metrics` on the internal listener only | `FR-HLT-010`, `FR-HLT-012`, `FR-QRY-005`, spec 007 §5.3 |
 
 ---
 
@@ -71,6 +72,8 @@ flowchart LR
         REG["services/agent_registry.py\nAgentRegistry\nrecord_heartbeat() · status_of() · stale_agents()"]
         HEALTHAPI["api/health.py (UBS-69)\nGET /telemetry/health/agents\nGET /telemetry/health/agents/{id}"]
         DC["services/data_completeness.py\nbuild() → for UBS-91"]
+        SM["services/self_metrics.py (UBS-96)\nSelfMetrics · WarmupTracker"]
+        INT["api/internal.py (UBS-96)\nGET /healthz · /readyz · /metrics\ninternal listener :8081 only"]
     end
 
     FIX --> LM1
@@ -92,6 +95,8 @@ flowchart LR
     HTTP -. "future" .-> ING -.-> REG
     REG --> HEALTHAPI
     REG --> DC
+    REG -. "per-agent staleness at scrape" .-> SM
+    SM --> INT
 ```
 
 Reading the diagram:
@@ -286,6 +291,21 @@ word. Full rationale: [`ubs69-96-notes.md`](./ubs69-96-notes.md).
 | `data_completeness.build(registry, at, …)` | `agentsExpected / agentsReporting / staleAgents / confidence`. | Ready for UBS-91 to drop into every query response (`FR-QRY-015`). |
 | `create_public_app()` / `create_internal_app()` + `AppDeps` | Two FastAPI apps, one shared deps object, router per file. | Public API and operator probes never share a socket (`FR-HLT-012`); parallel tickets add routers without touching each other. |
 
+## 7b. UBS-96 — backend self-health
+
+**Problem.** During an incident the backend must be diagnosable too: is the process up,
+is the store warm enough to trust, are batches being rejected, is a queue growing. Full
+rationale: [`ubs69-96-notes.md`](./ubs69-96-notes.md).
+
+| Piece | Purpose | Why |
+| --- | --- | --- |
+| `GET /healthz` | 200 `{status: ok}` — process up, nothing else checked. | A liveness probe that checks dependencies restarts healthy backends during upstream outages (`FR-HLT-010`). |
+| `GET /readyz` | 200 `ready` or **503** `warming` + `warmupWindowSeconds` / `sinceFirstIngestSeconds`. | 503 keeps load balancers off an empty store (`FR-QRY-005`); the body distinguishes "just started" from "never received data". Warm-up starts at the first accepted **telemetry batch** — heartbeats don't count. |
+| `GET /metrics` | Prometheus text exposition from `SelfMetrics`. | Standard format via `prometheus-client`; private `CollectorRegistry` so tests and apps never collide. |
+| `SelfMetrics` counters/gauges/histogram | Ingest batches / validation failures / dedupe hits / dropped payloads / queue depth, store buckets / memory, query latency by **route template**, agents known / stale, per-agent heartbeat age + stale flag, warming flag. | Every series exists from the first scrape (0 = idle, absent = broken exporter). Producers in other tickets call plain `.inc()` / `.set()`. Route-template labels keep cardinality bounded. |
+| `refresh_agent_gauges()` at scrape time | Recompute per-agent gauges from the registry. | No background thread; decommissioned agents leave the exposition. |
+| Listener split | `internal` router only on `create_internal_app()`. | `FR-HLT-012`; tested in both directions. |
+
 ## 8. Status rollup — the one table
 
 `derive_status()` today, with the producer for each rule:
@@ -310,6 +330,7 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 | --- | --- | --- |
 | Real backend ingestion (batch path, auth, limits) | Heartbeats arrive only via the placeholder route | UBS-66 / UBS-87 |
 | Query API + `dataCompleteness` wiring | helper built, nothing calls it | UBS-91 |
+| `warmup.mark_ingest()` + ingest/store metric producers | `/readyz` stays `warming`; ingest/dedupe/store metrics read 0 | UBS-66 / 85 / 90 |
 | `AgentHeartbeatMissing` alert | staleness reported, not alerted | UBS-95 |
 | Backend Publisher | `HttpHeartbeatSink` + `BufferingHeartbeatSink` are stand-ins; `publishBufferBytes` `null` | M4 |
 | Pipeline bridge (monitor → parser → reporter in a real process) | Only the demo calls `record_parse_result()` | M1.5 |
@@ -325,7 +346,7 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 uv run pytest tests/unit/agent/health -q            # 71 tests across the four tickets
 uv run pytest tests/integration/agent/test_ubs30_health_integration.py -q
 
-uv run pytest tests/unit/backend tests/integration/backend -q   # UBS-69
+uv run pytest tests/unit/backend tests/integration/backend -q   # UBS-69 + UBS-96
 
 # terminal 1 — backend (public :8080, internal :8081)
 uv run telemetry-backend
@@ -339,7 +360,8 @@ Then, in order:
 2. `echo '8=FIX.4.2|9=61|35=D|49=C|56=B|11=ORD-1|55=ABC|54=1|38=100|44=50.00|10=072|' >> demo_logs/Fix.log` → `…/agents/magic-agent-local` shows `logReadLagMs`; wait > 5s → `status: degraded`, `statusReasons: ['Fix.log: read lag …']` (**UBS-30**).
 3. `echo '8=FIX.4.2|9=61|35=ZZ|11=ORD-9|10=072|' >> demo_logs/Fix.log` → `parseErrorCountLast5Min` becomes 1 and a `parse error rate …` reason appears in the detail (**UBS-59**).
 4. Ctrl-C terminal 1 (backend), wait ~30s, restart it → heartbeats arrive in a burst, the ones built during the outage carry `publishQueueDepth` rising past 10 with `degraded` / `unhealthy`, then the queue drains and status recovers (**UBS-60**).
-5. Ctrl-C terminal 2 (agent) → after 60s the list shows `status: missing`, `counts.missing: 1`, and the detail still carries the agent's last `reportedStatus` (**UBS-69**).
+5. `curl -i localhost:8081/healthz` → 200; `curl -i localhost:8081/readyz` → 503 `warming` (no telemetry batches yet); `curl localhost:8081/metrics | grep agent` → per-agent age/stale gauges; `curl -i localhost:8080/metrics` → 404 (**UBS-96**).
+6. Ctrl-C terminal 2 (agent) → after 60s the list shows `status: missing`, `counts.missing: 1`, the detail still carries the agent's last `reportedStatus`, and `/metrics` shows `telemetry_backend_agents_stale 1` (**UBS-69**, **UBS-96**).
 
 Every number you see in step 1–4 is produced by the code paths in sections 3–6; nothing
 is mocked in the demo.
