@@ -88,7 +88,8 @@ async def _poll_forever(
                     log_type="fix",
                     read_at=datetime.now(UTC),
                 )
-                reporter.record_parse_result(parser.parse(line.encode(), meta))
+                # UBS-22: poll_lines() yields ReadLine (text + byte identity).
+                reporter.record_parse_result(parser.parse(line.text.encode(), meta))
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.25)
         except TimeoutError:
