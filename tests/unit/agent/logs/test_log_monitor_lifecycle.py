@@ -3,9 +3,13 @@ import os
 import time
 from pathlib import Path
 
-from telemetry_agent.logs.log_monitor import LogMonitor
+from telemetry_agent.logs.log_monitor import LogMonitor, ReadLine
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.logs.offset_tracker import OffsetTracker
+
+
+def _line_texts(lines: list[ReadLine]) -> list[str]:
+    return [line.text for line in lines]
 
 
 def test_checkpoints_offsets_while_file_is_still_busy(tmp_path: Path) -> None:
@@ -20,10 +24,10 @@ def test_checkpoints_offsets_while_file_is_still_busy(tmp_path: Path) -> None:
         checkpoint_interval=0.01,
     )
     stream = monitor.poll_lines()
-    assert next(stream) == "first"
+    assert next(stream).text == "first"
 
     time.sleep(0.02)
-    assert next(stream) == "second"
+    assert next(stream).text == "second"
 
     state = json.loads(state_path.read_text())
     assert state[0]["offset"] == len("first\nsecond\n")
@@ -39,16 +43,16 @@ def test_rotation_drains_late_writes_from_old_descriptor(tmp_path: Path) -> None
         OffsetTracker(tmp_path / "offsets.json"),
         rotation_drain_timeout=0.1,
     )
-    assert list(monitor.poll_lines()) == ["old"]
+    assert _line_texts(list(monitor.poll_lines())) == ["old"]
 
     rotated_path = tmp_path / "Application.log.1"
     active_path.rename(rotated_path)
     active_path.write_text("new\n")
-    assert list(monitor.poll_lines()) == ["new"]
+    assert _line_texts(list(monitor.poll_lines())) == ["new"]
 
     with rotated_path.open("a") as handle:
         handle.write("late-old\n")
-    assert list(monitor.poll_lines()) == ["late-old"]
+    assert _line_texts(list(monitor.poll_lines())) == ["late-old"]
     monitor.close()
 
 
@@ -61,7 +65,7 @@ def test_restart_recovers_retained_rotation_created_while_offline(
     active_path.write_text("before-stop\n")
 
     first_monitor = LogMonitor(active_path, OffsetTracker(state_path))
-    assert list(first_monitor.poll_lines()) == ["before-stop"]
+    assert _line_texts(list(first_monitor.poll_lines())) == ["before-stop"]
     first_monitor.close()
 
     rotated_path = tmp_path / "Application.log.1"
@@ -71,7 +75,7 @@ def test_restart_recovers_retained_rotation_created_while_offline(
     active_path.write_text("new-active-file\n")
 
     restarted_monitor = LogMonitor(active_path, OffsetTracker(state_path))
-    assert list(restarted_monitor.poll_lines()) == [
+    assert _line_texts(list(restarted_monitor.poll_lines())) == [
         "written-while-offline",
         "new-active-file",
     ]
@@ -87,7 +91,7 @@ def test_restart_backfills_multiple_rotations_created_while_offline(
     active_path.write_text("read-before-stop\n")
 
     first_monitor = LogMonitor(active_path, OffsetTracker(state_path))
-    assert list(first_monitor.poll_lines()) == ["read-before-stop"]
+    assert _line_texts(list(first_monitor.poll_lines())) == ["read-before-stop"]
     first_monitor.close()
 
     newest_archive = tmp_path / "Application.log.1"
@@ -109,7 +113,7 @@ def test_restart_backfills_multiple_rotations_created_while_offline(
     os.utime(active_path, ns=(timestamp + 2, timestamp + 2))
 
     restarted_monitor = LogMonitor(active_path, OffsetTracker(state_path))
-    assert list(restarted_monitor.poll_lines()) == [
+    assert _line_texts(list(restarted_monitor.poll_lines())) == [
         "first-offline-line",
         "second-offline-line",
         "active-after-restart",
@@ -122,10 +126,10 @@ def test_does_not_emit_an_unterminated_line_until_it_is_complete(tmp_path: Path)
     log_path.write_text("partial")
     monitor = LogMonitor(log_path, OffsetTracker(tmp_path / "offsets.json"))
 
-    assert list(monitor.poll_lines()) == []
+    assert _line_texts(list(monitor.poll_lines())) == []
     with log_path.open("a") as handle:
         handle.write(" line\n")
-    assert list(monitor.poll_lines()) == ["partial line"]
+    assert _line_texts(list(monitor.poll_lines())) == ["partial line"]
     monitor.close()
 
 

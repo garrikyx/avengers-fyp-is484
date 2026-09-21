@@ -66,18 +66,25 @@ class OffsetTracker:
                 return offset
         return 0
 
-    def update_offset(self, source_path: str, dev:int, ino:int, offset:int) -> None:
-        """Updates the offset for a given (device, inode) pair in memory."""
+    def commit_offset(self, source_path: str, dev: int, ino: int, offset: int) -> None:
+        """Persist committed offset after parse+ingest (FR-PIP-006)."""
         key = self._make_key(dev, ino)
+        current = self._states.get(key, {}).get("offset", 0)
+        if offset <= current:
+            return
         self._states[key] = {
             "source": str(Path(source_path).resolve()),
             "offset": offset,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "fileStateOS": {
                 "device": dev,
-                "inode": ino
+                "inode": ino,
             },
         }
+
+    def update_offset(self, source_path: str, dev: int, ino: int, offset: int) -> None:
+        """Deprecated alias for commit_offset."""
+        self.commit_offset(source_path, dev, ino, offset)
 
     def save(self) -> None:
         """Persists the current state registry to disk using atomic rename."""

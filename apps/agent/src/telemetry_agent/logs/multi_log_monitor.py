@@ -5,7 +5,7 @@ from collections.abc import Generator, Iterable
 from datetime import datetime
 from pathlib import Path
 
-from telemetry_agent.logs.log_monitor import LogMonitor
+from telemetry_agent.logs.log_monitor import LogMonitor, ReadLine
 from telemetry_agent.logs.offset_tracker import OffsetTracker
 from telemetry_agent.logs.status import FileReadStatus
 
@@ -21,6 +21,8 @@ class MultiLogMonitor:
         read_mode: str = "tail",
         checkpoint_interval: float = 5.0,
         rotation_drain_timeout: float = 5.0,
+        auto_commit: bool = False,
+        commit_on_read: bool | None = None,
     ) -> None:
         if read_mode not in {"tail", "interval"}:
             raise ValueError("read_mode must be 'tail' or 'interval'")
@@ -28,12 +30,17 @@ class MultiLogMonitor:
         self.registry_path = Path(registry_path)
         self.read_mode = read_mode
         self._offset_tracker = OffsetTracker(registry_path=self.registry_path)
+        self._auto_commit = auto_commit
+        if commit_on_read is None:
+            commit_on_read = not auto_commit
+        self._commit_on_read = commit_on_read
         self._monitors: dict[str, LogMonitor] = {
             Path(path).name: LogMonitor(
                 Path(path),
                 offset_tracker=self._offset_tracker,
                 checkpoint_interval=checkpoint_interval,
                 rotation_drain_timeout=rotation_drain_timeout,
+                commit_on_read=commit_on_read,
             )
             for path in log_paths
         }
@@ -45,8 +52,8 @@ class MultiLogMonitor:
 
     def stream_lines(
         self, poll_interval: float = 1.0
-    ) -> Generator[tuple[str, str]]:
-        """Yield ``(source_name, line)`` from every configured file.
+    ) -> Generator[tuple[str, ReadLine]]:
+        """Yield ``(source_name, ReadLine)`` from every configured file.
 
         Tail mode polls immediately while data is flowing and waits only while
         idle. Interval mode waits for ``poll_interval`` after every scan.
@@ -57,9 +64,11 @@ class MultiLogMonitor:
         while True:
             any_line = False
             for name, monitor in self._monitors.items():
-                for line in monitor.poll_lines():
+                for read_line in monitor.poll_lines():
                     any_line = True
-                    yield name, line
+                    if self._auto_commit:
+                        monitor.ack_line(read_line.end_offset)
+                    yield name, read_line
             if self.read_mode == "interval" or not any_line:
                 time.sleep(poll_interval)
 

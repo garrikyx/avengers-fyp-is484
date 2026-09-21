@@ -2,14 +2,30 @@ import logging
 import os
 import time
 from collections.abc import Generator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, TextIO
+from typing import TextIO
 
 from telemetry_agent.logs.offset_tracker import OffsetTracker
 from telemetry_agent.logs.status import FileReadStatus
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadLine:
+    """One complete log line with stable byte identity for idempotent ingest."""
+
+    text: str
+    byte_offset: int
+    byte_length: int
+    dev: int
+    inode: int
+
+    @property
+    def end_offset(self) -> int:
+        return self.byte_offset + self.byte_length
 
 
 class Harvester:
@@ -29,25 +45,32 @@ class Harvester:
         self.last_read_at = None
         self.handle.seek(self.offset)
 
-    def read_lines(self) -> Generator[str]:
+    def read_lines(self) -> Generator[ReadLine]:
         """Reads available complete lines from the file handle until EOF."""
         while True:
             line_start = self.handle.tell()
-            line = self.handle.readline()
-            if not line:
+            raw = self.handle.readline()
+            if not raw:
                 return
 
             # ``readline`` returns an unterminated final fragment at EOF.  It
             # is not a complete log event yet, so leave the descriptor at its
             # start.  The next poll will read it together with the appended
             # bytes instead of publishing a split (or duplicate) line.
-            if not line.endswith(("\n", "\r")):
+            if not raw.endswith(("\n", "\r")):
                 self.handle.seek(line_start)
                 return
 
-            self.offset = self.handle.tell()
+            end = self.handle.tell()
+            self.offset = end
             self.last_read_at = datetime.now(UTC)
-            yield line.rstrip("\r\n")
+            yield ReadLine(
+                text=raw.rstrip("\r\n"),
+                byte_offset=line_start,
+                byte_length=end - line_start,
+                dev=self.dev,
+                inode=self.ino,
+            )
 
     def seek(self, offset: int) -> None:
         """Repositions the file pointer and updates current offset."""
@@ -63,7 +86,7 @@ class Harvester:
 class LogMonitor:
     """Monitors file paths, handles rotations/truncations,
 
-    spawns Harvesters, and syncs state to OffsetTracker.
+    spawns Harvesters, and syncs committed state to OffsetTracker.
     """
 
     def __init__(
@@ -73,6 +96,7 @@ class LogMonitor:
         *,
         checkpoint_interval: float = 5.0,
         rotation_drain_timeout: float = 5.0,
+        commit_on_read: bool = True,
     ):
         if checkpoint_interval <= 0:
             raise ValueError("checkpoint_interval must be greater than zero")
@@ -85,6 +109,7 @@ class LogMonitor:
         self._retired_harvesters: list[tuple[Harvester, float]] = []
         self._checkpoint_interval = checkpoint_interval
         self._rotation_drain_timeout = rotation_drain_timeout
+        self._commit_on_read = commit_on_read
         self._last_checkpoint = time.monotonic()
         self._state_dirty = False
         self._startup_recovery_pending = True
@@ -119,7 +144,8 @@ class LogMonitor:
         except Exception:
             handle.close()
             raise
-        self._sync_offset()
+        if self._commit_on_read:
+            self._sync_harvester(self._harvester)
 
     def _start_recovery_harvester(self, path: Path) -> Harvester | None:
         """Open a rotated sibling from before this monitor started.
@@ -198,11 +224,6 @@ class LogMonitor:
         )
         self._state_dirty = True
 
-    def _sync_offset(self) -> None:
-        """Flushes current Harvester state to the OffsetTracker."""
-        if self._harvester:
-            self._sync_harvester(self._harvester)
-
     def _checkpoint_if_due(self, *, force: bool = False) -> None:
         """Persist progress even when a continuously busy file never reaches EOF."""
         if not self._state_dirty:
@@ -215,13 +236,14 @@ class LogMonitor:
             self._last_checkpoint = time.monotonic()
             self._state_dirty = False
 
-    def _read_harvester(self, harvester: Harvester) -> Generator[str]:
-        for line in harvester.read_lines():
-            self._sync_harvester(harvester)
-            self._checkpoint_if_due()
-            yield line
+    def _read_harvester(self, harvester: Harvester) -> Generator[ReadLine]:
+        for read_line in harvester.read_lines():
+            if self._commit_on_read:
+                self._sync_harvester(harvester)
+                self._checkpoint_if_due()
+            yield read_line
 
-    def _drain_retired_harvesters(self) -> Generator[str]:
+    def _drain_retired_harvesters(self) -> Generator[ReadLine]:
         """Drain rotated files without delaying their active replacements."""
         remaining: list[tuple[Harvester, float]] = []
         now = time.monotonic()
@@ -233,7 +255,7 @@ class LogMonitor:
                 remaining.append((harvester, deadline))
         self._retired_harvesters = remaining
 
-    def _drain_startup_recovery(self) -> Generator[str]:
+    def _drain_startup_recovery(self) -> Generator[ReadLine]:
         """Read retained offline rotations once, then release their handles."""
         for harvester in self._startup_backfill_harvesters:
             try:
@@ -242,7 +264,7 @@ class LogMonitor:
                 harvester.close()
         self._startup_backfill_harvesters = []
 
-    def poll_lines(self) -> Generator[str]:
+    def poll_lines(self) -> Generator[ReadLine]:
         """Polls for new log lines and manages Harvester lifecycle events."""
         # If rotation happened while the process was stopped, the active path
         # alone cannot reveal the old inode.  Backfill retained sibling files
@@ -272,7 +294,8 @@ class LogMonitor:
             and stat_res.st_size < active_harvester.offset
         ):
             active_harvester.seek(0)
-            self._sync_offset()
+            if self._commit_on_read:
+                self._sync_harvester(active_harvester)
 
         yield from self._drain_retired_harvesters()
 
@@ -284,16 +307,38 @@ class LogMonitor:
         yield from self._read_harvester(self._harvester)
         self._checkpoint_if_due()
 
+    def ack_line(self, end_offset: int) -> None:
+        """Advance committed offset after successful parse+ingest (FR-PIP-006)."""
+        if self._harvester is None:
+            return
+        self.offset_tracker.commit_offset(
+            source_path=str(self.file_path),
+            dev=self._harvester.dev,
+            ino=self._harvester.ino,
+            offset=end_offset,
+        )
+        self._state_dirty = True
+
+    def flush_commits(self) -> None:
+        """Persist committed offsets to disk (checkpoint / shutdown)."""
+        self.offset_tracker.save()
+        self._last_checkpoint = time.monotonic()
+        self._state_dirty = False
+
     def get_status(self, now: datetime | None = None) -> FileReadStatus:
         """Offset + read lag for this file (UBS-30). See docs/plan/ubs30-notes.md."""
         now = now or datetime.now(UTC)
         stat_res = self._get_file_stat()
         size = stat_res.st_size if stat_res else None
 
+        committed = 0
+        if stat_res:
+            committed = self.offset_tracker.get_offset(stat_res.st_dev, stat_res.st_ino)
+
         if self._harvester:
             offset = self._harvester.offset
         elif stat_res:
-            offset = self.offset_tracker.get_offset(stat_res.st_dev, stat_res.st_ino)
+            offset = committed
         else:
             offset = 0
 
@@ -308,20 +353,24 @@ class LogMonitor:
             size=size,
             last_read_at=last_read_at,
             read_lag_ms=read_lag_ms,
+            committed_offset=committed,
         )
 
     def close(self) -> None:
-        """Safely shuts down the monitor and persists final byte offsets."""
+        """Safely shuts down the monitor and persists committed byte offsets."""
         if self._harvester:
-            self._sync_offset()
+            if self._commit_on_read:
+                self._sync_harvester(self._harvester)
             self._harvester.close()
             self._harvester = None
         for harvester, _ in self._retired_harvesters:
-            self._sync_harvester(harvester)
+            if self._commit_on_read:
+                self._sync_harvester(harvester)
             harvester.close()
         self._retired_harvesters = []
         for harvester in self._startup_backfill_harvesters:
-            self._sync_harvester(harvester)
+            if self._commit_on_read:
+                self._sync_harvester(harvester)
             harvester.close()
         self._startup_backfill_harvesters = []
         self._checkpoint_if_due(force=True)

@@ -19,9 +19,9 @@ def print_section(title: str) -> None:
 def poll_available(monitor: MultiLogMonitor) -> list[tuple[str, str]]:
     """Read every available line without entering the infinite stream loop."""
     return [
-        (name, line)
+        (name, read_line.text)
         for name, file_monitor in monitor.monitors.items()
-        for line in file_monitor.poll_lines()
+        for read_line in file_monitor.poll_lines()
     ]
 
 
@@ -81,9 +81,9 @@ def run_demo(workdir: Path) -> None:
 
         fix_monitor = monitor.monitors["Fix.log"]
         active_stream = fix_monitor.poll_lines()
-        assert next(active_stream) == "FIX checkpoint-1"
+        assert next(active_stream).text == "FIX checkpoint-1"
         time.sleep(0.02)
-        assert next(active_stream) == "FIX checkpoint-2"
+        assert next(active_stream).text == "FIX checkpoint-2"
 
         saved_state = json.loads(registry.read_text())
         saved_fix_state = next(

@@ -51,3 +51,7 @@ class Registry:
     def validate_chain(self, chain: list[str]) -> list[str]:
         """Return unknown parser names in chain."""
         return [name for name in chain if name not in self._parsers]
+
+    def parser(self, name: str) -> Parser | None:
+        """Return a parser from this registry by configuration name."""
+        return self._parsers.get(name)

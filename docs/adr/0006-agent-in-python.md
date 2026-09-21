@@ -47,31 +47,34 @@ The bridge is implemented as a **bounded line queue** per monitored file set, pl
 **parser worker pool** (`asyncio` + `ThreadPoolExecutor`):
 
 ```
-[Log Monitor task] ──non-blocking put──► [LineQueue (bounded)] ──► [Parser workers (pool)]
-                                              │ drop-oldest
-                                              ▼
-                                        drop counter
+[Log Monitor task] ──blocking put──► [LineQueue (bounded)] ──► [Parser workers (pool)]
+        │                                    │
+        │ read cursor (in-memory)            ▼
+        │                            [EventQueue (bounded)]
+        │                                    │
+        ▼                                    ▼
+ committed_offset (state.json)         ingest + dedupe (FR-PIP-007)
+   only after parse+ingest (FR-PIP-006)
 ```
 
 Design rules:
 
-1. **Monitor never blocks.** On enqueue when the queue is full, drop the oldest line,
-   increment `pipeline.lines_dropped`, and continue reading. Disk I/O and offset progress
-   take priority over parse completeness (`FR-PIP-001`).
-2. **Parser gets the larger buffer.** Default `pipeline.lineQueueSize` is **2048** lines —
+1. **Zero loss by default.** On enqueue when the queue is full, block until capacity is
+   available (`pipeline.overflowPolicy: block`). Read lag grows under overload but no line is
+   discarded while the source file remains on disk (ADR 0004). Optional `drop_oldest` policy
+   retains shed-load behaviour and increments drop counters.
+2. **Commit after process.** Persisted offset (`committed_offset`) advances only after
+   parse+ingest succeeds (`FR-PIP-006`). Restart re-reads from the last committed byte;
+   dedupe by `(device, inode, byte_offset)` prevents double-count (`FR-PIP-007`).
+3. **Parser gets the larger buffer.** Default `pipeline.lineQueueSize` is **2048** lines —
    much larger than downstream event queues (default **256**) — because parsing is the first
-   CPU-bound stage and needs headroom when FIX messages span multiple lines or framing is
-   expensive (`FR-PIP-002`).
-3. **Parser workers are capped.** Default `pipeline.parseWorkers: min(2, cpu_count)`; workers
+   CPU-bound stage (`FR-PIP-002`).
+4. **Parser workers are capped.** Default `pipeline.parseWorkers: min(2, cpu_count)`; workers
    pull lines from the queue and call `Parser.parse()` synchronously in the pool
    (`FR-PIP-003`, `NFR-PERF-005`).
-4. **Downstream stages keep smaller queues.** Parsed events flow to the metrics aggregator
-   through a separate bounded channel (`pipeline.eventQueueSize`, default 256). On overflow,
-   drop oldest and count `pipeline.events_dropped` (`FR-PUB-004`).
-
-This asymmetry — small tolerance for blocking the reader, large tolerance for parser backlog
-within a fixed cap — replaces the Go goroutine-per-file model from ADR 0001 while preserving
-the same backpressure guarantees.
+5. **Downstream stages keep smaller queues.** Parsed events flow to the metrics aggregator
+   through a separate bounded channel (`pipeline.eventQueueSize`, default 256). Default policy
+   blocks on overflow; optional `drop_oldest` counts `pipeline.events_dropped`.
 
 ## Consequences
 
@@ -81,10 +84,9 @@ the same backpressure guarantees.
   single static binary.
 - Concurrency uses `asyncio` for I/O-bound log monitors and a bounded thread pool for
   CPU-bound parsing; the supervisor loop coordinates file sets and pipeline stages.
-- The **monitor → parser bridge** is a bounded queue with asymmetric sizing: the log monitor
-  (I/O-bound) MUST never block on a full queue (`FR-PIP-001`); the parser side holds a larger
-  buffer because FIX framing and field extraction are CPU-bound and lag under burst load
-  (`FR-PIP-002`, `FR-PIP-003`).
+- The **monitor → parser bridge** is a bounded queue with asymmetric sizing and default
+  blocking backpressure (`FR-PIP-001`). Committed offsets lag the read cursor until ingest
+  completes (`FR-PIP-006`, `FR-PIP-007`).
 - `NFR-PERF-004` is enforced via profiling and allocation-aware parser design in pytest, not
   Go `-benchmem`.
 - The backend and agent share one language; schema drift is managed through

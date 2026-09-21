@@ -13,6 +13,7 @@ class FileReadStatus:
     size: int | None
     last_read_at: datetime | None
     read_lag_ms: float | None
+    committed_offset: int = 0
 
     @property
     def has_read_any_line(self) -> bool:

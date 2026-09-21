@@ -76,6 +76,9 @@ pipeline:
   lineQueueSize: 2048                # monitor → parser; larger — parser is CPU-bound (FR-PIP-002)
   eventQueueSize: 256                # parser → aggregator (FR-PIP-004)
   parseWorkers: 0                    # 0 => min(2, cpu_count) (FR-PIP-003)
+  overflowPolicy: block              # block | drop_oldest (FR-PIP-001/004); default: no loss
+  dedupeCapacity: 100000             # FR-PIP-007: suppress double-count on re-read
+  dedupeTtl: 1h                      # FR-PIP-007: TTL for processed-line cache
 
 metrics:
   bucketSeconds: 10
@@ -143,9 +146,11 @@ alerting:
 | `publish.bufferBytes` | Directly bounds how long a backend outage is survivable at a given rate. Document the implied minutes in the runbook. |
 | `metrics.minSampleSize` | Prevents low-volume periods from producing 100% reject rates. |
 | `logs[].partialLineTimeout` | Defaults to `max(2s, 2 × pollInterval)` and MUST exceed `pollInterval` (`FR-CFG-004`). A timeout shorter than a poll cycle flushes *every* line that spans two writes as two lines, turning a correct log into a stream of malformed ones. The flat 2s default is correct for tail mode but not for interval mode's slower poll, hence the derivation. |
-| `pipeline.lineQueueSize` | Sized for parser lag, not monitor lag. The monitor never blocks on a full queue (`FR-PIP-001`); a larger line queue absorbs CPU-bound parse bursts without dropping lines while disk I/O stays current. |
-| `pipeline.eventQueueSize` | Smaller than `lineQueueSize` because events are post-parse and downstream aggregation is cheaper; overflow drops oldest parsed events, not raw lines. |
+| `pipeline.lineQueueSize` | Sized for parser lag. With default `overflowPolicy: block`, a full queue stalls the monitor (read lag grows) rather than dropping lines. |
+| `pipeline.eventQueueSize` | Smaller than `lineQueueSize` because events are post-parse and downstream aggregation is cheaper. Default policy blocks rather than drops. |
 | `pipeline.parseWorkers` | Caps CPU used by FIX parsing on a trading host (`NFR-PERF-005`). `0` resolves to `min(2, cpu_count)`. |
+| `pipeline.overflowPolicy` | `block` (default): zero loss, backpressure via read lag. `drop_oldest`: legacy shed-load mode; increments drop counters. |
+| `pipeline.dedupeCapacity` / `dedupeTtl` | Bounds the processed-line LRU used for idempotent re-ingest after restart (`FR-PIP-007`). |
 | `callbacks.dryRun` | Required for pre-production validation before Magic's endpoint exists. |
 
 ## 2. Backend configuration

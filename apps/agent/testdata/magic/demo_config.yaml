@@ -1,5 +1,5 @@
 appLogPatterns:
-  - '^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]\]'
+  - '^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]+\]'
 
 parsing:
   maxClockSkew: 5m
