@@ -85,7 +85,7 @@ class SignatureMatcher:
 
 def extract_log_level(line: bytes) -> str | None:
     """Extract [N/E/W/F/I] level from Magic-style log lines."""
-    match = re.search(rb"\[([NWEIF])\]", line)
+    match = re.search(rb"\[([NWEIF]+)\]", line)
     if match is None:
         return None
     return match.group(1).decode("ascii")

@@ -11,10 +11,10 @@ is recorded here rather than by quietly editing the spec.
 | --- | --- | --- |
 | M0 | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/` exist; CI and requirement-coverage reporter do not |
 | M1 | Log monitor and configuration | **Not started** — `apps/agent/src/telemetry_agent/logs/` does not exist yet |
-| M1.5 | Pipeline bridge (monitor → parser) | **Not started** — `apps/agent/src/telemetry_agent/pipeline/` does not exist yet |
+| M1.5 | Pipeline bridge (monitor → parser) | **Partial** — UBS-48 library done; UBS-49 integration (supervisor, MA-01, heartbeat) not started |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics) implemented and tested; ingestion (auth/validation/dedupe), the agent's own Backend Publisher, and the query engine/HTTP layer are not started |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), plus the basic FastAPI ingestion contract and bounded asynchronous hand-off, are implemented and tested. Authentication, dedupe/rate/body limits, allowlists, agent-registry write-through, the agent's Backend Publisher, and query HTTP remain unstarted. |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -38,7 +38,7 @@ is recorded here rather than by quietly editing the spec.
 | --- | --- | --- |
 | Magic line classification | Done | `test_FR_PRS_010_magic_venue_lines.py`, config in `apps/agent/testdata/magic/demo_config.yaml` |
 | `%` template error signatures | Done | `parser/applog/signatures.py`, `test_applog_signature_templates.py` |
-| Full AppLogParser plugin | Not started | Demo uses FixParser classification + CLI signature matcher |
+| Full AppLogParser plugin | Done | `parser/applog/parser.py`; chain `[fix, applog]` when `appLogPatterns` configured |
 
 ### Remaining M2 gaps
 
@@ -53,14 +53,20 @@ Spec: [002-agent.md §1.1](../specs/002-agent.md), ADR [0006](../adr/0006-agent-
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| `FR-PIP-001` | Non-blocking monitor enqueue; drop-oldest on full line queue | Not started |
-| `FR-PIP-002` | Asymmetric queue sizing (line queue 2048 > event queue 256) | Not started |
-| `FR-PIP-003` | Parser worker pool (`min(2, cpu_count)`) | Not started |
-| `FR-PIP-004` | Bounded event queue to aggregator | Not started |
-| `FR-PIP-005` | Queue depth + drop counters on heartbeat/metrics | Not started |
+| UBS-48 | Pipeline bridge **library** — queues, workers, commit, dedupe, demo | `FR-PIP-001`–`007` (library) | **Done** | `tests/unit/agent/pipeline/`, `make pipeline-demo` |
+| UBS-49 | Pipeline bridge **integration** — live agent, MA-01, heartbeat, config | `FR-PIP-004`–`005` (operational), `FR-CFG-*` | **Not started** | `docs/plan/ubs49-pipeline-integration-story.md` |
+| `FR-PIP-001` | Blocking enqueue (default); optional drop_oldest | Done (UBS-48) |
+| `FR-PIP-002` | Asymmetric queue sizing (line queue 2048 > event queue 256) | Done (UBS-48) |
+| `FR-PIP-003` | Parser worker pool (`min(2, cpu_count)`) | Done (UBS-48) |
+| `FR-PIP-004` | Bounded event queue → aggregator | Partial — queue done; MA-01 ingest → UBS-49 |
+| `FR-PIP-005` | Queue depth + drop counters on heartbeat/metrics | Partial — `PipelineStats` done; heartbeat → UBS-49 |
+| `FR-PIP-006` | Commit offset after parse+ingest | Done (UBS-48) |
+| `FR-PIP-007` | Dedupe by `(dev, inode, byte_offset)` | Done (UBS-48) |
 
-Target modules: `apps/agent/src/telemetry_agent/pipeline/line_queue.py`, `workers.py`,
-`supervisor.py`.
+UBS-48 modules: `pipeline/bounded_queue.py`, `line_queue.py`, `event_queue.py`, `workers.py`,
+`committer.py`, `deduper.py`, `supervisor.py`, `monitor_adapter.py`.
+
+UBS-49 targets: `main.py`, `config.py`, `pipeline/event_bridge.py`, `health/reporter.py`.
 
 ## M3 requirement coverage (MA-01–04)
 
@@ -82,11 +88,14 @@ formula-ready but has no producer yet.
 | --- | --- | --- | --- | --- |
 | UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
 | UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
+| UBS-66 | Ingestion API and payload contract | `POST /telemetry/batch`, `/events`, `/heartbeat`; basic schema validation; bounded hand-off | Done | `tests/unit/backend/api/test_ingestion.py` |
 
 Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
-§7. Not yet wired: nothing calls `StreamProcessor.process_snapshot()` with real
-data — no agent Backend Publisher and no backend Ingestion Service or HTTP
-layer exist yet (both separate, later work).
+§7. The backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
+accepted snapshots. No agent Backend Publisher exists yet, and events, alerts, and heartbeats
+remain queued typed payloads until their dedicated stores are implemented. Authentication,
+dedupe/rate/body limits, dimension/field allowlists, and Agent Registry write-through remain
+separate ingestion stories (UBS-85–87).
 
 ## M5 requirement coverage (RE-01–04)
 
