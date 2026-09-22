@@ -212,6 +212,39 @@ def test_a_metric_no_contributing_agent_reported_is_absent_not_fabricated() -> N
     assert "ack_latency_ms" not in group.latency
 
 
+def test_series_over_the_cardinality_cap_are_dropped_and_counted() -> None:
+    """FR-MET-030-equivalent guard: cross-agent merge is exactly the case
+    where per-bucket cardinality could otherwise grow unboundedly with
+    agent count, so the store MUST cap it rather than accumulate forever.
+    """
+    store = MetricStore(StreamProcessorConfig(max_series_per_bucket=2))
+    snapshot = Snapshot(
+        schema_version=1,
+        agent_id="agent-a",
+        application="Magic",
+        instance_id="magic-prod-01",
+        bucket_start_utc=BUCKET_START,
+        bucket_seconds=10,
+        series=[
+            SeriesEntry(
+                dimensions={"symbol": symbol},
+                counters={"orders_submitted": Decimal(1)},
+            )
+            for symbol in ("AAA", "BBB", "CCC")
+        ],
+    )
+    store.merge(snapshot, canonical_start=BUCKET_START, now=NOW)
+
+    groups = store.read(
+        "magic-prod-01",
+        from_utc=BUCKET_START,
+        to_utc=BUCKET_START + timedelta(seconds=10),
+        group_by=("symbol",),
+    )
+    assert len(groups) == 2
+    assert store.dropped_series_over_cap_total == 1
+
+
 def test_a_metric_only_some_agents_reported_still_merges_the_ones_that_did() -> None:
     store = MetricStore(StreamProcessorConfig())
     values = list(range(1, 26))

@@ -32,6 +32,8 @@ bucketStartUtc)` rather than a single pre-summed cell, so that:
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -47,10 +49,40 @@ from telemetry_shared.models.snapshot import Snapshot
 
 from telemetry_backend.config import StreamProcessorConfig
 
+logger = logging.getLogger(__name__)
+
 DimKey = tuple[tuple[str, str], ...]
 # (agentId, agent's own native bucket epoch) — the unit that overwrites
 # idempotently on redelivery; distinct keys always accumulate.
 ContributionKey = tuple[str, int]
+
+# NFR-SCA-006: memory MUST be documented as bytes-per-series-per-bucket so
+# capacity can be computed rather than guessed. These are conservative fixed
+# estimates, not `sys.getsizeof` introspection, rounded up for headroom
+# rather than measured exactly.
+#
+# `_get_or_create_instance` allocates a full `capacity`-length ring of real
+# `_CanonicalBucket` objects the moment an instance is first touched,
+# regardless of how much data that instance ever sends — so the estimate has
+# two tiers: every allocated bucket costs `_BYTES_PER_BUCKET_SHELL` (its own
+# empty dicts/sets) whether or not it currently holds data, and a bucket that
+# *is* occupied costs `_BYTES_PER_OCCUPIED_BUCKET_EXTRA` on top (populated
+# `contributing_agent_ids`/`gauges` entries). Counting only occupied buckets
+# would under-report a lightly-used instance's real footprint by its entire
+# ring allocation once that instance's one bucket ages back out.
+_BYTES_PER_SERIES_CONTRIBUTION = 512
+_BYTES_PER_BUCKET_SHELL = 200
+_BYTES_PER_OCCUPIED_BUCKET_EXTRA = 128
+
+# FR-QRY-003: how often `merge()` itself samples memory pressure. `tick()`
+# alone isn't reachable without an external scheduler this repo doesn't have
+# yet, so the write path must be self-sufficient — but `estimated_memory_bytes()`
+# is O(total buckets across every instance), so every single `merge()` call
+# checking it would reintroduce the whole-store cost `_evict_stale`'s
+# per-ring scoping was written to avoid. Throttling to once per interval
+# keeps the check off the hot path while still catching sustained pressure
+# well within one retention window.
+_MEMORY_CHECK_INTERVAL_SECONDS = 5
 
 
 @dataclass(slots=True)
@@ -109,6 +141,36 @@ class MetricStore:
             1,
         )
         self._rings: dict[str, list[_CanonicalBucket]] = {}
+        # FR-QRY-004: one lock per instance, not one global lock — two
+        # different instances' merges/reads never block each other.
+        # `_locks_guard` protects only the moment a *new* instance's
+        # ring+lock pair is first created, so two threads racing to
+        # first-touch the same new instance don't each create a separate
+        # lock for it.
+        self._instance_locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+        # FR-QRY-003: throttles how often `merge()` samples memory pressure
+        # (see `_MEMORY_CHECK_INTERVAL_SECONDS`). A non-blocking try-lock,
+        # not a per-instance one: skipping a check some other thread is
+        # already mid-way through is fine, but a writer must never block on
+        # it — that would defeat the point of per-instance locking above.
+        self._memory_check_lock = threading.Lock()
+        self._last_memory_check_epoch: float | None = None
+        # FR-QRY-004 for the store's own self-metrics: `dropped_after_
+        # retention_total`, `dropped_series_over_cap_total` and
+        # `shed_buckets_total` below are each incremented from more than one
+        # code path (different instances' per-instance-locked sections, and
+        # `_shed_oldest_tier` calls that can run concurrently via `tick()`
+        # racing a write-triggered check) — a bare `+= 1` across threads can
+        # lose an update. One small dedicated lock for just these three
+        # counters, held only for the increment itself.
+        self._counters_lock = threading.Lock()
+        # FR-QRY-005: set once real data has actually been merged in, and
+        # never unset — see `is_ready`'s consumer (`StreamProcessor`) for
+        # why this must be sticky rather than "is the store non-empty right
+        # now" (a legitimately quiet period must read as caught-up-and-idle,
+        # not as warming again).
+        self.has_data = False
         # FR-STM-006: instance -> epoch seconds until which it is warmingUp.
         self._warming_until: dict[str, float] = {}
         # FR-STM-005: incremented if a snapshot reaches merge() but its
@@ -119,17 +181,56 @@ class MetricStore:
         # caller could invoke directly — this is the defense-in-depth
         # counter that keeps that path from silently discarding data.
         self.dropped_after_retention_total = 0
+        # FR-MET-030-equivalent cardinality guard: a series whose
+        # dimension-set would exceed `max_series_per_bucket` for its
+        # canonical bucket is dropped and counted here, not silently
+        # merged in — cross-agent merge is exactly the case where per-bucket
+        # cardinality could otherwise grow unboundedly with agent count.
+        self.dropped_series_over_cap_total = 0
+        # FR-QRY-003: buckets evicted by `_shed_oldest_tier` under memory
+        # pressure, as opposed to ordinary retention-window eviction.
+        self.shed_buckets_total = 0
 
     def _bucket_index(self, at: datetime) -> int:
         return int(at.timestamp() // self._config.canonical_bucket_seconds)
 
-    def _ring_for(self, instance_id: str) -> list[_CanonicalBucket]:
-        return self._rings.setdefault(
-            instance_id, [_CanonicalBucket() for _ in range(self._capacity)]
-        )
+    def _get_or_create_instance(
+        self, instance_id: str
+    ) -> tuple[list[_CanonicalBucket], threading.Lock]:
+        ring = self._rings.get(instance_id)
+        lock = self._instance_locks.get(instance_id)
+        if ring is not None and lock is not None:
+            return ring, lock
+        with self._locks_guard:
+            ring = self._rings.setdefault(
+                instance_id, [_CanonicalBucket() for _ in range(self._capacity)]
+            )
+            lock = self._instance_locks.setdefault(instance_id, threading.Lock())
+        return ring, lock
+
+    def _existing_instance(
+        self, instance_id: str
+    ) -> tuple[list[_CanonicalBucket], threading.Lock] | None:
+        """`None` if the instance has never been touched — but also, safely,
+        if a concurrent `_get_or_create_instance` call is caught mid-way
+        through creating it. That method sets `_rings[instance_id]` before
+        `_instance_locks[instance_id]`, both inside one `_locks_guard`
+        section; a lock-free reader here (deliberately not taking
+        `_locks_guard`, to stay off the write path) can observe the ring
+        without the lock in that narrow window. Indexing `_instance_locks`
+        directly there would raise `KeyError` instead of the graceful
+        "nothing here yet" this call already returns for a truly-unknown
+        instance — treating a first-write-in-progress the same way is safe:
+        a query landing in that instant reasonably sees no data yet.
+        """
+        ring = self._rings.get(instance_id)
+        lock = self._instance_locks.get(instance_id)
+        if ring is None or lock is None:
+            return None
+        return ring, lock
 
     def _get_bucket(
-        self, instance_id: str, canonical_start: int, *, now: datetime
+        self, ring: list[_CanonicalBucket], canonical_start: int, *, now: datetime
     ) -> _CanonicalBucket | None:
         oldest_valid = self._bucket_index(now) - self._capacity + 1
         if canonical_start < oldest_valid:
@@ -137,7 +238,6 @@ class MetricStore:
             # in `dropped_after_retention_total` — it must never be a
             # silent no-op (FR-STM-005).
             return None
-        ring = self._ring_for(instance_id)
         bucket = ring[canonical_start % self._capacity]
         if bucket.start != canonical_start:
             bucket.clear()
@@ -158,14 +258,20 @@ class MetricStore:
                 bucket.clear()
 
     def tick(self, now: datetime) -> None:
-        """Evict stale buckets across every instance's ring. For a
-        periodic background sweep (a future scheduler) — not the write
-        path. `merge()` scopes eviction to just the ring it touches
-        (`_evict_stale`); paying this whole-store cost on every single
-        write does not scale with the number of instances.
+        """Evict stale buckets across every instance's ring and check
+        memory pressure. For a periodic background sweep (a future
+        scheduler) — not the write path. `merge()` scopes eviction to just
+        the ring it touches (`_evict_stale`); paying this whole-store cost
+        on every single write does not scale with the number of instances.
         """
-        for ring in self._rings.values():
-            self._evict_stale(ring, now)
+        for instance_id in list(self._rings.keys()):
+            found = self._existing_instance(instance_id)
+            if found is None:
+                continue
+            ring, lock = found
+            with lock:
+                self._evict_stale(ring, now)
+        self._run_memory_check(now)
 
     def merge(
         self, snapshot: Snapshot, *, canonical_start: datetime, now: datetime
@@ -177,61 +283,202 @@ class MetricStore:
         it, while two different native buckets from the same agent that both
         land in this canonical slot both accumulate.
         """
-        self._evict_stale(self._ring_for(snapshot.instance_id), now)
-        bucket = self._get_bucket(
-            snapshot.instance_id, self._bucket_index(canonical_start), now=now
+        ring, lock = self._get_or_create_instance(snapshot.instance_id)
+        with lock:
+            self._evict_stale(ring, now)
+            bucket = self._get_bucket(
+                ring, self._bucket_index(canonical_start), now=now
+            )
+            if bucket is None:
+                with self._counters_lock:
+                    self.dropped_after_retention_total += 1
+                return
+            self.has_data = True
+
+            native_bucket_epoch = int(snapshot.bucket_start_utc.timestamp())
+            bucket.contributing_agent_ids.add(snapshot.agent_id)
+            if snapshot.gauges and (
+                bucket.gauges_source_epoch is None
+                or native_bucket_epoch >= bucket.gauges_source_epoch
+            ):
+                # FR-MET-028: gauges are instantaneous; the store takes the
+                # latest report for this bucket, never a sum. "Latest" is by
+                # the snapshot's own native bucketStartUtc, not by merge
+                # order — this stage must accept out-of-order arrival
+                # (FR-ING-005), so a snapshot processed later is not
+                # necessarily the one that happened later.
+                bucket.gauges = dict(snapshot.gauges)
+                bucket.gauges_source_epoch = native_bucket_epoch
+            if snapshot.restarted:
+                bucket.restarted_agent_ids.add(snapshot.agent_id)
+                new_until = (
+                    canonical_start.timestamp() + self._config.warmup_window_seconds
+                )
+                existing = self._warming_until.get(snapshot.instance_id)
+                if existing is None or new_until > existing:
+                    self._warming_until[snapshot.instance_id] = new_until
+
+            contribution_key: ContributionKey = (snapshot.agent_id, native_bucket_epoch)
+            for entry in snapshot.series:
+                dim_key = _dim_key(entry.dimensions)
+                if (
+                    dim_key not in bucket.series
+                    and len(bucket.series) >= self._config.max_series_per_bucket
+                ):
+                    with self._counters_lock:
+                        self.dropped_series_over_cap_total += 1
+                    continue
+                per_contribution = bucket.series.setdefault(dim_key, {})
+                per_contribution[contribution_key] = _SeriesContribution(
+                    counters=dict(entry.counters),
+                    histograms={
+                        name: payload.to_histogram()
+                        for name, payload in entry.histograms.items()
+                    },
+                )
+        # Outside the instance lock: `_shed_oldest_tier` (which this may
+        # trigger) acquires every instance's lock in turn, including this
+        # one — calling it while still holding this instance's lock above
+        # would deadlock.
+        self._maybe_check_memory_pressure(now)
+
+    def estimated_memory_bytes(self) -> int:
+        """FR-QRY-003 / NFR-SCA-006: an approximate gauge, not an exact
+        accounting — see the module-level byte constants for the estimate
+        this multiplies out. Deliberately lock-free: a periodic estimate
+        tolerates reading a bucket mid-write, and locking every instance to
+        scan the whole store would contend with the write path this
+        component exists to keep uncontended.
+
+        Counts every allocated bucket (`_BYTES_PER_BUCKET_SHELL`), not just
+        occupied ones — an instance touched once and otherwise idle still
+        holds a full `capacity`-length ring of real objects, which a
+        count-only-occupied estimate would silently miss.
+        """
+        total_shell_buckets = 0
+        total_occupied_buckets = 0
+        total_contributions = 0
+        for ring in self._rings.values():
+            total_shell_buckets += len(ring)
+            for bucket in ring:
+                if bucket.start is not None:
+                    total_occupied_buckets += 1
+                    total_contributions += sum(
+                        len(contributions) for contributions in bucket.series.values()
+                    )
+        return (
+            total_shell_buckets * _BYTES_PER_BUCKET_SHELL
+            + total_occupied_buckets * _BYTES_PER_OCCUPIED_BUCKET_EXTRA
+            + total_contributions * _BYTES_PER_SERIES_CONTRIBUTION
         )
-        if bucket is None:
-            self.dropped_after_retention_total += 1
+
+    def _maybe_check_memory_pressure(self, now: datetime) -> None:
+        """FR-QRY-003 for the write path: `merge()` calls this on every
+        write, but a real check only runs at most once per
+        `_MEMORY_CHECK_INTERVAL_SECONDS` — `tick()` (an explicit periodic
+        sweep) is not reachable without a scheduler this repo doesn't build
+        yet, so the write path must be able to trip the warn/shed thresholds
+        on its own. A non-blocking try-lock: if another thread is already
+        mid-check, this call simply skips rather than stalling the writer
+        that triggered it.
+        """
+        if not self._memory_check_lock.acquire(blocking=False):
             return
+        try:
+            last = self._last_memory_check_epoch
+            if (
+                last is not None
+                and now.timestamp() - last < _MEMORY_CHECK_INTERVAL_SECONDS
+            ):
+                return
+            self._run_memory_check(now)
+        finally:
+            self._memory_check_lock.release()
 
-        native_bucket_epoch = int(snapshot.bucket_start_utc.timestamp())
-        bucket.contributing_agent_ids.add(snapshot.agent_id)
-        if snapshot.gauges and (
-            bucket.gauges_source_epoch is None
-            or native_bucket_epoch >= bucket.gauges_source_epoch
-        ):
-            # FR-MET-028: gauges are instantaneous; the store takes the
-            # latest report for this bucket, never a sum. "Latest" is by
-            # the snapshot's own native bucketStartUtc, not by merge
-            # order — this stage must accept out-of-order arrival
-            # (FR-ING-005), so a snapshot processed later is not
-            # necessarily the one that happened later.
-            bucket.gauges = dict(snapshot.gauges)
-            bucket.gauges_source_epoch = native_bucket_epoch
-        if snapshot.restarted:
-            bucket.restarted_agent_ids.add(snapshot.agent_id)
-            new_until = canonical_start.timestamp() + self._config.warmup_window_seconds
-            existing = self._warming_until.get(snapshot.instance_id)
-            if existing is None or new_until > existing:
-                self._warming_until[snapshot.instance_id] = new_until
+    def _run_memory_check(self, now: datetime) -> None:
+        self._last_memory_check_epoch = now.timestamp()
+        self._check_memory_pressure(now)
 
-        contribution_key: ContributionKey = (snapshot.agent_id, native_bucket_epoch)
-        for entry in snapshot.series:
-            per_contribution = bucket.series.setdefault(_dim_key(entry.dimensions), {})
-            per_contribution[contribution_key] = _SeriesContribution(
-                counters=dict(entry.counters),
-                histograms={
-                    name: payload.to_histogram()
-                    for name, payload in entry.histograms.items()
-                },
+    def _check_memory_pressure(self, now: datetime) -> None:
+        limit_bytes = self._config.memory_limit_mb * 1024 * 1024
+        used_percent = self.estimated_memory_bytes() / limit_bytes * 100
+        if used_percent >= self._config.memory_shed_percent:
+            shed = self._shed_oldest_tier(now)
+            with self._counters_lock:
+                self.shed_buckets_total += shed
+            logger.warning(
+                "MetricStore memory at %.1f%% of %dMB limit (>= shed "
+                "threshold %.0f%%); shed %d buckets from the oldest "
+                "retention tier",
+                used_percent,
+                self._config.memory_limit_mb,
+                self._config.memory_shed_percent,
+                shed,
+            )
+        elif used_percent >= self._config.memory_warn_percent:
+            logger.warning(
+                "MetricStore memory at %.1f%% of %dMB limit (>= warn threshold %.0f%%)",
+                used_percent,
+                self._config.memory_limit_mb,
+                self._config.memory_warn_percent,
             )
 
+    def _shed_oldest_tier(self, now: datetime) -> int:
+        """FR-QRY-003: shed the oldest retention tier rather than being
+        OOM-killed. Evicts the older half of every instance's *retained*
+        buckets — a uniform, cheap approximation of "oldest tier" rather
+        than a cross-instance LRU, which would need globally comparable
+        bucket ages this store doesn't track.
+
+        `keep_count` is floored at 1: at `capacity < 2`, `capacity // 2`
+        would be 0, which shifts the cutoff one index past "now" and evicts
+        the bucket a caller may have just written in this same cycle.
+        Keeping at least the current bucket means shedding is a genuine
+        no-op rather than a self-destructive full wipe when there is no
+        real "older half" to speak of.
+        """
+        keep_count = max(self._capacity // 2, 1)
+        shed_before = self._bucket_index(now) - keep_count + 1
+        shed_count = 0
+        for instance_id, ring in list(self._rings.items()):
+            # `.get()`, not `[]`: same half-created-instance window as
+            # `_existing_instance` — a concurrent `_get_or_create_instance`
+            # call can make the ring visible here before its lock exists.
+            # Nothing to shed yet on an instance with no data, so skipping
+            # it this pass (it'll be picked up on the next) is correct, not
+            # just crash-avoidance.
+            lock = self._instance_locks.get(instance_id)
+            if lock is None:
+                continue
+            with lock:
+                for bucket in ring:
+                    if bucket.start is not None and bucket.start < shed_before:
+                        bucket.clear()
+                        shed_count += 1
+        return shed_count
+
     def is_warming_up(self, instance_id: str, *, at: datetime) -> bool:
-        until = self._warming_until.get(instance_id)
-        return until is not None and at.timestamp() < until
+        found = self._existing_instance(instance_id)
+        if found is None:
+            return False
+        _, lock = found
+        with lock:
+            until = self._warming_until.get(instance_id)
+            return until is not None and at.timestamp() < until
 
     def gauges(self, instance_id: str, *, at: datetime) -> dict[str, float]:
         """The latest gauge values for whichever canonical bucket contains
         `at` (`FR-MET-028`) — `{}` if the instance or bucket is unknown.
         """
-        ring = self._rings.get(instance_id)
-        if not ring:
+        found = self._existing_instance(instance_id)
+        if found is None:
             return {}
-        bucket = ring[self._bucket_index(at) % self._capacity]
-        if bucket.start != self._bucket_index(at):
-            return {}
-        return dict(bucket.gauges)
+        ring, lock = found
+        with lock:
+            bucket = ring[self._bucket_index(at) % self._capacity]
+            if bucket.start != self._bucket_index(at):
+                return {}
+            return dict(bucket.gauges)
 
     def _in_range_buckets(
         self, ring: list[_CanonicalBucket], *, from_utc: datetime, to_utc: datetime
@@ -257,14 +504,18 @@ class MetricStore:
     def restarted_bucket_count(
         self, instance_id: str, *, from_utc: datetime, to_utc: datetime
     ) -> int:
-        ring = self._rings.get(instance_id)
-        if not ring:
+        found = self._existing_instance(instance_id)
+        if found is None:
             return 0
-        return sum(
-            1
-            for bucket in self._in_range_buckets(ring, from_utc=from_utc, to_utc=to_utc)
-            if bucket.restarted_agent_ids
-        )
+        ring, lock = found
+        with lock:
+            return sum(
+                1
+                for bucket in self._in_range_buckets(
+                    ring, from_utc=from_utc, to_utc=to_utc
+                )
+                if bucket.restarted_agent_ids
+            )
 
     def read(
         self,
@@ -280,28 +531,31 @@ class MetricStore:
         summaries are derived from those sums, never from any single
         agent's own precomputed values (`FR-STM-003`/`FR-STM-004`).
         """
-        ring = self._rings.get(instance_id)
-        if not ring:
+        found = self._existing_instance(instance_id)
+        if found is None:
             return []
+        ring, lock = found
 
         merged: dict[DimKey, tuple[dict[str, Decimal], dict[str, Histogram]]] = {}
 
-        for bucket in self._in_range_buckets(ring, from_utc=from_utc, to_utc=to_utc):
-            for dim_key, per_contribution in bucket.series.items():
-                dims = dict(dim_key)
-                row_key = tuple(
-                    sorted((dim, dims.get(dim, "unspecified")) for dim in group_by)
-                )
-                counters, histograms = merged.setdefault(row_key, ({}, {}))
-                for contribution in per_contribution.values():
-                    for metric, amount in contribution.counters.items():
-                        counters[metric] = counters.get(metric, Decimal(0)) + amount
-                    for metric, hist in contribution.histograms.items():
-                        existing = histograms.get(metric)
-                        if existing is None:
-                            existing = Histogram()
-                            histograms[metric] = existing
-                        existing.merge(hist)
+        with lock:
+            in_range = self._in_range_buckets(ring, from_utc=from_utc, to_utc=to_utc)
+            for bucket in in_range:
+                for dim_key, per_contribution in bucket.series.items():
+                    dims = dict(dim_key)
+                    row_key = tuple(
+                        sorted((dim, dims.get(dim, "unspecified")) for dim in group_by)
+                    )
+                    counters, histograms = merged.setdefault(row_key, ({}, {}))
+                    for contribution in per_contribution.values():
+                        for metric, amount in contribution.counters.items():
+                            counters[metric] = counters.get(metric, Decimal(0)) + amount
+                        for metric, hist in contribution.histograms.items():
+                            existing = histograms.get(metric)
+                            if existing is None:
+                                existing = Histogram()
+                                histograms[metric] = existing
+                            existing.merge(hist)
 
         window_seconds = max((to_utc - from_utc).total_seconds(), 0.0)
         return [
