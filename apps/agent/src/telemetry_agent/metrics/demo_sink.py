@@ -20,6 +20,13 @@ class DemoMetricsSink:
 
         if result.classification == LineClassification.APP_LOG:
             self.counters["log_lines_read"] += 1
+            tel = result.app_log_telemetry
+            if tel is not None:
+                self.counters["app_log_lines"] += 1
+                self.counters[f"app_log_level:{tel.level}"] += 1
+                self.counters[f"app_log_component:{tel.component}"] += 1
+                if tel.error_signature is not None:
+                    self.record_app_signature(tel.error_signature)
             return
 
         self.counters["log_lines_read"] += 1

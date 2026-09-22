@@ -20,38 +20,42 @@ per file:  [Log Monitor] ──lines──► [Line Queue] ──► [Parser Poo
                                                                       [Health Reporter] ──► Backend
 ```
 
-`FR-PUB-004`: Every inter-stage channel MUST be bounded. On overflow the agent drops the
-oldest item, increments a drop counter per stage, and never blocks the log reader.
+`FR-PUB-004`: Every inter-stage channel MUST be bounded. Default overflow policy is
+`block` (see `pipeline.overflowPolicy`): producers wait for capacity rather than
+discarding data. An optional `drop_oldest` policy exists for memory-constrained
+deployments and MUST increment drop counters when used.
 
 ### 1.1 Pipeline bridge (Log Monitor → Parser Engine)
 
 The log monitor and parser engine MUST be decoupled by a bounded queue and worker pool
 because their resource profiles differ:
 
-| Stage | Bound | Overflow behaviour |
+| Stage | Bound | Default overflow behaviour |
 | --- | --- | --- |
-| Log monitor → line queue | I/O-bound; MUST NOT wait on parser | Non-blocking enqueue; drop oldest line on full queue |
+| Log monitor → line queue | I/O-bound | Block until capacity; read lag grows, no line loss |
 | Line queue → parser pool | CPU-bound; absorbs burst lag | Workers pull at their own pace; queue sized larger than downstream stages |
-| Parser → event queue | Mixed | Drop oldest event; count `pipeline.events_dropped` |
+| Parser → event queue | Mixed | Block until capacity; parser workers wait, no event loss |
 
 | ID | Requirement |
 | --- | --- |
-| `FR-PIP-001` | The log monitor MUST enqueue each complete line to the per-file-set line queue without blocking. When the queue is full, it MUST discard the oldest queued line, increment `pipeline.lines_dropped`, and enqueue the new line. The monitor MUST NOT stall file reads or offset checkpointing waiting for parser capacity. |
-| `FR-PIP-002` | The monitor→parser line queue MUST default to `pipeline.lineQueueSize: 2048` — larger than downstream event queues — because FIX classification, framing and field extraction are CPU-bound and the parser legitimately falls behind during bursts while the monitor stays current with disk I/O. |
+| `FR-PIP-001` | The log monitor MUST enqueue each complete line to the per-file-set line queue. When `pipeline.overflowPolicy` is `block` (default), enqueue MUST block until capacity is available — no lines discarded. When `drop_oldest`, the agent MAY discard the oldest queued line, increment `pipeline.lines_dropped`, and enqueue the new line. |
+| `FR-PIP-002` | The monitor→parser line queue MUST default to `pipeline.lineQueueSize: 2048` — larger than downstream event queues — because FIX classification, framing and field extraction are CPU-bound and the parser legitimately falls behind during bursts. |
 | `FR-PIP-003` | Parser workers MUST pull lines from the line queue via a bounded thread pool sized `pipeline.parseWorkers` (default `min(2, cpu_count)`). Each worker calls `Parser.parse()` synchronously; no network or disk I/O inside the pool (`FR-PRS-003`, `NFR-PERF-005`). |
-| `FR-PIP-004` | Parsed events MUST be handed to the metrics aggregator through a separate bounded event queue (`pipeline.eventQueueSize`, default 256). On overflow, drop the oldest event and increment `pipeline.events_dropped`. |
+| `FR-PIP-004` | Parsed events MUST be handed to the metrics aggregator through a separate bounded event queue (`pipeline.eventQueueSize`, default 256). Default policy blocks on overflow; `drop_oldest` increments `pipeline.events_dropped`. |
 | `FR-PIP-005` | Queue depths and drop counters for both queues MUST appear on the agent heartbeat (`FR-HLT-001`) and local `/metrics` (`pipeline_line_queue_depth`, `pipeline_event_queue_depth`, `pipeline_lines_dropped_total`, `pipeline_events_dropped_total`). |
+| `FR-PIP-006` | The persisted file offset (`committed_offset`) MUST NOT advance until the line at that byte range has been successfully parsed and ingested. An in-memory read cursor MAY run ahead of the committed offset while lines are in-flight through the pipeline. |
+| `FR-PIP-007` | Re-processing the same line identity `(device, inode, byte_offset)` MUST NOT double-count metrics. A bounded dedupe cache (default capacity 100 000, TTL 1h) suppresses duplicate ingest within the restart/re-read window. |
 
 Implementation lives in `apps/agent/src/telemetry_agent/pipeline/` (see
 [scaffold.md](../plan/scaffold.md)). The existing parser modules under `parser/` are invoked
 from the worker pool, not directly from the monitor task.
 
 **Why asymmetric sizing:** the monitor only reads bytes and splits lines — cheap and steady.
-The parser performs substring scans, delimiter detection, multi-line joining and (once
-UBS-43+ lands) allowlist extraction — work that scales with message complexity and contends
-for CPU with Magic. A larger line queue gives the parser time to catch up without ever
-blocking the reader; smaller downstream queues prevent unbounded event accumulation after
-parse (`NFR-REL-009`).
+The parser performs substring scans, delimiter detection, multi-line joining and allowlist
+extraction — work that scales with message complexity and contends for CPU with Magic. A
+larger line queue gives the parser time to catch up; blocking backpressure ensures no line
+is discarded while the source file remains the durable log (ADR 0004). Smaller downstream
+queues still bound memory while blocking rather than dropping (`NFR-REL-009`).
 
 ## 2. Log Monitor
 

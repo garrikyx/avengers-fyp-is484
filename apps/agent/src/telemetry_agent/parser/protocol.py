@@ -6,6 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from telemetry_agent.parser.applog.telemetry import AppLogTelemetry
     from telemetry_agent.parser.fix.fields import FixFields
     from telemetry_agent.parser.fix.telemetry import FixTelemetry
 
@@ -37,6 +38,14 @@ class SourceMeta:
     read_at: datetime
     truncated: bool = False
     file_set: str = ""
+    dev: int = 0
+    inode: int = 0
+    byte_offset: int = 0
+    byte_length: int = 0
+
+    @property
+    def end_offset(self) -> int:
+        return self.byte_offset + self.byte_length
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +69,7 @@ class ParseResult:
     joined_lines: int = 1
     fields: "FixFields | None" = None
     telemetry: "FixTelemetry | None" = None
+    app_log_telemetry: "AppLogTelemetry | None" = None
     internal_error: bool = False
 
 

@@ -1,6 +1,12 @@
 import argparse
 import sys
-from mock_logger import DEFAULT_INTERVAL, DEFAULT_MAX_BYTES, run_harness
+
+from simulator.mock_logger import (
+    DEFAULT_INTERVAL,
+    DEFAULT_KEEP_ROTATED_FILES,
+    DEFAULT_MAX_BYTES,
+    run_harness,
+)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Magic Application Synthetic Log & Rotation Generator")
@@ -16,11 +22,21 @@ def main() -> None:
         default=DEFAULT_INTERVAL,
         help="Delay between log writes in seconds",
     )
+    parser.add_argument(
+        "--keep-rotated-files",
+        type=int,
+        default=DEFAULT_KEEP_ROTATED_FILES,
+        help="Number of rotated archives to retain per log file",
+    )
 
     args = parser.parse_args()
 
     try:
-        run_harness(max_bytes=args.max_bytes, interval=args.interval)
+        run_harness(
+            max_bytes=args.max_bytes,
+            interval=args.interval,
+            keep_rotated_files=args.keep_rotated_files,
+        )
     except KeyboardInterrupt:
         print("\n[MAGIC SIMULATOR] Stopped by user.")
         sys.exit(0)

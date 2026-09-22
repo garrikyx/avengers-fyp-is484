@@ -1,5 +1,5 @@
-class TelemetryEvent(BaseModel):
-    agent_id: str
-    instance_id: str
-    event_type: str
-    timestamp: datetime
+"""Backward-compatible import for the structured telemetry event contract."""
+
+from telemetry_shared.models.ingestion import TelemetryEvent
+
+__all__ = ["TelemetryEvent"]

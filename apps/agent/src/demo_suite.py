@@ -26,12 +26,14 @@ def run_demo():
     app_log.write_text("APP line 1\nAPP line 2\n")
     fix_log.write_text("FIX line 1\n")
 
-    monitor = MultiLogMonitor([app_log, fix_log], registry_path=REGISTRY)
+    monitor = MultiLogMonitor(
+        [app_log, fix_log], registry_path=REGISTRY, auto_commit=True
+    )
     gen = monitor.stream_lines(poll_interval=0.05)
 
     ingested = [next(gen) for _ in range(3)]
-    for source, line in ingested:
-        print(f"  [STREAMED] [{source}] -> {line}")
+    for source, read_line in ingested:
+        print(f"  [STREAMED] [{source}] -> {read_line.text}")
     assert len(ingested) == 3, "Failed to ingest initial logs"
     print("  ✅ [PASS] Ingested 3 log lines across multiple streams.")
 
@@ -47,8 +49,8 @@ def run_demo():
     app_log.write_text("APP initial line on new inode\n")
 
     rotated_lines = [next(gen), next(gen)]
-    for source, line in rotated_lines:
-        print(f"  [ROTATION DETECTED] [{source}] -> {line}")
+    for source, read_line in rotated_lines:
+        print(f"  [ROTATION DETECTED] [{source}] -> {read_line.text}")
     print("  ✅ [PASS] Successfully drained old inode and attached to new inode.")
 
     # --- Scenario 3: Crash Recovery & State Resume ---
@@ -60,14 +62,16 @@ def run_demo():
         f.write("FIX offline message 1\nFIX offline message 2\n")
 
     # Restart agent and verify it skips old lines
-    restarted_monitor = MultiLogMonitor([app_log, fix_log], registry_path=REGISTRY)
+    restarted_monitor = MultiLogMonitor(
+        [app_log, fix_log], registry_path=REGISTRY, auto_commit=True
+    )
     restarted_gen = restarted_monitor.stream_lines(poll_interval=0.05)
 
     recovered_lines = [next(restarted_gen), next(restarted_gen)]
-    for source, line in recovered_lines:
-        print(f"  [RESUMED STREAM] [{source}] -> {line}")
-    
-    assert recovered_lines[0][1] == "FIX offline message 1"
+    for source, read_line in recovered_lines:
+        print(f"  [RESUMED STREAM] [{source}] -> {read_line.text}")
+
+    assert recovered_lines[0][1].text == "FIX offline message 1"
     print("  ✅ [PASS] Agent resumed at exact byte offset without duplicate processing.")
     restarted_monitor.close()
 
