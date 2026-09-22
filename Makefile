@@ -1,4 +1,4 @@
-.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart stream-processor-quickstart callback-test callback-demo publish-test publish-demo lint
+.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo lint
 
 sync:
 	uv sync
@@ -45,6 +45,15 @@ metrics-quickstart:
 
 metrics-bridge-quickstart:
 	uv run python -m telemetry_agent.parser.demo_metrics_bridge
+
+rules-test: sync
+	uv run pytest tests/unit/agent/rules/ tests/integration/agent/ -k "rules or RE_" -v
+
+rules-quickstart:
+	uv run python -m telemetry_agent.rules.demo_quickstart
+
+rules-reload-demo:
+	uv run python -m telemetry_agent.rules.demo_reload
 
 stream-processor-quickstart:
 	uv run python -m telemetry_backend.services.demo_quickstart

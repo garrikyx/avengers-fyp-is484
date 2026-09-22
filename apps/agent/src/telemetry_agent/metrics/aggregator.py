@@ -12,7 +12,7 @@ cap, and re-aggregate.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -132,10 +132,12 @@ class _Bucket:
 class MetricsAggregator:
     """Time-bucketed ring buffer backing both counters and histograms.
 
-    Two write paths, both agent-internal callers: `ingest_counters` (direct
-    per-event counter increments, driven by counters.derive_counters) and
+    Three write paths, all agent-internal callers: `ingest_counters` (direct
+    per-event counter increments, driven by counters.derive_counters),
     `observe_latency` (derived histogram samples, driven by
-    correlation.LatencyCorrelator). One read path: `snapshot`.
+    correlation.LatencyCorrelator), and `ingest_agent_counters` (the agent's
+    own self-observability counters, which have no event behind them at all).
+    One read path: `snapshot`.
     """
 
     def __init__(
@@ -217,6 +219,16 @@ class MetricsAggregator:
             return None
         return self._clock() - self._last_event_at
 
+    def _add_counter(
+        self, bucket: _Bucket, metric: str, label: tuple[str, ...], amount: Decimal
+    ) -> None:
+        """The accumulation tail shared by both counter write paths: admit
+        the label against the cardinality caps, then add into the bucket.
+        """
+        label = self._admit_label(bucket, metric, label)
+        series = bucket.counters.setdefault(metric, {})
+        series[label] = series.get(label, Decimal(0)) + amount
+
     def ingest_counters(
         self, event: ParsedMessageEvent, counters: dict[str, Decimal]
     ) -> None:
@@ -232,9 +244,42 @@ class MetricsAggregator:
                 _dimension_value(event, dim, self._resolve_reject_reason)
                 for dim in dims
             )
-            label = self._admit_label(bucket, metric, label)
-            series = bucket.counters.setdefault(metric, {})
-            series[label] = series.get(label, Decimal(0)) + amount
+            self._add_counter(bucket, metric, label, amount)
+
+    def ingest_agent_counters(
+        self,
+        *,
+        dims: Mapping[str, str],
+        counters: dict[str, Decimal],
+        at: datetime,
+    ) -> None:
+        """Agent self-observability counters (FR-CBK-009) that have no
+        `ParsedMessageEvent` behind them — the Callback Dispatcher's own
+        delivery outcomes, for example. Dimension values come straight from
+        `dims` instead of being read off an event.
+
+        Deliberately does *not* update `_last_event_at`, unlike
+        `ingest_counters`: the agent's own dispatcher retrying is not
+        evidence that Magic is still producing log activity, and letting it
+        count as such would make a log-starved agent look alive through the
+        `secondsSinceLastEvent` gauge.
+        """
+        now = self._clock()
+        self.tick(now)
+        bucket = self._get_bucket(at.timestamp(), now=now)
+        if bucket is None:
+            return
+        for metric, amount in counters.items():
+            declared = self._dims_for(metric)
+            try:
+                label = tuple(dims[dim] for dim in declared)
+            except KeyError as exc:
+                msg = (
+                    f"metric {metric!r} declares dimension {exc.args[0]!r}, "
+                    f"which is absent from dims={sorted(dims)}"
+                )
+                raise KeyError(msg) from exc
+            self._add_counter(bucket, metric, label, amount)
 
     def observe_latency(
         self,

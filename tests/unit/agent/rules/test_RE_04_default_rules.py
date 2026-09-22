@@ -174,14 +174,21 @@ def test_fix_session_down_fires_on_either_counter() -> None:
 
 
 def test_unwired_counter_rules_read_as_no_fire_not_crash() -> None:
-    # SeqGapDetected/ClockSkew/CallbackFailing/BackendUnreachable have no
-    # producer yet — an otherwise-normal snapshot simply lacks their
-    # counters entirely. Must read as "doesn't fire", never raise.
+    # BackendUnreachable's `publish_failures` has no producer yet (it needs
+    # the Backend Publisher), so an otherwise-normal snapshot simply lacks
+    # the counter. Must read as "doesn't fire", never raise.
+    #
+    # SeqGapDetected/ClockSkew (UBS-73) and CallbackFailing (UBS-74) now do
+    # have producers — see tests/integration/agent/test_RE_session_integration.py
+    # and test_RE_callback_integration.py for those firing on real data.
+    # They stay in this list because the absent-counter case is still the
+    # normal one for them: a window in which nothing went wrong carries no
+    # `seq_gaps` key at all, and that must not fire or raise either.
     for name in (
+        "BackendUnreachable",
         "SeqGapDetected",
         "ClockSkew",
         "CallbackFailing",
-        "BackendUnreachable",
     ):
         rule = _rule(name)
         normal_snapshot = make_snapshot(

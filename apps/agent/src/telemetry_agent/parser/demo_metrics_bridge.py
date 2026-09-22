@@ -23,7 +23,12 @@ from telemetry_agent.metrics.correlation import LATENCY_DIMENSIONS, LatencyCorre
 from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS, derive_counters
 from telemetry_agent.metrics.snapshot import snapshot
 from telemetry_agent.parser.fix.parser import FixParser
-from telemetry_agent.parser.metrics_event import build_parsed_message_event
+from telemetry_agent.parser.metrics_event import (
+    build_parsed_message_event,
+    derive_parser_counters,
+    derive_session_counters,
+    parser_counter_dims,
+)
 from telemetry_agent.parser.protocol import SourceMeta
 
 _HASH_KEY = b"demo-hash-key"
@@ -79,12 +84,23 @@ def main() -> None:
     events_built = 0
     for line in _LINES:
         result = fix_parser.parse(line, meta)
+        # Parser health is counted for *every* line, parsed or not — it's the
+        # denominator of parse_error_rate, so it can't skip the failures.
+        aggregator.ingest_agent_counters(
+            dims=parser_counter_dims(result, instance_id=meta.instance_id),
+            counters=derive_parser_counters(result),
+            at=_T0,
+        )
         event = build_parsed_message_event(result, meta)
-        if event is None:
+        if event is None or result.telemetry is None:
             continue
         events_built += 1
         correlator.ingest(event)
-        aggregator.ingest_counters(event, derive_counters(event))
+        # Order counters come off the event; session-health counters
+        # (logouts, seq_gaps, clock_skew_events) come off the parser's own
+        # FixTelemetry — both go into the one ingest call.
+        counters = derive_counters(event) | derive_session_counters(result.telemetry)
+        aggregator.ingest_counters(event, counters)
     print(f"  {events_built}/{len(_LINES)} lines became ParsedMessageEvents")
 
     _step("2. Read — MA-01's bucketed store, summed over the 1m window")
