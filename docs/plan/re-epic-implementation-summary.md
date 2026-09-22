@@ -31,13 +31,13 @@ MA-04 indicator — and picks the *highest* tier whose condition holds.
 | `SessionRejects` | threshold | critical@5 | 5m | wired |
 | `PendingOrderTimeout` | threshold (gauge) | warning@30s | — | wired |
 | `AckLatencyBreach` | latency | warning@500ms, critical@1000ms | 5m | wired |
-| `ParseErrorRate` | rate | warning@1%, critical@25% | 5m | formula-ready, no producer |
+| `ParseErrorRate` | rate | warning@1%, critical@25% | 5m | wired (UBS-18) |
 | `NoLogActivity` | absence | critical@0 (`messages_total`) | 1m | wired |
 | `NoExecutions` | absence (guarded) | warning@0 while `orders_submitted`>0 | 15m | wired |
-| `FixSessionDown` | threshold | critical@1 (`logouts` or `heartbeat_timeouts`) | 1m | no producer |
-| `SeqGapDetected` | threshold | warning@0 | 1m | no producer |
-| `ClockSkew` | threshold | warning@10 | 5m | no producer |
-| `CallbackFailing` | threshold | warning@3 | 5m | no Callback Dispatcher yet |
+| `FixSessionDown` | threshold | critical@1 (`logouts` or `heartbeat_timeouts`) | 1m | wired (UBS-73, `logouts` only) |
+| `SeqGapDetected` | threshold | warning@0 | 1m | wired (UBS-73) |
+| `ClockSkew` | threshold | warning@10 | 5m | wired (UBS-73) |
+| `CallbackFailing` | threshold | warning@3 | 5m | wired (UBS-74) |
 | `BackendUnreachable` | threshold | warning@5 | 1m | no Backend Publisher yet |
 
 "No producer" rules read as 0/no-fire structurally rather than raising —
@@ -141,6 +141,9 @@ reload mechanism are both fully unit-tested, including a real
 | `test_RE_05_config_loader.py` | Valid YAML round-trips to the same `RuleConfig`s; a missing file falls back to `DEFAULT_RULES`; `config/rules.yaml` itself matches `DEFAULT_RULES` one-for-one (catches drift between the two); every malformed shape (bad `kind`/`operator`, empty `tiers`, duplicate name, unknown field, empty rule list) raises `RuleConfigError` naming the rule, and never silently falls back once the file exists; duration-string parsing (`"30s"`/`"2m"`/`"1h"`). |
 | `test_RE_06_reload.py` | `apply_rules` preserves `alertId`/`firstObservedUtc` across a reload that changes a surviving rule's threshold (proven via a post-reload renotify carrying the same `alertId`); force-resolves a `firing` alert whose rule was removed (one `resolved` event) but drops a `pending` one silently; `SighupRuleReloader.reload()` swaps in a valid file and rejects a malformed one (old rules keep firing, error logged); a real `os.kill(os.getpid(), signal.SIGHUP)` round-trip proves `install()`'s OS wiring, not just the Python method. |
 | `tests/integration/agent/test_RE_integration.py` | Real `MetricsAggregator`/`LatencyCorrelator`/`snapshot()` output actually drives `RuleEngine.evaluate()` correctly — one rule per snapshot substructure (indicator, latency, gauge, counter), not the hand-built `MetricsSnapshot` fixtures the rest of this suite uses. Caught a real gap: `snapshot()`'s `min_sample_size` nulls latency percentiles independent of what a given rule's own `min_samples` would accept. |
+| `tests/integration/agent/test_RE_session_integration.py` (UBS-73) | Raw FIX bytes through the real `FixParser` and the `metrics_event` bridge fire `FixSessionDown`, `SeqGapDetected` and `ClockSkew` — including that ten skewed messages stay under `ClockSkew`'s `> 10`, that `FixSessionDown` still works with no `heartbeat_timeouts` producer, and that session counters answer a `session_id` query but are correctly absent from a `symbol` one (FR-MET-030). |
+| `tests/integration/agent/test_RE_callback_integration.py` (UBS-74) | Real dispatcher failures against a mock Magic endpoint reach `CallbackFailing` through `AgentCounterSampler`; three failures stay under threshold; successful deliveries never touch the failure counter; repeated sampling of the monotonic registry doesn't inflate 3 failures into a false alert; and the agent's own counters leave `secondsSinceLastEvent` null. |
+| `test_MA_05_agent_counters.py` (UBS-74) | `ingest_agent_counters` dimension handling, cardinality folding, out-of-window drop, and that it leaves `_last_event_at` alone while `ingest_counters` still sets it; `AgentCounterSampler`'s first-sample baseline, delta arithmetic, registry-reset rebaselining, and per-bucket placement. |
 
 Run: `uv run pytest tests/unit tests/integration -v` (183 tests, whole repo)
 · lint/types: `uv run ruff check .` and `uv run mypy apps/agent/src` clean on
@@ -151,9 +154,52 @@ here).
 
 **Known gaps, not closed here**: consecutive-failure streak tracking
 (client alert 3's "≥10 consecutive failures") has no rule kind or data
-producer; session-message counters (`logouts`, `heartbeat_timeouts`,
-`seq_gaps`, `clock_skew_events`) aren't derived anywhere yet; Callback
-Dispatcher and Backend Publisher don't exist, so their self-health rules
-have no data; `SighupRuleReloader.install()` has no real process to be
-called from yet (M1 Log Monitor / an agent supervisor loop). All are
-documented, deliberate deferrals, not oversights.
+producer; Backend Publisher doesn't exist, so `BackendUnreachable` has no
+data; `SighupRuleReloader.install()` has no real process to be called from
+yet (M1 Log Monitor / an agent supervisor loop). All are documented,
+deliberate deferrals, not oversights.
+
+## 7. Counter producers (UBS-73 / UBS-74)
+
+The session-message and callback counters listed above as gaps now have
+real producers, so five rules that could previously only read 0 fire on
+live data.
+
+| Counter | Produced by | Consumed by |
+| --- | --- | --- |
+| `logons`, `logouts` | `parser.metrics_event.derive_session_counters` | `FixSessionDown` |
+| `seq_gaps`, `seq_gap_messages`, `seq_regressions` | same, from `FixTelemetry.seq_gap` (`SeqTracker`) | `SeqGapDetected` |
+| `clock_skew_events` | same, from `FixTelemetry.clock_skew` (`parse_fix_timestamp`) | `ClockSkew` |
+| `callback_failures`, `callback_delivered`, `callback_queue_dropped` | `metrics.agent_counters.AgentCounterSampler`, sampling the dispatcher's `CounterRegistry` | `CallbackFailing` |
+| `log_lines_read`, `parse_errors` (dimension `reason`) | `parser.metrics_event.derive_parser_counters` (UBS-18) | `ParseErrorRate` |
+
+Two different paths, for a reason. The session counters come off a real
+parsed FIX line, so they ride the existing `ingest_counters` path with
+`SESSION_DIMS` (`instance_id`, `session_id`). The callback counters have no
+`ParsedMessageEvent` behind them at all and live in a monotonic
+since-startup registry, so they need `ingest_agent_counters` plus a delta
+sampler — and that separate write path deliberately does **not** touch
+`_last_event_at`, because the agent's own dispatcher retrying is not
+evidence that Magic is still producing log activity.
+
+`heartbeat_timeouts` is still unproduced, by choice: a timeout is the
+*absence* of a message, which no per-message derivation can observe. It
+belongs to the Health Reporter's periodic tick. `FixSessionDown` sums it
+with `logouts` and defaults a missing counter to 0, so the rule works
+correctly without it.
+
+`parse_errors` and `log_lines_read` are `parse_error_rate`'s numerator and
+denominator, so they ride `ingest_agent_counters` too — every line has to be
+counted, including the ones that produced no `ParsedMessageEvent` at all.
+Only hard failures count: `bad_timestamp` and `unknown_msg_type` are soft
+warnings on a line that parsed, and folding them in would have the rule
+firing on well-formed messages.
+
+Demo: `make rules-quickstart` walks one FIX session from healthy through a
+reject burst, a rising reject rate, latency degradation, a sequence gap,
+clock skew, a forced logout, the agent's own callbacks failing, and the
+absence/lifecycle/safety rules — 13 of the 14 configured rules fire, each
+traceable to a raw log line printed in the same run. Only
+`BackendUnreachable` stays silent, correctly: nothing produces
+`publish_failures` until the Backend Publisher exists. Runbook:
+`docs/plan/rule-engine-demo.md`.

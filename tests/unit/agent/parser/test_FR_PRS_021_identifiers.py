@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 import pytest
-
 from telemetry_agent.parser.fix.fields import extract_allowlisted_fields
 from telemetry_agent.parser.fix.identifiers import hash_identifier, load_hash_key
 

@@ -1,4 +1,12 @@
-"""FastAPI entry point for the Telemetry Backend ingestion contract."""
+"""FastAPI entry point for the Telemetry Backend (spec 006 §1, §7).
+
+Serves the ingestion contract (`/telemetry/batch`, `/telemetry/events`,
+`/telemetry/heartbeat`) plus the two probe endpoints `/healthz` and
+`/readyz` (`FR-HLT-010`, `FR-QRY-005`). The query, alert and NL routes
+depend on components this app doesn't build yet and are out of scope here.
+
+    uv run uvicorn telemetry_backend.main:app
+"""
 
 from __future__ import annotations
 
@@ -16,7 +24,9 @@ from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
+from telemetry_backend.config import StreamProcessorConfig
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
+from telemetry_backend.services.stream_processor import StreamProcessor
 
 
 class ItemCounts(CamelModel):
@@ -89,9 +99,17 @@ def _error_response(
     )
 
 
-def create_app(service: IngestionService | None = None) -> FastAPI:
+def create_app(
+    service: IngestionService | None = None,
+    processor: StreamProcessor | None = None,
+) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
     ingestion = service or IngestionService()
+    # `/readyz` reports against this one instance for the life of the process,
+    # so its warmup clock starts once — here, which for the module-level
+    # `app = create_app()` below means at import time, matching FR-QRY-005's
+    # "since this replica started".
+    stream = processor or StreamProcessor(StreamProcessorConfig())
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -107,6 +125,27 @@ def create_app(service: IngestionService | None = None) -> FastAPI:
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
+    app.state.processor = stream
+
+    # The probe endpoints return bare dicts rather than this module's
+    # CamelModel envelopes on purpose: an orchestrator's liveness/readiness
+    # check shouldn't have to parse a telemetry-shaped response.
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        """FR-HLT-010: liveness only — process up, no dependency checks."""
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz(response: Response) -> dict[str, str]:
+        """FR-QRY-005: `warming` (HTTP 503) until `warmupWindow` has elapsed
+        since this replica started, so an orchestrator doesn't route traffic
+        to a replica whose just-restarted, empty store would misreport as
+        caught-up-and-idle.
+        """
+        if stream.is_ready(now=datetime.now(UTC)):
+            return {"status": "ready"}
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "warming"}
 
     @app.middleware("http")
     async def request_id(

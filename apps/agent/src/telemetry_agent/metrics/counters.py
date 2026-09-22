@@ -42,6 +42,25 @@ KNOWN_MSG_TYPES: frozenset[str] = frozenset(
 BASE_DIMS: tuple[str, ...] = ("instance_id", "session_id", "symbol", "side", "ord_type")
 REJECT_DIMS: tuple[str, ...] = (*BASE_DIMS, "reject_reason")
 
+# Session / parser-health counters (spec 004 §4.1). Scoped to the FIX
+# session, not to an order — a Logout or a sequence gap has no symbol, side
+# or ordType, so carrying BASE_DIMS would only ever record "unspecified" for
+# those three and inflate the label-set cap for nothing.
+SESSION_DIMS: tuple[str, ...] = ("instance_id", "session_id")
+
+# Agent self-observability counters — callback delivery (FR-CBK-009) and
+# parser health (spec 004 §4.5's parse_error_rate). These describe the agent
+# itself, not any FIX session or order, so they carry neither. Parser health
+# in particular *cannot* be session-scoped: a line that fails to parse has no
+# session to attribute it to, so SESSION_DIMS would stamp "unspecified" on
+# every parse error.
+AGENT_DIMS: tuple[str, ...] = ("instance_id",)
+
+# spec 004 §4.3 gives `parse_errors` a `reason` dimension, so a spike can be
+# attributed to one framing failure mode rather than just counted. The ratio
+# it feeds is read ungrouped, where every reason sums back together.
+PARSE_ERROR_DIMS: tuple[str, ...] = (*AGENT_DIMS, "reason")
+
 # FR-MET-030's "one shared table", spec 004 §4.1 names.
 COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "messages_total": BASE_DIMS,
@@ -61,6 +80,27 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "cancel_rejects": REJECT_DIMS,
     "session_rejects": REJECT_DIMS,
     "rejects_total": REJECT_DIMS,
+    # Session counters, derived from the parser's FixTelemetry rather than
+    # from the event itself (parser.metrics_event.derive_session_counters) —
+    # `heartbeat_timeouts` is deliberately absent, since nothing produces it
+    # yet and RuleEngine._read_counter_sum already defaults a missing
+    # extra_counter to 0.
+    "logons": SESSION_DIMS,
+    "logouts": SESSION_DIMS,
+    "seq_gaps": SESSION_DIMS,
+    "seq_gap_messages": SESSION_DIMS,
+    "seq_regressions": SESSION_DIMS,
+    "clock_skew_events": SESSION_DIMS,
+    # Agent self-observability, fed by metrics.agent_counters from the
+    # Callback Dispatcher's own CounterRegistry.
+    "callback_failures": AGENT_DIMS,
+    "callback_delivered": AGENT_DIMS,
+    "callback_queue_dropped": AGENT_DIMS,
+    # Parser health, fed by parser.metrics_event.derive_parser_counters.
+    # These two are `parse_error_rate`'s numerator and denominator (spec 004
+    # §4.5) — the indicator ParseErrorRate reads.
+    "log_lines_read": AGENT_DIMS,
+    "parse_errors": PARSE_ERROR_DIMS,
 }
 
 # spec 003 §6's own OrdRejReason(103) and SessionRejectReason(373) canonical
