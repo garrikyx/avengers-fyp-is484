@@ -69,7 +69,7 @@ def test_health_reporter_survives_log_rotation(tmp_path: Path) -> None:
     log_path.write_text("new-1\n")
 
     lines = list(monitor.poll_lines())
-    assert lines == ["new-1"]
+    assert [line.text for line in lines] == ["new-1"]
 
     post_rotate = reporter.file_statuses()["app.log"]
     assert post_rotate.offset == len("new-1\n")
@@ -117,8 +117,9 @@ def test_offset_persists_across_simulated_restart(tmp_path: Path) -> None:
 
     tracker1 = OffsetTracker(registry_path=registry_path)
     monitor1 = LogMonitor(log_path, offset_tracker=tracker1)
-    list(monitor1.poll_lines())
-    monitor1.close()  # persists offset, simulates a clean shutdown
+    for read_line in monitor1.poll_lines():
+        monitor1.ack_line(read_line.end_offset)
+    monitor1.close()  # persists committed offset, simulates a clean shutdown
 
     tracker2 = OffsetTracker(registry_path=registry_path)
     monitor2 = LogMonitor(log_path, offset_tracker=tracker2)

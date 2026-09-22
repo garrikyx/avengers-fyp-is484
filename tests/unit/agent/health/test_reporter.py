@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from telemetry_agent.callbacks.status import DeliveryStatus, DeliveryTracker
 from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.logs.offset_tracker import OffsetTracker
@@ -82,3 +83,25 @@ def test_degraded_threshold_is_configurable(tmp_path: Path) -> None:
     statuses = strict_reporter.file_statuses(now=stale_now)
 
     assert strict_reporter.is_degraded(statuses) is True
+
+
+def test_failed_deliveries_returns_only_failed_alert_ids() -> None:
+    """UBS-33/34: HealthReporter.failed_deliveries() surfaces callback
+    delivery failures, taking the tracker as a parameter rather than
+    owning one (same pattern as file_statuses() taking self.monitors)."""
+    tracker = DeliveryTracker()
+    now = datetime.now(UTC)
+    tracker.record("alert-delivered", DeliveryStatus.DELIVERED, now=now)
+    tracker.record("alert-failed", DeliveryStatus.FAILED, now=now, error="http_400")
+    tracker.record("alert-retrying", DeliveryStatus.RETRYING, now=now, error="http_500")
+
+    reporter = HealthReporter({})
+    assert reporter.failed_deliveries(tracker) == ["alert-failed"]
+
+
+def test_failed_deliveries_empty_when_nothing_has_failed() -> None:
+    tracker = DeliveryTracker()
+    tracker.record("alert-pending", DeliveryStatus.PENDING, now=datetime.now(UTC))
+
+    reporter = HealthReporter({})
+    assert reporter.failed_deliveries(tracker) == []

@@ -408,14 +408,24 @@ def _render_enrichment(result: ParseResult, *, style: _Style) -> list[str]:
 def _render_applog(
     line: bytes,
     *,
+    result: ParseResult,
     signature_matcher: SignatureMatcher,
     style: _Style,
 ) -> list[str]:
     lines: list[str] = []
-    level = extract_log_level(line)
-    if level is not None:
-        lines.append(f"  log_level               [{level}]")
-    label = signature_matcher.match(line)
+    tel = result.app_log_telemetry
+    if tel is not None:
+        lines.append(f"  timestamp               {tel.timestamp}")
+        lines.append(f"  thread_id               {tel.thread_id}")
+        lines.append(f"  log_level               [{tel.level}]")
+        lines.append(f"  component               {tel.component}")
+        lines.append(f"  message                 {tel.message[:120]}")
+        label = tel.error_signature
+    else:
+        level = extract_log_level(line)
+        if level is not None:
+            lines.append(f"  log_level               [{level}]")
+        label = signature_matcher.match(line)
     if label is not None:
         lines.append(
             f"  error_signature         {style.blue}{label}{style.reset} "
@@ -502,6 +512,7 @@ def render_demo_line(
     parser_chain: list[str],
     fix_parser: FixParser,
     signature_matcher: SignatureMatcher,
+    app_log_patterns: list | None = None,
     stream: object = sys.stdout,
 ) -> None:
     """Print one annotated demo block for a corpus line."""
@@ -529,7 +540,7 @@ def render_demo_line(
     print(f"  Registered parsers: {sorted(registered_names())}", file=stream)
     print(f"  Configured chain:   {parser_chain}", file=stream)
     for name in parser_chain:
-        parser = fix_parser if name == "fix" else None
+        parser = registry.parser(name)
         if parser is None:
             print(f"  {name}: not loaded in this demo", file=stream)
             continue
@@ -558,9 +569,14 @@ def render_demo_line(
         print("  → fed directly to joiner (FR-PRS-014)", file=stream)
     else:
         print("  Order: fix → app_log → unsupported (first 256 bytes)", file=stream)
+        patterns = (
+            app_log_patterns
+            if app_log_patterns is not None
+            else fix_parser._app_log_patterns
+        )
         _, cls_steps = _explain_classification(
             line,
-            app_log_patterns=fix_parser._app_log_patterns,
+            app_log_patterns=patterns,
         )
         for step in cls_steps:
             print(f"  {step}", file=stream)
@@ -600,7 +616,12 @@ def render_demo_line(
             f"{style.bold}▶ STEP 4 — Applog signatures{style.reset}  (FR-RUL-001 demo)",
             file=stream,
         )
-        for sig_line in _render_applog(line, signature_matcher=signature_matcher, style=style):
+        for sig_line in _render_applog(
+            line,
+            result=result,
+            signature_matcher=signature_matcher,
+            style=style,
+        ):
             print(sig_line, file=stream)
         print(file=stream)
     else:

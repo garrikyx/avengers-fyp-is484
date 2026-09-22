@@ -8,11 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from telemetry_agent.metrics.demo_sink import DemoMetricsSink
+from telemetry_agent.parser.applog.parser import AppLogParser
 from telemetry_agent.parser.applog.signatures import (
     SignatureMatcher,
     compile_signature_rules,
     extract_log_level,
 )
+from telemetry_agent.parser.fix.classify import compile_app_log_patterns
 from telemetry_agent.parser.config import DemoConfig, load_demo_config
 from telemetry_agent.parser.corpus import prepare_corpus_line
 from telemetry_agent.parser.display import (
@@ -75,7 +77,6 @@ def main() -> None:
     config = _load_config(args.config)
     fix_parser = FixParser(
         hash_key=hash_key,
-        app_log_patterns=config.app_log_patterns or None,
         reject_reason_patterns=config.reject_reason_patterns or None,
         max_reject_reason_labels=config.max_reject_reason_labels,
         max_clock_skew=config.max_clock_skew,
@@ -85,15 +86,36 @@ def main() -> None:
         max_dynamic_labels=config.max_dynamic_signature_labels,
     )
     metrics = DemoMetricsSink()
-    registry = Registry()
+    parsers: dict[str, FixParser | AppLogParser] = {"fix": fix_parser}
     chain = ["fix"]
+    app_log_patterns = (
+        compile_app_log_patterns(config.app_log_patterns)
+        if config.app_log_patterns
+        else []
+    )
+    if config.app_log_patterns:
+        parsers["applog"] = AppLogParser(
+            app_log_patterns=config.app_log_patterns,
+            error_signatures=config.error_signatures,
+            max_dynamic_signature_labels=config.max_dynamic_signature_labels,
+        )
+        chain = ["fix", "applog"]
+    registry = Registry(parsers=parsers)
     unknown = registry.validate_chain(chain)
     if unknown:
         msg = f"unknown parsers in chain: {unknown}; registered={sorted(registered_names())}"
         raise SystemExit(msg)
 
     if not args.corpus:
-        _run_stdin(fix_parser, signature_matcher, metrics, quiet=args.quiet)
+        _run_stdin(
+            registry,
+            chain,
+            fix_parser,
+            signature_matcher,
+            metrics,
+            app_log_patterns=app_log_patterns,
+            quiet=args.quiet,
+        )
         return
 
     resolved = [p.resolve() for p in args.corpus]
@@ -124,6 +146,7 @@ def main() -> None:
                 summary,
                 registry=registry,
                 parser_chain=chain,
+                app_log_patterns=app_log_patterns,
                 line_filter=args.line,
                 quiet=args.quiet,
             )
@@ -167,6 +190,7 @@ def _run_corpus_file(
     *,
     registry: Registry,
     parser_chain: list[str],
+    app_log_patterns: list,
     line_filter: int | None,
     quiet: bool,
 ) -> None:
@@ -180,7 +204,7 @@ def _run_corpus_file(
         display_name = source_label or path.name
 
         joiner_continuation = fix_parser._joiner.has_pending
-        result = _parse_line(fix_parser, line, display_name)
+        result = _parse_line(registry, parser_chain, line, display_name)
         _record_metrics(result, line, signature_matcher, metrics)
         _update_summary(summary, result)
 
@@ -198,21 +222,25 @@ def _run_corpus_file(
                 parser_chain=parser_chain,
                 fix_parser=fix_parser,
                 signature_matcher=signature_matcher,
+                app_log_patterns=app_log_patterns,
             )
 
 
 def _run_stdin(
+    registry: Registry,
+    parser_chain: list[str],
     fix_parser: FixParser,
     signature_matcher: SignatureMatcher,
     metrics: DemoMetricsSink,
     *,
+    app_log_patterns: list,
     quiet: bool,
 ) -> None:
     for raw in sys.stdin.buffer:
         line, _ = prepare_corpus_line(raw.rstrip(b"\n\r"))
         if not line:
             continue
-        result = _parse_line(fix_parser, line, "stdin")
+        result = _parse_line(registry, parser_chain, line, "stdin")
         _record_metrics(result, line, signature_matcher, metrics)
         if quiet:
             print(json.dumps(_safe_result_dict(result, line, signature_matcher)))
@@ -224,22 +252,31 @@ def _run_stdin(
                 line=line,
                 result=result,
                 joiner_continuation=False,
-                registry=Registry(),
-                parser_chain=["fix"],
+                registry=registry,
+                parser_chain=parser_chain,
                 fix_parser=fix_parser,
                 signature_matcher=signature_matcher,
+                app_log_patterns=app_log_patterns,
             )
     print(metrics.format_block())
 
 
-def _parse_line(fix_parser: FixParser, line: bytes, source: str) -> ParseResult:
+def _parse_line(
+    registry: Registry,
+    parser_chain: list[str],
+    line: bytes,
+    source: str,
+) -> ParseResult:
     meta = SourceMeta(
         instance_id="demo",
         path=source,
         log_type="fix",
         read_at=datetime.now(tz=UTC),
     )
-    return fix_parser.parse(line, meta)
+    selected, _ = registry.select(parser_chain, line)
+    if selected is None:
+        return ParseResult(classification=LineClassification.UNSUPPORTED)
+    return selected.parse(line, meta)
 
 
 def _record_metrics(
@@ -249,7 +286,10 @@ def _record_metrics(
     metrics: DemoMetricsSink,
 ) -> None:
     metrics.record_parse_result(result)
-    if result.classification == LineClassification.APP_LOG:
+    if (
+        result.classification == LineClassification.APP_LOG
+        and result.app_log_telemetry is None
+    ):
         label = signature_matcher.match(line)
         if label is not None:
             metrics.record_app_signature(label)
@@ -263,12 +303,19 @@ def _format_line_result(
 ) -> str:
     parts = [f"{filename}:", f"classification={result.classification.value}"]
     if result.classification == LineClassification.APP_LOG:
-        level = extract_log_level(line)
-        if level is not None:
-            parts.append(f"level={level}")
-        label = signature_matcher.match(line)
-        if label is not None:
-            parts.append(f"signature={label}")
+        tel = result.app_log_telemetry
+        if tel is not None:
+            parts.append(f"level={tel.level}")
+            parts.append(f"component={tel.component}")
+            if tel.error_signature is not None:
+                parts.append(f"signature={tel.error_signature}")
+        else:
+            level = extract_log_level(line)
+            if level is not None:
+                parts.append(f"level={level}")
+            label = signature_matcher.match(line)
+            if label is not None:
+                parts.append(f"signature={label}")
     elif result.framed:
         parts.append("framed=true")
         parts.append(f"msgType={result.msg_type}")

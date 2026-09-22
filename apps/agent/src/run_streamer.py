@@ -20,8 +20,8 @@ def main():
 
     try:
         # Stream lines continuously from all files in round-robin order
-        for source_file, line in monitor.stream_lines(poll_interval=0.1):
-            print(f"[{source_file}] {line}")
+        for source_file, read_line in monitor.stream_lines(poll_interval=0.1):
+            print(f"[{source_file}] {read_line.text}")
 
     except KeyboardInterrupt:
         print("\n[STREAMER] Shutting down cleanly and persisting offsets...")
