@@ -23,3 +23,21 @@
 #   queueSize: 256
 #   maxBytes: 16384
 #   # HMAC secret from MAGIC_TELEMETRY_CALLBACK_SECRET, never here
+
+# --- Health Reporter / heartbeat (UBS-58; spec 010 `heartbeat:`, spec 011 s1.1/s2) ---
+# agent:
+#   id: magic-agent-sg-01
+#   instanceIds: [magic-prod-01]
+#   version: 0.1.0
+#
+# heartbeat:
+#   interval: 10s              # FR-HLT-001 default; emitted even when idle
+#
+# health:
+#   readLagDegraded: 5s        # spec 011 s1.1
+#   parseErrorRateDegraded: 0.01
+#   parseErrorRateUnhealthy: 0.25
+#   rollingWindow: 5m          # `...Last5Min` heartbeat fields
+#   publishQueueHighWatermark: 10
+#   publishQueueCriticalWatermark: 100
+#   callbackFailuresDegraded: 1
