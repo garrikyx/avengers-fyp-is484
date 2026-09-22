@@ -1,4 +1,12 @@
-"""FastAPI entry point for the Telemetry Backend ingestion contract."""
+"""FastAPI entry point for the Telemetry Backend.
+
+Carries the ingestion contract (UBS-66) plus the operator liveness/readiness
+probes (`FR-HLT-010`, `FR-QRY-005`). `/metrics` is deliberately absent: spec
+007 §5.3 keeps it on the internal listener only (`FR-HLT-012`), and it lands
+with UBS-96 alongside the richer agent-liveness endpoints of UBS-69.
+
+`uv run uvicorn telemetry_backend.main:app`
+"""
 
 from __future__ import annotations
 
@@ -16,7 +24,9 @@ from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
+from telemetry_backend.config import StreamProcessorConfig
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
+from telemetry_backend.services.stream_processor import StreamProcessor
 
 
 class ItemCounts(CamelModel):
@@ -89,9 +99,16 @@ def _error_response(
     )
 
 
-def create_app(service: IngestionService | None = None) -> FastAPI:
+def create_app(
+    service: IngestionService | None = None,
+    processor: StreamProcessor | None = None,
+) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
     ingestion = service or IngestionService()
+    # Built once per app, not per request: `/readyz`'s warmupWindow clock
+    # starts when this replica starts, matching FR-QRY-005's "since this
+    # replica started" rather than restarting on every probe.
+    readiness = processor or StreamProcessor(StreamProcessorConfig())
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -149,6 +166,24 @@ def create_app(service: IngestionService | None = None) -> FastAPI:
             message="Ingestion queue is full; retry the batch later.",
             details=[],
         )
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        """FR-HLT-010: liveness only - process up, no dependency checks. A
+        probe that checked dependencies would have an orchestrator restart a
+        backend that is serving fine while something upstream is down."""
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    def readyz(response: Response) -> dict[str, str]:
+        """FR-QRY-005: `warming` (503) until `warmupWindow` has elapsed since
+        this replica started *and* data has actually arrived, so an
+        orchestrator does not route queries at a just-restarted, empty store
+        whose emptiness would read as caught-up-and-idle."""
+        if readiness.is_ready(now=_received_at_utc()):
+            return {"status": "ready"}
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "warming"}
 
     @app.post(
         "/telemetry/batch",
