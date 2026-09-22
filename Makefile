@@ -1,4 +1,4 @@
-.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart stream-processor-quickstart callback-test callback-demo lint
+.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart stream-processor-quickstart callback-test callback-demo publish-test publish-demo lint
 
 sync:
 	uv sync
@@ -28,6 +28,12 @@ callback-test: sync
 
 callback-demo:
 	uv run python -m telemetry_agent.callbacks.demo_quickstart
+
+publish-test: sync
+	uv run pytest tests/unit/agent/publishing/ tests/integration/agent/ -k "FR_PUB or UBS_103" -v
+
+publish-demo:
+	uv run python -m telemetry_agent.publishing.demo_quickstart
 
 metrics-demo:
 	uv run python -m telemetry_agent.metrics.demo

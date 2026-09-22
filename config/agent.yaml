@@ -9,6 +9,21 @@
 # backend:
 #   url: http://backend:8000
 
+# --- Backend Publisher (UBS-103; spec 010 `publish:`, spec 007 s2.1) ---
+# publish:
+#   enabled: true
+#   endpoint: https://telemetry.internal.example/telemetry/batch
+#   allowInsecureEndpoint: false
+#   dryRun: true
+#   interval: 10s
+#   connectTimeout: 3s
+#   timeout: 10s
+#   maxBatchItems: 500
+#   compressThreshold: 4096
+#   maxBufferItems: 2000
+#   haltProbeInterval: 5m
+#   # token comes from MAGIC_TELEMETRY_PUBLISH_TOKEN, never here
+
 # Placeholder for Callback Dispatcher
 # callbacks:
 #   enabled: true
