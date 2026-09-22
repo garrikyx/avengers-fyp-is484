@@ -1,11 +1,14 @@
-"""Minimal walkthrough of the Backend Publisher (UBS-103).
+"""Minimal walkthrough of the Backend Publisher (UBS-103/104).
 
     uv run python -m telemetry_agent.publishing.demo_quickstart
 
-Four batches through the publisher: one delivers cleanly, one gets a
+Six batches through the publisher: one delivers cleanly, one gets a
 permanent 400 rejection, one is met with a 401 (watch it halt, alert, and
-recover once the backend "fixes itself"), and one is too big and gets
-413'd (watch `maxBatchItems` halve and a smaller retry succeed). No real
+recover once the backend "fixes itself"), one is too big and gets 413'd
+(watch `maxBatchItems` halve and a smaller retry succeed), one hits a
+sustained 503 outage (watch the backoff delay grow between attempts --
+UBS-104), and one overflows a tiny buffer (watch drop-oldest, counted, and
+those counts show up in a real Health Reporter heartbeat). No real
 network calls — a small scripted sink stands in for the backend, and
 since the Publisher runs one serial loop (not concurrent workers like the
 Callback Dispatcher), its responses are consumed in a simple, deterministic
@@ -23,6 +26,8 @@ from datetime import UTC, datetime, timedelta
 
 from telemetry_shared.models.snapshot import Snapshot
 
+from telemetry_agent.health.config import HeartbeatConfig
+from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.publishing.config import parse_publish_config
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import PublishResult
@@ -76,7 +81,10 @@ def _make_snapshot(**overrides: object) -> Snapshot:
 
 def _print_state(publisher: BackendPublisher) -> None:
     print(f"  counters: {publisher.counters.snapshot()}")
-    print(f"  queue depth: {publisher.queue_depth()}")
+    print(
+        f"  queue depth: {publisher.queue_depth()}, "
+        f"buffer bytes: {publisher.buffer_bytes()}"
+    )
 
 
 async def _drain(publisher: BackendPublisher, *, ticks: int, now: datetime) -> None:
@@ -164,6 +172,72 @@ def main() -> None:
     # tick 1: sends 2 -> 202 -> accepted; 2 items remain buffered for next tick.
     asyncio.run(_drain(publisher_4, ticks=2, now=now))
     _print_state(publisher_4)
+
+    _step(
+        "5. Sustained 503 outage -> backoff grows each attempt (UBS-104), then recovers"
+    )
+    fast_backoff_config = parse_publish_config(
+        {
+            "endpoint": _ENDPOINT,
+            "retry": {"base": "1s", "factor": 2, "cap": "60s", "jitter": 0},
+        }
+    )
+    publisher_5 = BackendPublisher(
+        _ScriptedSink(
+            [
+                PublishResult(status_code=503, latency_ms=5.0),
+                PublishResult(status_code=503, latency_ms=5.0),
+                PublishResult(status_code=503, latency_ms=5.0),
+                PublishResult(status_code=202, latency_ms=5.0),
+            ]
+        ),
+        fast_backoff_config,
+        agent_id=_AGENT_ID,
+        application=_APPLICATION,
+    )
+    publisher_5.enqueue_snapshot(_make_snapshot())
+    # Each 503 grows the backoff delay (1s, 2s, 4s...); a 10s tick interval
+    # always clears it, so every tick here actually attempts a send.
+    asyncio.run(_drain(publisher_5, ticks=4, now=now))
+    _print_state(publisher_5)
+
+    _step(
+        "6. Buffer overflow -> drop-oldest, counted, and visible in a real heartbeat"
+    )
+    health_reporter = HealthReporter(
+        monitors={},
+        heartbeat=HeartbeatConfig(
+            agent_id=_AGENT_ID,
+            instance_ids=("magic-prod-01",),
+            agent_version="0.1.0",
+        ),
+    )
+    tiny_buffer_config = parse_publish_config(
+        {"endpoint": _ENDPOINT, "bufferBytes": 500}
+    )
+    publisher_6 = BackendPublisher(
+        _ScriptedSink([]),  # never drained in this step -- purely an enqueue demo
+        tiny_buffer_config,
+        agent_id=_AGENT_ID,
+        application=_APPLICATION,
+        on_drop=lambda: health_reporter.record_dropped_events(1),
+    )
+    health_reporter.set_queue_depth_provider(publisher_6.queue_depth)
+    health_reporter.set_buffer_bytes_provider(publisher_6.buffer_bytes)
+
+    for i in range(5):
+        publisher_6.enqueue_snapshot(
+            _make_snapshot(bucket_start_utc=now + timedelta(seconds=i))
+        )
+    print(
+        f"  enqueued 5 snapshots into a {tiny_buffer_config.buffer_bytes}-byte buffer"
+    )
+    _print_state(publisher_6)
+
+    heartbeat = health_reporter.build_heartbeat(now=now)
+    print(f"  heartbeat.publishQueueDepth = {heartbeat.publish_queue_depth}")
+    print(f"  heartbeat.publishBufferBytes = {heartbeat.publish_buffer_bytes}")
+    print(f"  heartbeat.droppedEventsLast5Min = {heartbeat.dropped_events_last5_min}")
 
 
 if __name__ == "__main__":

@@ -11,16 +11,16 @@ from publish_fixtures import (
     make_snapshot,
 )
 from telemetry_agent.publishing.batch import BatchSequencer, build_batch
-from telemetry_agent.publishing.buffer import PendingItem
+from telemetry_agent.publishing.buffer import make_pending_item
 
 _NOW = datetime(2026, 9, 22, 4, 0, 0, tzinfo=UTC)
 
 
 def test_build_batch_sorts_items_into_the_right_arrays() -> None:
     items = [
-        PendingItem("snapshot", make_snapshot(), _NOW),
-        PendingItem("event", make_event(), _NOW),
-        PendingItem("alert", make_alert(), _NOW),
+        make_pending_item("snapshot", make_snapshot(), _NOW),
+        make_pending_item("event", make_event(), _NOW),
+        make_pending_item("alert", make_alert(), _NOW),
     ]
 
     batch = build_batch(

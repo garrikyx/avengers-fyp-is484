@@ -30,7 +30,9 @@ callback-demo:
 	uv run python -m telemetry_agent.callbacks.demo_quickstart
 
 publish-test: sync
-	uv run pytest tests/unit/agent/publishing/ tests/integration/agent/ -k "FR_PUB or UBS_103" -v
+	uv run pytest tests/unit/agent/publishing/ tests/unit/agent/common/ \
+	  tests/unit/agent/health/test_buffer_bytes_and_drops.py -v
+	uv run pytest tests/integration/agent/ -k "FR_PUB or UBS_103 or UBS_104" -v
 
 publish-demo:
 	uv run python -m telemetry_agent.publishing.demo_quickstart

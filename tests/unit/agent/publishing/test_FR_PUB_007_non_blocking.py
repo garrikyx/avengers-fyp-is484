@@ -43,11 +43,14 @@ def test_enqueue_methods_are_plain_sync_functions() -> None:
 
 
 def test_enqueue_never_touches_the_sink_even_when_the_buffer_overflows() -> None:
-    publisher = _publisher(maxBufferItems=2)
+    # A single Snapshot serializes to ~208 bytes; 420 bytes fits ~2 of them.
+    # Exact byte accounting under eviction is FR-PUB-004's own test file --
+    # the point here is just that the buffer stays small, not exact bytes.
+    publisher = _publisher(bufferBytes=420)
 
     for _ in range(10):
         publisher.enqueue_snapshot(make_snapshot())
     publisher.enqueue_event(make_event())
     publisher.enqueue_alert(make_alert())
 
-    assert publisher.queue_depth() == 2  # drop-oldest, never grows past the cap
+    assert publisher.queue_depth() <= 3  # drop-oldest, never grows unbounded

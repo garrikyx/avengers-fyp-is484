@@ -1,20 +1,26 @@
-"""UBS-103: batches buffered telemetry, gzip-compresses it, and POSTs it
-to the backend's Ingestion Service every `interval_seconds` (spec 002 §6,
-`FR-PUB-001`).
+"""UBS-103/104: batches buffered telemetry, gzip-compresses it, and POSTs
+it to the backend's Ingestion Service every `interval_seconds` (spec 002
+§6, `FR-PUB-001`), buffering through an outage and backing off on
+transient failures (`FR-PUB-004`/`005`).
 
 `enqueue_snapshot()`/`enqueue_event()`/`enqueue_alert()` are the entry
 points a future supervisor/pipeline-wiring step calls with each completed
 `Snapshot`/`TelemetryEvent`/`AlertEvent` the Metrics Aggregator and Rule
 Engine produce; nothing in this repo calls them yet (mirrors
-`callbacks.dispatcher`'s own "nothing calls it yet" scope).
+`callbacks.dispatcher`'s own "nothing calls it yet" scope). Every
+`enqueue_*` is a synchronous, non-blocking deque append (`FR-PUB-007`) --
+publishing can never stall aggregation or rule evaluation, and it never
+blocks the Callback Dispatcher either, since the two share no state
+(`NFR-REL-003`).
 
-UBS-103 scope: one publish attempt per tick, classified against the full
-spec 007 §2.1 response table (202/400/401/403/408/413/429/5xx) — a failed
-attempt's items simply stay buffered and are retried on the next tick,
-with no exponential-backoff sleep loop and no byte/age-bounded buffer
-eviction. That sophistication (`FR-PUB-004`'s full buffer, `FR-PUB-005`'s
-backoff policy) is UBS-104's extension, mirroring how UBS-33 added the
-retry loop on top of UBS-32's single-attempt `CallbackDispatcher`.
+Response classification (spec 007 §2.1's 202/400/401/403/408/413/429/5xx
+table, UBS-103) drives one of six actions: `COMMIT` (drop, success),
+`DROP_REJECTED` (drop, permanent), `HALT` (stop and probe slowly),
+`SPLIT` (halve `maxBatchItems`, new batch identity), `RETRY_AFTER` (honour
+the server's wait), or `BACKOFF` (UBS-104: real exponential backoff with
+jitter via `RetryPolicy`, unbounded in count -- data loss on a sustained
+outage happens through the buffer's own byte/age eviction, `FR-PUB-004`,
+not through giving up on a batch).
 """
 
 from __future__ import annotations
@@ -28,15 +34,17 @@ from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.ingestion import Heartbeat, TelemetryEvent
 from telemetry_shared.models.snapshot import Snapshot
 
-from telemetry_agent.callbacks.self_metrics import CounterRegistry
+from telemetry_agent.common.backoff import RetryPolicy
+from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.publishing.batch import BatchSequencer, build_batch
-from telemetry_agent.publishing.buffer import PendingItem, PublishBuffer
+from telemetry_agent.publishing.buffer import PublishBuffer, make_pending_item
 from telemetry_agent.publishing.config import PublishConfig
 from telemetry_agent.publishing.outcome import PublishAction, classify_publish_response
 from telemetry_agent.publishing.sink import PublishSink
 
 HeartbeatProvider = Callable[[], Heartbeat | None]
 BackendUnreachableCallback = Callable[[str], None]
+DropCallback = Callable[[], None]
 
 
 class BackendPublisher:
@@ -49,6 +57,7 @@ class BackendPublisher:
         application: str,
         heartbeat_provider: HeartbeatProvider | None = None,
         on_backend_unreachable: BackendUnreachableCallback | None = None,
+        on_drop: DropCallback | None = None,
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -59,16 +68,31 @@ class BackendPublisher:
         self._heartbeat_provider = heartbeat_provider
         self._on_backend_unreachable = on_backend_unreachable
         self._counters = counters or CounterRegistry()
+
+        def _on_buffer_drop() -> None:
+            self._counters.increment("publish_dropped_items")
+            if on_drop is not None:
+                on_drop()
+
         self._logger = logger or logging.getLogger(__name__)
-        self._buffer: PublishBuffer = PublishBuffer(
-            config.max_buffer_items,
-            on_drop=lambda: self._counters.increment("publish_buffer_dropped"),
+        self._buffer = PublishBuffer(
+            max_bytes=config.buffer_bytes,
+            max_age_seconds=config.buffer_max_age_seconds,
+            on_drop=_on_buffer_drop,
         )
         self._sequencer = BatchSequencer()
+        self._retry_policy = RetryPolicy(
+            base_seconds=config.retry_base_seconds,
+            factor=config.retry_factor,
+            cap_seconds=config.retry_cap_seconds,
+            jitter=config.retry_jitter,
+        )
         self._max_batch_items = config.max_batch_items
         self._halted = False
         self._halted_at: datetime | None = None
         self._retry_after_until: datetime | None = None
+        self._backoff_until: datetime | None = None
+        self._consecutive_failures = 0
         self._logged_schema_error = False
 
     @property
@@ -80,18 +104,27 @@ class BackendPublisher:
     ) -> None:
         """Sync, non-blocking (`FR-PUB-007`) — never awaits, never blocks
         on a full buffer (it drops the oldest item instead)."""
-        self._buffer.append(PendingItem("snapshot", snapshot, now or datetime.now(UTC)))
+        self._buffer.append(
+            make_pending_item("snapshot", snapshot, now or datetime.now(UTC))
+        )
 
     def enqueue_event(
         self, event: TelemetryEvent, *, now: datetime | None = None
     ) -> None:
-        self._buffer.append(PendingItem("event", event, now or datetime.now(UTC)))
+        self._buffer.append(
+            make_pending_item("event", event, now or datetime.now(UTC))
+        )
 
     def enqueue_alert(self, alert: AlertEvent, *, now: datetime | None = None) -> None:
-        self._buffer.append(PendingItem("alert", alert, now or datetime.now(UTC)))
+        self._buffer.append(
+            make_pending_item("alert", alert, now or datetime.now(UTC))
+        )
 
     def queue_depth(self) -> int:
         return self._buffer.depth()
+
+    def buffer_bytes(self) -> int:
+        return self._buffer.total_bytes()
 
     async def run(self, stop: asyncio.Event | None = None) -> None:
         """Ticks `publish_once` every `interval_seconds` until `stop` is
@@ -109,14 +142,18 @@ class BackendPublisher:
     async def publish_once(
         self, *, now: datetime | None = None
     ) -> PublishAction | None:
-        """One form-send-classify-act cycle. Returns the action taken, or
-        `None` if nothing was sent (buffer+heartbeat both empty, or the
-        publisher is currently halted/rate-limited and not due to probe
-        yet). Public and side-effect-free to call repeatedly, so tests can
-        drive it deterministically instead of sleeping through real ticks.
+        """One expire-form-send-classify-act cycle. Returns the action
+        taken, or `None` if nothing was sent (buffer+heartbeat both empty,
+        or the publisher is currently halted/rate-limited/backing-off and
+        not due to try again yet). Public and side-effect-free to call
+        repeatedly, so tests can drive it deterministically instead of
+        sleeping through real ticks or real backoff delays.
         """
         now = now or datetime.now(UTC)
+        self._buffer.expire(now)  # FR-PUB-004: age-bounded loss
 
+        if self._backoff_until is not None and now < self._backoff_until:
+            return None
         if self._retry_after_until is not None and now < self._retry_after_until:
             return None
         if self._halted:
@@ -182,13 +219,19 @@ class BackendPublisher:
                 self._retry_after_until = now + timedelta(
                     seconds=outcome.retry_after_seconds
                 )
-        else:  # BACKOFF
+        else:  # BACKOFF (FR-PUB-005): real exponential backoff, unbounded
+            self._consecutive_failures += 1
+            delay = self._retry_policy.delay_for_attempt(self._consecutive_failures)
+            self._backoff_until = now + timedelta(seconds=delay)
             self._counters.increment("publish_failed")
             self._logger.warning(
-                "publish batch %s failed: status=%s error=%s",
+                "publish batch %s failed: status=%s error=%s; "
+                "backing off %.1fs (attempt %d)",
                 batch.batch_id,
                 outcome.status_code,
                 outcome.error_class,
+                delay,
+                self._consecutive_failures,
             )
 
         return outcome.action
@@ -197,6 +240,8 @@ class BackendPublisher:
         self._halted = False
         self._halted_at = None
         self._retry_after_until = None
+        self._backoff_until = None
+        self._consecutive_failures = 0
         self._logged_schema_error = False
         if self._max_batch_items < self._config.max_batch_items:
             self._max_batch_items = min(

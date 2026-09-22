@@ -15,7 +15,8 @@ _ENDPOINT = "https://telemetry.internal.example/telemetry/batch"
 
 def test_defaults_match_spec_010() -> None:
     """docs/specs/010-configuration.md:90-100's `publish:` block, minus the
-    `retry:`/`tls:` sections (UBS-104's extension)."""
+    `tls:` section (not yet needed -- `HttpsPublishSink` always uses the
+    system default TLS trust store)."""
     config = parse_publish_config({"endpoint": _ENDPOINT})
 
     assert config.enabled is True
@@ -26,7 +27,13 @@ def test_defaults_match_spec_010() -> None:
     assert config.connect_timeout_seconds == 3
     assert config.max_batch_items == 500
     assert config.compress_threshold == 4096
+    assert config.buffer_bytes == 67_108_864
+    assert config.buffer_max_age_seconds == 900
     assert config.halt_probe_interval_seconds == 300
+    assert config.retry_base_seconds == 1
+    assert config.retry_factor == 2
+    assert config.retry_cap_seconds == 60
+    assert config.retry_jitter == 0.2
 
 
 def test_rejects_plain_http_by_default() -> None:
@@ -49,6 +56,32 @@ def test_unknown_field_is_rejected() -> None:
 def test_max_batch_items_must_be_positive() -> None:
     with pytest.raises(PublishConfigError):
         parse_publish_config({"endpoint": _ENDPOINT, "maxBatchItems": 0})
+
+
+def test_buffer_bytes_must_be_positive() -> None:
+    with pytest.raises(PublishConfigError):
+        parse_publish_config({"endpoint": _ENDPOINT, "bufferBytes": 0})
+
+
+def test_retry_jitter_must_be_in_valid_range() -> None:
+    with pytest.raises(PublishConfigError, match="jitter"):
+        parse_publish_config(
+            {"endpoint": _ENDPOINT, "retry": {"jitter": 1.5}}
+        )
+
+
+def test_retry_fields_are_configurable() -> None:
+    config = parse_publish_config(
+        {
+            "endpoint": _ENDPOINT,
+            "retry": {"base": "2s", "factor": 3, "cap": "30s", "jitter": 0.1},
+        }
+    )
+
+    assert config.retry_base_seconds == 2
+    assert config.retry_factor == 3
+    assert config.retry_cap_seconds == 30
+    assert config.retry_jitter == 0.1
 
 
 def test_load_publish_config_missing_section_raises(tmp_path: Path) -> None:
