@@ -56,3 +56,6 @@ offsets.json
 #graphify
 graphify-out
 graphify-out/cost.json
+
+# Claude Code local settings (machine-specific hook paths)
+.claude/settings.json
