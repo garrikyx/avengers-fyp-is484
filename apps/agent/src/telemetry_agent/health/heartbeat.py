@@ -17,13 +17,17 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
+from typing import Literal
 
 from telemetry_agent.health.reporter import HealthReporter
+from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_shared.models.health import AgentHeartbeat
 
 logger = logging.getLogger(__name__)
 
 HeartbeatSink = Callable[[AgentHeartbeat], None]
+# Which heartbeat contract goes on the wire (see health/wire.py).
+WireFormat = Literal["health", "ingestion"]
 
 
 class HeartbeatEmitter:
@@ -79,8 +83,16 @@ class HeartbeatEmitter:
 # --- sinks ---------------------------------------------------------------------
 
 
-def heartbeat_json(heartbeat: AgentHeartbeat) -> str:
-    """Wire encoding: camelCase per spec 004 §6."""
+def heartbeat_json(heartbeat: AgentHeartbeat, wire: WireFormat = "health") -> str:
+    """Wire encoding, camelCase per spec 004 §6.
+
+    `wire="ingestion"` flattens to UBS-66's `ingestion.Heartbeat` contract
+    (required, non-null signal fields) so the live Ingestion Service accepts
+    it; `wire="health"` sends our own shape, which keeps `statusReasons` and
+    `null` for unmeasured signals. See `telemetry_agent.health.wire`.
+    """
+    if wire == "ingestion":
+        return to_ingestion_heartbeat(heartbeat).model_dump_json(by_alias=True)
     return heartbeat.model_dump_json(by_alias=True)
 
 
@@ -107,14 +119,24 @@ class HttpHeartbeatSink:
     Placeholder transport until the Publisher lands: no retry, no gzip, no
     auth. Any non-2xx or connection error raises so `HeartbeatEmitter.tick`
     counts it as a failure.
+
+    Defaults to `wire="ingestion"` so heartbeats are accepted by the live
+    Ingestion Service (UBS-66); pass `wire="health"` to send our own richer
+    shape once the contract is reconciled.
     """
 
-    def __init__(self, url: str, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        url: str,
+        timeout_seconds: float = 5.0,
+        wire: WireFormat = "ingestion",
+    ) -> None:
         self.url = url
         self.timeout_seconds = timeout_seconds
+        self.wire = wire
 
     def __call__(self, heartbeat: AgentHeartbeat) -> None:
-        body = heartbeat_json(heartbeat).encode("utf-8")
+        body = heartbeat_json(heartbeat, self.wire).encode("utf-8")
         request = urllib.request.Request(
             self.url,
             data=body,

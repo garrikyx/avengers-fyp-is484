@@ -22,6 +22,7 @@ Spec wins wherever the two conflict (same policy as UBS-30's `log_read_lag_ms` c
 | `config.py` | `HeartbeatConfig` (interval, agent identity), `HealthThresholds` (every `FR-HLT-002` threshold, declared up front so 59/60 add a *signal*, not a config shape), `load_health_config()` for the `agent:` / `heartbeat:` / `health:` sections of `config/agent.yaml`. Missing file → defaults; malformed file → `HealthConfigError` (refuse to start, same as RE-05). Unknown keys are refused. Sibling sections (`log:`, `backend:`) are passed through untouched. |
 | `reporter.py` | UBS-30's `HealthReporter`, extended. `snapshot()` samples a `HealthSignals` dataclass; `derive_status(signals)` is the `FR-HLT-002` rollup; `build_heartbeat()` assembles the spec 004 §6 document. UBS-30's `file_statuses()` / `overall_read_lag_ms()` / `degraded_reasons()` / `is_degraded()` are unchanged in behaviour (`degraded_reasons` is now the read-lag slice of `derive_status`). The `degraded_threshold_ms=` kwarg is kept for UBS-30 callers and still wins over `thresholds=`. |
 | `heartbeat.py` | `BufferingHeartbeatSink` (UBS-60): bounded oldest-first retry queue in front of any sink; `len()` is the demo's queue-depth provider. `HeartbeatEmitter.tick()` (pure, testable) and `run(stop)` (asyncio loop, first tick immediate, then every `interval_seconds` regardless of log activity). Sink failures are counted and logged, never raised — a dead backend must not kill the agent (spec 002 §8.3). Sinks: `PrintHeartbeatSink`, `LoggingHeartbeatSink`, `HttpHeartbeatSink` (stdlib `urllib`, `POST /telemetry/heartbeat` per spec 007 §2.3). |
+| `wire.py` | `to_ingestion_heartbeat()` — flattens our heartbeat to UBS-66's ingestion contract at the sink boundary (see "Wire compatibility with UBS-66"). |
 | `demo.py` | `telemetry-agent-heartbeat` console script: tails files, runs each line through `FixParser` into `record_parse_result()`, emits heartbeats. Not the production entrypoint (that is M1.5 pipeline wiring; `main.py` is untouched). |
 | `window.py` (UBS-59) | `SlidingWindowCounter`: per-bucket ints keyed by bucket index, expired on every access, so memory is bounded by `window / bucket` (300 ints for the default 5m/1s) no matter the event rate. Backs every `...Last5Min` field. |
 
@@ -98,6 +99,55 @@ Spec wins wherever the two conflict (same policy as UBS-30's `log_read_lag_ms` c
 - **Not covered:** `FR-PIP-005`'s pipeline line/event queue depths and drop
   counters — those queues are M1.5 and don't exist yet. `publishBufferBytes` stays
   `null` (the demo buffer counts items, not bytes).
+
+## Wire compatibility with UBS-66 (decided 2026-09-22 — revisit)
+
+UBS-66 landed `telemetry_shared.models.ingestion.Heartbeat` on `main` while this
+branch was in review. Both models implement spec 004 §6, written independently
+(`models/ingestion.py` is new in `9bdac55`; nobody edited `models/health.py`), and
+they disagree in one way that matters:
+
+| | `models.health.AgentHeartbeat` (ours) | `models.ingestion.Heartbeat` (UBS-66) |
+| --- | --- | --- |
+| Unmeasured signal | `null` — FR-HLT-004: a gap is never a zero | required, `int`, `ge=0` |
+| `statusReasons` (FR-HLT-003) | present | **no such field**, and the model is `extra="forbid"` |
+| `uptimeSeconds` | `float` | `int` |
+| `resourceUsage` | optional | required |
+| `files[].instanceId` | optional (the Log Monitor has no file→instance map) | required, `min_length=1` |
+
+**Decision: the agent adapts.** Downstream consumers are waiting on a working
+`POST /telemetry/heartbeat`, and only one shape can be on the wire. Verified
+against the merged endpoint: our own shape returns **400**
+(`uptimeSeconds: Input should be a valid integer`), the adapted shape returns
+**202**.
+
+`AgentHeartbeat` remains the agent's internal truth — the reporter keeps its
+`None`s, so no status rule ever fires on a fabricated zero — and
+`health/wire.py:to_ingestion_heartbeat()` flattens it inside the sink at the last
+moment. `HttpHeartbeatSink` defaults to `wire="ingestion"`.
+
+**What the adaptation costs** (the reasons to revisit):
+
+1. **`statusReasons` is dropped on the wire.** The backend receives `status:
+   degraded` with no explanation, so `GET /telemetry/health/agents/{id}` cannot
+   answer "degraded *why*" — the operator has to read agent logs instead. This is
+   the biggest loss; FR-HLT-003 exists precisely so nobody has to guess.
+2. **Unmeasured signals arrive as `0`**, indistinguishable from a measured zero.
+   An agent with no parser wired reports `parseErrorCountLast5Min: 0` — "perfectly
+   clean" — which is the exact misreading FR-HLT-004 forbids.
+3. **`resourceUsage` is fabricated as zeros** because the agent does not measure
+   RSS/CPU yet (no `psutil` decision). A dashboard would plot 0 MB RSS.
+
+**How to reverse it**, once the team settles the contract (preferred: make the
+optional signal fields `| None = None` and add `statusReasons` in
+`ingestion.Heartbeat`, keeping `uptimeSeconds` as `float`):
+
+1. Pass `wire="health"` to `HttpHeartbeatSink` (one argument), or
+2. delete `health/wire.py` and its test, and send `AgentHeartbeat` directly.
+
+`tests/unit/agent/health/test_wire_compat.py` pins every one of these costs, so
+the tests fail loudly if the upstream contract changes — that failure is the
+signal to reverse.
 
 ## Missing downstream / upstream (what this branch cannot prove)
 

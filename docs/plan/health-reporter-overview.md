@@ -206,7 +206,7 @@ agent looked identical to the backend.
 | `HeartbeatSink = Callable[[AgentHeartbeat], None]` | The seam between the reporter and whatever transport exists. | The real transport is the Backend Publisher (M4), not built. A plain callable means the Publisher plugs in later without touching the emitter. |
 | `PrintHeartbeatSink`, `LoggingHeartbeatSink` | JSON to stdout / `logging`. | Demo and local runs. |
 | `HttpHeartbeatSink(url)` | `POST /telemetry/heartbeat` (spec 007 §2.3) with stdlib `urllib`; raises on non-2xx. | Zero new dependencies for a placeholder transport. Raising (instead of returning False) is what lets `tick()` count it as failed and lets `BufferingHeartbeatSink` keep the item queued. |
-| `heartbeat_json(hb)` | `model_dump_json(by_alias=True)`. | One function so every sink and test serialise identically. |
+| `heartbeat_json(hb, wire)` | `model_dump_json(by_alias=True)`, optionally flattened to UBS-66's ingestion contract first. | One function so every sink and test serialise identically. **Since 2026-09-22 the HTTP sink defaults to `wire="ingestion"`** so the live Ingestion Service accepts it; that drops `statusReasons` and turns unmeasured signals into `0`. Decision record and reversal: [`ubs58-60-notes.md`](./ubs58-60-notes.md#wire-compatibility-with-ubs-66). |
 
 ### 4.5 Placeholder receiver — `scripts/heartbeat_receiver_stub.py`
 
