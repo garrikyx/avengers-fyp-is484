@@ -1,9 +1,9 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class OffsetTracker:
 
     def __init__(self, registry_path: Path = Path("offsets.json")):
         self.registry_path = Path(registry_path)
-        self._states: Dict[str, Dict[str, Any]] = {}
+        self._states: dict[str, dict[str, Any]] = {}
         self.load()
 
     def _make_key(self, dev:int, ino:int) -> str:
@@ -34,13 +34,13 @@ class OffsetTracker:
             return
 
         try:
-            with open(self.registry_path, "r", encoding="utf-8") as f:
+            with open(self.registry_path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 for state in data:
                     os_meta = state.get("fileStateOS", {})
                     dev = os_meta.get("device")
-                    ino = os_meta.get("inode")  
+                    ino = os_meta.get("inode")
                     if dev is not None and ino is not None:
                         key = self._make_key(dev, ino)
                         self._states[key] = state
@@ -75,7 +75,7 @@ class OffsetTracker:
         self._states[key] = {
             "source": str(Path(source_path).resolve()),
             "offset": offset,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "fileStateOS": {
                 "device": dev,
                 "inode": ino,

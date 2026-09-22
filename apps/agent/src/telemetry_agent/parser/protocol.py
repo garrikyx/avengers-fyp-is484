@@ -67,9 +67,9 @@ class ParseResult:
     warnings: list[str] = field(default_factory=list)
     error: ParseError | None = None
     joined_lines: int = 1
-    fields: "FixFields | None" = None
-    telemetry: "FixTelemetry | None" = None
-    app_log_telemetry: "AppLogTelemetry | None" = None
+    fields: FixFields | None = None
+    telemetry: FixTelemetry | None = None
+    app_log_telemetry: AppLogTelemetry | None = None
     internal_error: bool = False
 
 

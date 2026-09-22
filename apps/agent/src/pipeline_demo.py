@@ -61,7 +61,16 @@ def _build_bridge(
     return bridge
 
 
-def _build_registry(config: DemoConfig, hash_key: bytes) -> tuple[Registry, list[str]]:
+def _build_registry(
+    config: DemoConfig, hash_key: bytes
+) -> tuple[Registry, list[str], FixParser]:
+    """Hands back the `FixParser` alongside the registry it went into.
+
+    Callers need the concrete instance, not `registry.parser("fix")`: that
+    returns `Parser | None`, and a second `FixParser(...)` would carry its own
+    `SeqTracker`, so it would report a different sequence view than the one
+    that actually parsed the line.
+    """
     fix_parser = FixParser(hash_key=hash_key)
     parsers: dict[str, FixParser | AppLogParser] = {"fix": fix_parser}
     chain = ["fix"]
@@ -72,13 +81,13 @@ def _build_registry(config: DemoConfig, hash_key: bytes) -> tuple[Registry, list
             max_dynamic_signature_labels=config.max_dynamic_signature_labels,
         )
         chain = ["fix", "applog"]
-    return Registry(parsers=parsers), chain
+    return Registry(parsers=parsers), chain, fix_parser
 
 
 def run_happy_path(corpus: Path, config: DemoConfig) -> None:
     print("\n=== Scenario 1: Monitor → Queue → Parse → Output → Commit ===\n")
     hash_key = load_hash_key()
-    registry, parser_chain = _build_registry(config, hash_key)
+    registry, parser_chain, fix_parser = _build_registry(config, hash_key)
     signature_matcher = SignatureMatcher(
         compile_signature_rules(config.error_signatures),
         max_dynamic_labels=config.max_dynamic_signature_labels,
@@ -144,9 +153,7 @@ def run_happy_path(corpus: Path, config: DemoConfig) -> None:
 def run_slow_parser_backpressure(corpus: Path, config: DemoConfig) -> None:
     print("\n=== Scenario 2: Slow parser — blocking backpressure, zero drops ===\n")
     hash_key = load_hash_key()
-    registry, parser_chain = _build_registry(config, hash_key)
-    fix_parser = registry.parser("fix")
-    assert fix_parser is not None
+    registry, parser_chain, fix_parser = _build_registry(config, hash_key)
 
     class SlowFixParser:
         def name(self) -> str:
