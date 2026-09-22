@@ -35,6 +35,9 @@ metrics-demo:
 metrics-quickstart:
 	uv run python -m telemetry_agent.metrics.demo_quickstart
 
+metrics-bridge-quickstart:
+	uv run python -m telemetry_agent.parser.demo_metrics_bridge
+
 stream-processor-quickstart:
 	uv run python -m telemetry_backend.services.demo_quickstart
 

@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-10
+Status: Live document · Last updated: 2026-09-17
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -84,6 +84,11 @@ formula-ready but has no producer yet.
 
 ## M4 requirement coverage (Stream Processor & Metric Store)
 
+Renumbered since this table was first written: the original single ticket for this
+work (UBS-79/UBS-88 in earlier drafts) split into UBS-89 (cross-agent merge
+correctness — the rows below) and UBS-90 (store memory & concurrency — its own
+table beneath). UBS-93 (Alert Store) is a separate, later epic.
+
 | ID | Story | Requirement | Status | Verified by |
 | --- | --- | --- | --- | --- |
 | UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
@@ -140,6 +145,7 @@ since no agent supervisor loop exists yet (M1).
 | Stream Processor (window alignment, staleness) | `apps/backend/src/telemetry_backend/services/stream_processor.py` |
 | Metric Store (cross-agent merge, ring buffer) | `apps/backend/src/telemetry_backend/services/metric_store.py` |
 | Stream Processor / Metric Store config | `apps/backend/src/telemetry_backend/config.py` |
+| Backend HTTP entrypoint (`/healthz`, `/readyz`) | `apps/backend/src/telemetry_backend/main.py` |
 | Unit tests (backend services) | `tests/unit/backend/services/` |
 | Unit tests (shared metrics/snapshot model) | `tests/unit/telemetry_shared/metrics/`, `tests/unit/telemetry_shared/models/` |
 | Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |
@@ -153,9 +159,12 @@ since no agent supervisor loop exists yet (M1).
 
 ```bash
 uv sync                  # or: make sync
-make parser-test         
+make parser-test
 make parser-demo
-make lint                # ruff + mypy on agent source
+make stream-processor-quickstart          # UBS-89/90 walkthrough, two agents
+uv run pytest tests/ -v                   # full suite, agent + backend + shared
+make lint                                 # ruff (repo-wide) + mypy on agent source
+uv run mypy apps/backend/src packages/telemetry_shared/src   # mypy on backend (not yet in `make lint`)
 ```
 
 ## Open risks

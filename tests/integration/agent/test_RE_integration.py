@@ -56,8 +56,8 @@ def _new_order(cl_ord_id_hash: str, symbol: str) -> NewOrderEvent:
         event_time_utc=_T0,
         cl_ord_id_hash=cl_ord_id_hash,
         symbol=symbol,
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty=Decimal(100),
     )
 
@@ -78,7 +78,7 @@ def _ack(
         exec_type="New",
         ord_status="New",
         symbol=symbol,
-        side="buy",
+        side="Buy",
     )
 
 
@@ -94,7 +94,7 @@ def _rejected(
         exec_type="Rejected",
         ord_status="Rejected",
         symbol=symbol,
-        side="buy",
+        side="Buy",
         reject_reason_code="OrderExceedsLimit",
     )
 

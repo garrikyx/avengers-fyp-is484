@@ -14,8 +14,8 @@ def make_event(ts: float, **overrides: object) -> ParsedMessageEvent:
         "session_id": "MAGIC->EXCH1",
         "cl_ord_id_hash": "ORD-1",
         "symbol": "AAPL",
-        "side": "buy",
-        "ord_type": "limit",
+        "side": "Buy",
+        "ord_type": "Limit",
         "order_qty": Decimal(100),
     }
     fields.update(overrides)
@@ -245,13 +245,13 @@ def test_group_by_multiple_dimensions_respects_the_requested_order() -> None:
     aggregator = MetricsAggregator(config=config, clock=clock)
 
     aggregator.ingest_counters(
-        make_event(clock(), symbol="AAPL", side="buy"), {"orders": Decimal(1)}
+        make_event(clock(), symbol="AAPL", side="Buy"), {"orders": Decimal(1)}
     )
 
     # group_by asks for the reverse of the metric's own declared dimension
     # order — the result key must follow group_by, not the metric's order.
     grouped = aggregator.snapshot("1m", group_by=("side", "symbol"))
-    assert grouped[("buy", "AAPL")].counters["orders"] == Decimal(1)
+    assert grouped[("Buy", "AAPL")].counters["orders"] == Decimal(1)
 
 
 def test_snapshot_rejects_an_unknown_window_name() -> None:

@@ -50,8 +50,8 @@ def test_counters_and_latency_coexist_on_one_shared_aggregator() -> None:
         event_time_utc=_T0,
         cl_ord_id_hash="ORD-1",
         symbol="AAPL",
-        side="buy",
-        ord_type="limit",
+        side="Buy",
+        ord_type="Limit",
         order_qty=Decimal(100),
     )
     ack = ExecutionReportEvent(
@@ -63,7 +63,7 @@ def test_counters_and_latency_coexist_on_one_shared_aggregator() -> None:
         exec_type="New",
         ord_status="New",
         symbol="AAPL",
-        side="buy",
+        side="Buy",
     )
 
     _ingest(aggregator, correlator, new_order)

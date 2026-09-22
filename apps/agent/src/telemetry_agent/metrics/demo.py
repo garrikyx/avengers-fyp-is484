@@ -134,8 +134,8 @@ def main() -> None:
             event_time_utc=now,
             cl_ord_id_hash="C1",
             symbol="AAPL",
-            side="buy",
-            ord_type="limit",
+            side="Buy",
+            ord_type="Limit",
             order_qty=Decimal(100),
         )
     )
@@ -150,7 +150,7 @@ def main() -> None:
             exec_type="New",
             ord_status="New",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )
     )
     ingest(
@@ -164,7 +164,7 @@ def main() -> None:
             exec_type="Trade",
             ord_status="Filled",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
             last_qty=Decimal(100),
             leaves_qty=Decimal(0),
         )
@@ -176,8 +176,8 @@ def main() -> None:
             event_time_utc=now,
             cl_ord_id_hash="C2",
             symbol="MSFT",
-            side="sell",
-            ord_type="market",
+            side="Sell",
+            ord_type="Market",
             order_qty=Decimal(50),
         )
     )
@@ -192,7 +192,7 @@ def main() -> None:
             exec_type="Rejected",
             ord_status="Rejected",
             symbol="MSFT",
-            side="sell",
+            side="Sell",
             reject_reason_code="OrderExceedsLimit",
         )
     )
@@ -286,8 +286,8 @@ def main() -> None:
                 event_time_utc=now,
                 cl_ord_id_hash=f"F{i}",
                 symbol=symbol,
-                side="buy",
-                ord_type="limit",
+                side="Buy",
+                ord_type="Limit",
                 order_qty=Decimal(1),
             ),
             {"orders_submitted": Decimal(1)},
@@ -331,7 +331,7 @@ def main() -> None:
             exec_type="New",
             ord_status="New",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )
     )  # duplicate ack
     ingest(
@@ -345,7 +345,7 @@ def main() -> None:
             exec_type="New",
             ord_status="New",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )
     )  # orphan
     ingest(
@@ -356,7 +356,7 @@ def main() -> None:
             cl_ord_id_hash="X1",
             orig_cl_ord_id_hash="C1",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
             order_qty=Decimal(100),
         )
     )
@@ -371,7 +371,7 @@ def main() -> None:
             exec_type="Canceled",
             ord_status="Canceled",
             symbol="AAPL",
-            side="buy",
+            side="Buy",
         )
     )
     stats = correlator.stats
