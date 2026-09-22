@@ -24,7 +24,9 @@ from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
+from telemetry_backend.api import health as health_api
 from telemetry_backend.config import StreamProcessorConfig
+from telemetry_backend.deps import AppDeps
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
 from telemetry_backend.services.stream_processor import StreamProcessor
 
@@ -102,6 +104,7 @@ def _error_response(
 def create_app(
     service: IngestionService | None = None,
     processor: StreamProcessor | None = None,
+    deps: AppDeps | None = None,
 ) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
     ingestion = service or IngestionService()
@@ -109,6 +112,9 @@ def create_app(
     # starts when this replica starts, matching FR-QRY-005's "since this
     # replica started" rather than restarting on every probe.
     readiness = processor or StreamProcessor(StreamProcessorConfig())
+    # UBS-69: the Agent Registry and the health read side. Shared via
+    # app.state so routers reach the same instance (see deps.py).
+    app_deps = deps or AppDeps()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -124,6 +130,8 @@ def create_app(
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
+    app.state.deps = app_deps
+    app.include_router(health_api.router)
 
     @app.middleware("http")
     async def request_id(
@@ -205,6 +213,9 @@ def create_app(
         )
         if full is not None:
             return full
+        # A heartbeat embedded in a batch counts the same as a standalone one.
+        if batch.heartbeat is not None:
+            app_deps.registry.record_heartbeat(batch.heartbeat)
         return BatchAccepted(
             status="accepted",
             batch_id=str(batch.batch_id),
@@ -249,6 +260,13 @@ def create_app(
         full = enqueue_or_full(request, AcceptedIngestion(heartbeat=heartbeat))
         if full is not None:
             return full
+        # FR-ING-010: record every agent's last heartbeat, version and
+        # connectivity state in the Agent Registry as telemetry arrives.
+        # `record_heartbeat` returns True on first contact - the unknown-agent
+        # event that hangs off it is UBS-87.
+        # No explicit received_at: the registry stamps it from the same clock
+        # it judges staleness with, so a test (or a replica) can inject one.
+        app_deps.registry.record_heartbeat(heartbeat)
         return BatchAccepted(
             status="accepted",
             received_at_utc=_received_at_utc(),

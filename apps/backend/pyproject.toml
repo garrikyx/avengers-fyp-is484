@@ -6,8 +6,13 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.34",
     "redis>=5",
+    "pyyaml",
+    "httpx",
     "telemetry-shared",
 ]
+
+[project.scripts]
+telemetry-backend = "telemetry_backend.main:main"
 
 [build-system]
 requires = ["hatchling"]
