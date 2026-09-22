@@ -1,11 +1,17 @@
 """Health Reporter (UBS-30): aggregates per-file read lag.
 
-See docs/plan/ubs30-notes.md.
+See docs/plan/ubs30-notes.md. UBS-33/34 additionally surface callback
+delivery failures here (`failed_deliveries`), per the "surfaced via the
+Health Reporter" AC — this takes a `DeliveryTracker` as a parameter rather
+than constructing one, so `HealthReporter` stays decoupled from owning the
+Callback Dispatcher's state, the same way it stays decoupled from owning
+`LogMonitor` construction.
 """
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
+from telemetry_agent.callbacks.status import DeliveryStatus, DeliveryTracker
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_shared.models.health import FileReadHealth
 
@@ -71,3 +77,14 @@ class HealthReporter:
 
     def is_degraded(self, statuses: dict[str, FileReadHealth] | None = None) -> bool:
         return len(self.degraded_reasons(statuses)) > 0
+
+    def failed_deliveries(self, tracker: DeliveryTracker) -> list[str]:
+        """Alert IDs whose callback delivery is currently `FAILED`
+        (UBS-33's "surfaced via the Health Reporter" AC), following the
+        same shape as `degraded_reasons` above.
+        """
+        return [
+            alert_id
+            for alert_id, record in tracker.snapshot().items()
+            if record.status is DeliveryStatus.FAILED
+        ]

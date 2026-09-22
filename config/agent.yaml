@@ -8,3 +8,18 @@
 
 # backend:
 #   url: http://backend:8000
+
+# Placeholder for Callback Dispatcher
+# callbacks:
+#   enabled: true
+#   endpoint: https://magic-host.internal.example/magic/callbacks/telemetry-alerts
+#   allowInsecureCallback: false
+#   dryRun: true
+#   connectTimeout: 3s
+#   timeout: 10s
+#   maxAttempts: 5
+#   retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
+#   maxInflight: 4
+#   queueSize: 256
+#   maxBytes: 16384
+#   # HMAC secret from MAGIC_TELEMETRY_CALLBACK_SECRET, never here
