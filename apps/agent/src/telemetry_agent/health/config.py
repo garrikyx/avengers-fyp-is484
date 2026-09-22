@@ -4,7 +4,7 @@ Typed settings plus a loader for the `heartbeat:` and `health:` sections of
 `config/agent.yaml`. Same shape as `telemetry_backend.config`: frozen
 dataclasses hold the values, YAML is parsed through a strict pydantic model so
 an operator typo is refused rather than silently ignored. Rationale and
-ticket-vs-spec decisions: docs/plan/ubs58-59-notes.md.
+ticket-vs-spec decisions: docs/plan/ubs58-60-notes.md.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def parse_duration_seconds(value: str | int | float) -> float:
 @dataclass(slots=True, frozen=True)
 class HeartbeatConfig:
     # FR-HLT-001 / spec 010 `heartbeat.interval`: default 10s. The UBS-58
-    # ticket text says 30s; spec wins (see docs/plan/ubs58-59-notes.md).
+    # ticket text says 30s; spec wins (see docs/plan/ubs58-60-notes.md).
     interval_seconds: float = 10.0
     agent_id: str = "magic-agent-local"
     instance_ids: tuple[str, ...] = ("magic-local",)

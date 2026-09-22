@@ -9,8 +9,10 @@ appending for > readLagDegraded and `status` flips to `degraded` with a
 reason. Every tailed line is also run through the FIX parser (UBS-59): append
 garbage and `parseErrorCountLast5Min` / the parse-error-rate reasons follow.
 Pair it with `scripts/heartbeat_receiver_stub.py` to see the wire format
-validated on the receiving side. Not the production entrypoint — pipeline
-wiring is M1.5.
+validated on the receiving side. With an http sink the heartbeats that fail to
+send are queued (UBS-60): stop the receiver and `publishQueueDepth` rises until
+the watermark reasons appear; start it again and the queue drains. Not the
+production entrypoint — pipeline wiring is M1.5.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from pathlib import Path
 
 from telemetry_agent.health.config import HeartbeatConfig, load_health_config
 from telemetry_agent.health.heartbeat import (
+    BufferingHeartbeatSink,
     HeartbeatEmitter,
     HeartbeatSink,
     HttpHeartbeatSink,
@@ -61,6 +64,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="'stdout' or an http(s) URL to POST each heartbeat to",
     )
     parser.add_argument("--state-dir", type=Path, default=Path("demo_logs/.state"))
+    parser.add_argument(
+        "--buffer",
+        type=int,
+        default=500,
+        help="max heartbeats queued while the sink is failing (0 = no queue)",
+    )
     return parser
 
 
@@ -125,7 +134,12 @@ async def _main_async(args: argparse.Namespace) -> None:
         monitors[key] = LogMonitor(path, offset_tracker=tracker)
 
     reporter = HealthReporter(monitors, thresholds=thresholds, heartbeat=heartbeat_cfg)
-    emitter = HeartbeatEmitter(reporter, _make_sink(args.sink))
+    sink = _make_sink(args.sink)
+    if args.buffer > 0:
+        buffered = BufferingHeartbeatSink(sink, max_items=args.buffer)
+        reporter.set_queue_depth_provider(lambda: len(buffered))
+        sink = buffered
+    emitter = HeartbeatEmitter(reporter, sink)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

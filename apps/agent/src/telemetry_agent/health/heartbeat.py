@@ -4,7 +4,7 @@ Ticks on a fixed interval regardless of log activity: an idle agent must still
 be distinguishable from a dead one. The sink is pluggable because the real
 transport is the Backend Publisher (spec 002 §6, not built yet); until then the
 two sinks here cover local demos and the stub receiver in
-`scripts/heartbeat_receiver_stub.py`. See docs/plan/ubs58-59-notes.md.
+`scripts/heartbeat_receiver_stub.py`. See docs/plan/ubs58-60-notes.md.
 """
 
 from __future__ import annotations
@@ -14,15 +14,20 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime
+from typing import Literal
 
 from telemetry_agent.health.reporter import HealthReporter
+from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_shared.models.health import AgentHeartbeat
 
 logger = logging.getLogger(__name__)
 
 HeartbeatSink = Callable[[AgentHeartbeat], None]
+# Which heartbeat contract goes on the wire (see health/wire.py).
+WireFormat = Literal["health", "ingestion"]
 
 
 class HeartbeatEmitter:
@@ -78,8 +83,16 @@ class HeartbeatEmitter:
 # --- sinks ---------------------------------------------------------------------
 
 
-def heartbeat_json(heartbeat: AgentHeartbeat) -> str:
-    """Wire encoding: camelCase per spec 004 §6."""
+def heartbeat_json(heartbeat: AgentHeartbeat, wire: WireFormat = "health") -> str:
+    """Wire encoding, camelCase per spec 004 §6.
+
+    `wire="ingestion"` flattens to UBS-66's `ingestion.Heartbeat` contract
+    (required, non-null signal fields) so the live Ingestion Service accepts
+    it; `wire="health"` sends our own shape, which keeps `statusReasons` and
+    `null` for unmeasured signals. See `telemetry_agent.health.wire`.
+    """
+    if wire == "ingestion":
+        return to_ingestion_heartbeat(heartbeat).model_dump_json(by_alias=True)
     return heartbeat.model_dump_json(by_alias=True)
 
 
@@ -106,14 +119,24 @@ class HttpHeartbeatSink:
     Placeholder transport until the Publisher lands: no retry, no gzip, no
     auth. Any non-2xx or connection error raises so `HeartbeatEmitter.tick`
     counts it as a failure.
+
+    Defaults to `wire="ingestion"` so heartbeats are accepted by the live
+    Ingestion Service (UBS-66); pass `wire="health"` to send our own richer
+    shape once the contract is reconciled.
     """
 
-    def __init__(self, url: str, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        url: str,
+        timeout_seconds: float = 5.0,
+        wire: WireFormat = "ingestion",
+    ) -> None:
         self.url = url
         self.timeout_seconds = timeout_seconds
+        self.wire = wire
 
     def __call__(self, heartbeat: AgentHeartbeat) -> None:
-        body = heartbeat_json(heartbeat).encode("utf-8")
+        body = heartbeat_json(heartbeat, self.wire).encode("utf-8")
         request = urllib.request.Request(
             self.url,
             data=body,
@@ -131,3 +154,36 @@ class HttpHeartbeatSink:
             except ValueError:
                 pass
             raise RuntimeError(f"heartbeat POST returned {exc.code}: {detail}") from exc
+
+
+class BufferingHeartbeatSink:
+    """Bounded retry buffer in front of another sink (UBS-60 demo stand-in).
+
+    Not the Backend Publisher (spec 002 s6: no backoff, no batching, no
+    `batchSeq`) - just enough queue for `publishQueueDepth` to mean
+    something before the Publisher exists. Oldest-first on retry
+    (`FR-PUB-004`), drop-oldest when full, and `__len__` is what the
+    reporter's `queue_depth_provider` reads.
+    """
+
+    def __init__(self, inner: HeartbeatSink, max_items: int = 500) -> None:
+        if max_items <= 0:
+            raise ValueError("max_items must be > 0")
+        self.inner = inner
+        self.max_items = max_items
+        self._pending: deque[AgentHeartbeat] = deque()
+        self.dropped_count = 0
+
+    def __len__(self) -> int:
+        return len(self._pending)
+
+    def __call__(self, heartbeat: AgentHeartbeat) -> None:
+        self._pending.append(heartbeat)
+        while len(self._pending) > self.max_items:
+            self._pending.popleft()
+            self.dropped_count += 1
+        # Drain oldest-first; stop at the first failure so order is kept and
+        # the emitter counts this tick as failed.
+        while self._pending:
+            self.inner(self._pending[0])
+            self._pending.popleft()
