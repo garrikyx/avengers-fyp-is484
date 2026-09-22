@@ -1,4 +1,12 @@
 from telemetry_shared.models.alerts import AlertEvent
+from telemetry_shared.models.ingestion import (
+    EventsRequest,
+    Heartbeat,
+    HeartbeatFile,
+    ResourceUsage,
+    TelemetryBatch,
+    TelemetryEvent,
+)
 from telemetry_shared.models.metrics import (
     Gauges,
     Indicator,
@@ -12,8 +20,11 @@ from telemetry_shared.models.snapshot import HistogramPayload, SeriesEntry, Snap
 
 __all__ = [
     "AlertEvent",
+    "EventsRequest",
     "Gauges",
     "HistogramPayload",
+    "Heartbeat",
+    "HeartbeatFile",
     "Indicator",
     "Indicators",
     "LatencySummary",
@@ -21,5 +32,8 @@ __all__ = [
     "MetricsSnapshot",
     "SeriesEntry",
     "Snapshot",
+    "ResourceUsage",
+    "TelemetryBatch",
+    "TelemetryEvent",
     "WindowBounds",
 ]
