@@ -115,7 +115,11 @@ def _read_counter_sum(rule: RuleConfig, group: MetricsGroup | None) -> Decimal:
 
 
 def _read_gauge(rule: RuleConfig, snapshot: MetricsSnapshot) -> Decimal | None:
-    value = getattr(snapshot.gauges, rule.metric)
+    # Default to None rather than letting getattr raise: a gauge name is
+    # hand-typed in rules.yaml just like a counter name, and an unknown
+    # counter already reads as no-fire (`_read_counter_sum`). A typo should
+    # silence one rule, not crash every evaluation with an AttributeError.
+    value = getattr(snapshot.gauges, rule.metric, None)
     return _decimal_or_none(value)
 
 

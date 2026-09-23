@@ -84,7 +84,21 @@ provisional pending [Q-5](../plan/open-questions.md).
 | `SeqGapDetected` | threshold | warning @ `seq_gaps` > 0 | 1m |
 | `ClockSkew` | threshold | warning @ `clock_skew_events` > 10 | 5m |
 | `CallbackFailing` | threshold | warning @ `callback_failures` > 3 | 5m |
-| `BackendUnreachable` | threshold | warning @ `publish_failures` > 5 | 1m (approximates spec's original "5 consecutive" as "5 within the shortest window" — this stays `threshold`, not a 6th rule kind) |
+| `BackendUnreachable` | threshold | warning @ `consecutive_publish_failures` >= 5 | n/a — reads a gauge, not a window |
+
+`BackendUnreachable` reads the `consecutive_publish_failures` gauge (spec 004
+`FR-MET-031`), restoring this rule's original "5 consecutive failures"
+wording. An earlier revision approximated that as "5 `publish_failures`
+within a 1m window"; that approximation is withdrawn because it cannot work
+against a publisher that retries with exponential backoff (`FR-PUB-005`).
+Each failure pushes the next attempt further out, so a fixed-window failure
+count measures the backoff schedule rather than the severity of the outage —
+under the default `interval 10s` / `base 1s` / `factor 2` it yields exactly
+five failures in the first minute (never the six that `> 5` needs), then
+decays toward one per minute as the backoff saturates at its cap. The metric
+would have been weakest exactly when the outage was worst. The gauge has
+neither problem: it rises monotonically while the backend is unreachable and
+returns to 0 on the first successful batch commit.
 
 `PendingOrderTimeout` evaluates a gauge (time since a tracked order's first
 response — ack or cancel outcome — not time-to-fill, so a resting limit

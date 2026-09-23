@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -49,15 +50,34 @@ from telemetry_agent.parser.metrics_event import (
     parser_counter_dims,
 )
 from telemetry_agent.parser.protocol import SourceMeta
+from telemetry_agent.publishing.config import parse_publish_config
+from telemetry_agent.publishing.publisher import BackendPublisher
+from telemetry_agent.publishing.sink import PublishResult
 from telemetry_agent.rules.config_loader import load_rules
 from telemetry_agent.rules.engine import RuleEngine
 from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.metrics import MetricsSnapshot
+from telemetry_shared.models.snapshot import Snapshot
 
 _T0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
 _HASH_KEY = b"demo-hash-key"
 _INSTANCE = "magic-prod-01"
 _ENDPOINT = "https://magic.example/callbacks"
+_PUBLISH_ENDPOINT = "https://backend.example/telemetry/batch"
+
+
+class _FlakyBackendSink:
+    """Backend stand-in for the UBS-75 act: answers whatever `status`
+    currently says, so flipping the attribute ends the outage.
+    """
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    async def send(
+        self, *, body: bytes, headers: Mapping[str, str]
+    ) -> PublishResult:
+        return PublishResult(status_code=self.status, latency_ms=1.0)
 
 # The live rule config, so this demo and `config/rules.yaml` can never drift.
 # parents[5] is the repo root: rules -> telemetry_agent -> src -> agent ->
@@ -155,6 +175,10 @@ class _Demo:
         # actually fire; the *ingest* clock stays pinned at _T0 so nothing
         # this demo feeds ages out of its window mid-story.
         self.now = _T0
+        # FR-MET-031. `None` until an act wires a publisher in, which is what
+        # keeps BackendUnreachable quiet through every other act rather than
+        # reading a healthy-looking 0.
+        self.consecutive_publish_failures: int | None = None
 
     # --- line builders ---------------------------------------------------
 
@@ -299,6 +323,7 @@ class _Demo:
             group_by=(),
             now=self.now,
             correlator=self.correlator,
+            consecutive_publish_failures=self.consecutive_publish_failures,
         )
 
     def counters(self, window: str, names: tuple[str, ...]) -> dict[str, Decimal]:
@@ -412,6 +437,80 @@ def _run_dispatcher_against_a_broken_magic(count: int) -> dict[str, int]:
 
     asyncio.run(drive())
     return dispatcher.counters.snapshot()
+
+
+def _backend_unreachable_act() -> None:
+    """UBS-75. A real BackendPublisher against a backend that answers 503,
+    driven one attempt at a time so the gauge climbs visibly.
+
+    Reads `consecutive_publish_failures` rather than a windowed
+    `publish_failures` count, because `FR-PUB-005`'s exponential backoff
+    spaces failed attempts further and further apart: in a fixed window the
+    failure count *falls* as the outage lengthens. The earlier `> 5 in 1m`
+    form topped out at exactly five failures and could never fire — see
+    tests/integration/agent/test_RE_publish_integration.py, which pins that.
+    """
+    demo = _Demo()
+    # Magic itself is trading normally throughout — only the agent's link to
+    # the backend is broken. Without this the act would read as a dead
+    # pipeline and trip NoLogActivity instead, which is a different failure.
+    demo.feed([demo.logon(), *demo.accepted_orders(30, start=1)])
+    sink = _FlakyBackendSink(503)
+    config = parse_publish_config({"endpoint": _PUBLISH_ENDPOINT})
+    quiet = logging.getLogger(f"{__name__}.publisher")
+    quiet.addHandler(logging.NullHandler())
+    quiet.propagate = False
+    publisher = BackendPublisher(
+        sink,
+        config,
+        agent_id="agent-sg-01",
+        application="Magic",
+        logger=quiet,
+    )
+
+    def attempt(at: datetime) -> None:
+        publisher.enqueue_snapshot(
+            Snapshot(
+                schema_version=1,
+                agent_id="agent-sg-01",
+                application="Magic",
+                instance_id=_INSTANCE,
+                bucket_start_utc=_T0,
+                bucket_seconds=10,
+            ),
+            now=at,
+        )
+        asyncio.run(publisher.publish_once(now=at))
+
+    at = _T0
+    for _ in range(5):
+        attempt(at)
+        at += timedelta(seconds=120)  # past the 60s backoff cap
+    print(
+        f"  backend answering 503 — consecutiveFailures="
+        f"{publisher.consecutive_failures}, "
+        f"publishFailures={publisher.counters.snapshot()['publish_failures']}, "
+        f"bufferedItems={publisher.queue_depth()}"
+    )
+
+    demo.consecutive_publish_failures = publisher.consecutive_failures
+    _show_alerts(
+        demo.settle("1m", for_seconds=demo.rule_for_seconds("BackendUnreachable"))
+    )
+    print("  Nothing was lost: every batch is still buffered (FR-PUB-004),")
+    print("  and every alert above was raised locally with no backend.")
+
+    sink.status = 202
+    attempt(at)
+    demo.consecutive_publish_failures = publisher.consecutive_failures
+    print(f"\n  backend back — consecutiveFailures={publisher.consecutive_failures}")
+    demo.tick("1m")  # firing -> resolving
+    resolve_after = next(
+        rule.resolve_after_seconds
+        for rule in demo.rules
+        if rule.name == "BackendUnreachable"
+    )
+    _show_alerts(demo.tick("1m", advance=resolve_after + 1))
 
 
 def _no_log_activity_act() -> None:
@@ -662,13 +761,16 @@ def main() -> None:
     _step("16. UBS-76 — an alert storm collapses into one meta-alert")
     _alert_storm_act()
 
+    _step("17. UBS-75 — the backend goes away, alerting carries on")
+    _backend_unreachable_act()
+
     _part("Closing")
     print("  Every alert above was produced locally, on the agent, from log")
     print("  bytes — no backend involved. Act 10 is the agent noticing that its")
-    print("  own alerts are not reaching Magic, which is exactly the failure a")
-    print("  centrally-hosted alerting system could not report (NFR-REL-003).")
-    print("\n  Not shown: BackendUnreachable (UBS-75) reads publish_failures,")
-    print("  which needs the Backend Publisher — not built yet.")
+    print("  own alerts are not reaching Magic, and act 17 is it noticing it")
+    print("  cannot reach the backend — exactly the two failures a centrally-")
+    print("  hosted alerting system could not report (NFR-REL-003).")
+    print("\n  All 14 rules in config/rules.yaml now have producers.")
     print("\n  Hot-reload (FR-RUL-008) needs a live process to signal:")
     print("      make rules-reload-demo")
 

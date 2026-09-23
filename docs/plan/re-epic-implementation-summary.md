@@ -38,7 +38,7 @@ MA-04 indicator — and picks the *highest* tier whose condition holds.
 | `SeqGapDetected` | threshold | warning@0 | 1m | wired (UBS-73) |
 | `ClockSkew` | threshold | warning@10 | 5m | wired (UBS-73) |
 | `CallbackFailing` | threshold | warning@3 | 5m | wired (UBS-74) |
-| `BackendUnreachable` | threshold | warning@5 | 1m | no Backend Publisher yet |
+| `BackendUnreachable` | threshold (gauge) | warning@5 | n/a | wired (UBS-75) |
 
 "No producer" rules read as 0/no-fire structurally rather than raising —
 same posture MA-04 established for `parseErrorRate`. `HighRejectRate`,
@@ -153,9 +153,10 @@ offset_tracker.py`, `run_streamer.py`, `demo_suite.py`, and the still-broken
 here).
 
 **Known gaps, not closed here**: consecutive-failure streak tracking
-(client alert 3's "≥10 consecutive failures") has no rule kind or data
-producer; Backend Publisher doesn't exist, so `BackendUnreachable` has no
-data; `SighupRuleReloader.install()` has no real process to be called from
+(client alert 3's "≥10 consecutive failures") has no general rule kind —
+`BackendUnreachable` gets the same effect from a publisher-maintained gauge
+(`FR-MET-031`, UBS-75) rather than from a streak-aware evaluator;
+`SighupRuleReloader.install()` has no real process to be called from
 yet (M1 Log Monitor / an agent supervisor loop). All are documented,
 deliberate deferrals, not oversights.
 
@@ -198,8 +199,9 @@ firing on well-formed messages.
 Demo: `make rules-quickstart` walks one FIX session from healthy through a
 reject burst, a rising reject rate, latency degradation, a sequence gap,
 clock skew, a forced logout, the agent's own callbacks failing, and the
-absence/lifecycle/safety rules — 13 of the 14 configured rules fire, each
-traceable to a raw log line printed in the same run. Only
-`BackendUnreachable` stays silent, correctly: nothing produces
-`publish_failures` until the Backend Publisher exists. Runbook:
-`docs/plan/rule-engine-demo.md`.
+absence/lifecycle/safety rules — all 14 configured rules fire, each
+traceable to a raw log line printed in the same run. `BackendUnreachable`
+(UBS-75) closes the set: it reads the `consecutive_publish_failures` gauge
+(`FR-MET-031`) off a real `BackendPublisher`, rather than a windowed
+`publish_failures` count that `FR-PUB-005`'s backoff would make unreachable.
+Runbook: `docs/plan/rule-engine-demo.md`.

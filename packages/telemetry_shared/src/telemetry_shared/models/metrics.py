@@ -78,6 +78,13 @@ class Gauges(CamelModel):
     pending_orders: int
     oldest_pending_age_seconds: float | None
     seconds_since_last_event: float | None
+    # FR-MET-031: consecutive failed publish attempts since the last
+    # successful batch commit. `None` (the default) means "no Backend
+    # Publisher wired up", never "publishing fine" — an agent that cannot
+    # observe publishing must not read as healthy. `BackendUnreachable`
+    # reads this rather than a windowed `publish_failures` count, which
+    # exponential backoff makes unusable (spec 005 §1.2).
+    consecutive_publish_failures: int | None = None
 
 
 class WindowBounds(CamelModel):

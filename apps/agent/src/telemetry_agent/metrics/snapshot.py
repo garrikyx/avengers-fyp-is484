@@ -33,7 +33,9 @@ from telemetry_shared.models.metrics import (
 
 
 def _build_gauges(
-    aggregator: MetricsAggregator, correlator: LatencyCorrelator | None
+    aggregator: MetricsAggregator,
+    correlator: LatencyCorrelator | None,
+    consecutive_publish_failures: int | None,
 ) -> Gauges:
     if correlator is None:
         pending_orders = 0
@@ -45,6 +47,7 @@ def _build_gauges(
         pending_orders=pending_orders,
         oldest_pending_age_seconds=oldest_pending_age_seconds,
         seconds_since_last_event=aggregator.seconds_since_last_event(),
+        consecutive_publish_failures=consecutive_publish_failures,
     )
 
 
@@ -57,6 +60,7 @@ def snapshot(
     min_sample_size: int = DEFAULT_MIN_SAMPLE_SIZE,
     percentiles: Sequence[int] = DEFAULT_PERCENTILES,
     now: datetime | None = None,
+    consecutive_publish_failures: int | None = None,
 ) -> MetricsSnapshot:
     """Serialisable, per-window snapshot: counters, computed indicators,
     latency summaries, grouped breakdowns, window bounds, and generation
@@ -67,6 +71,14 @@ def snapshot(
     window/group_by validation this deliberately doesn't repeat) — no I/O,
     no locks, so this can never block a concurrent `ingest_counters`/
     `observe_latency` call.
+
+    `consecutive_publish_failures` (`FR-MET-031`) is passed in as a plain
+    value rather than read from a publisher: `metrics/` must not import
+    `publishing/` (the same layering rule `metrics.agent_counters` keeps
+    against `callbacks/`), and taking a value instead of a callable keeps
+    this function the pure read it advertises. Callers hand in
+    `BackendPublisher.consecutive_failures`; leaving it `None` means no
+    publisher is wired, which reads as no-fire rather than as healthy.
     """
     group_by = tuple(group_by)
     rows = aggregator.snapshot(window, group_by)
@@ -99,6 +111,6 @@ def snapshot(
         ),
         generated_at_utc=now,
         group_by=group_by,
-        gauges=_build_gauges(aggregator, correlator),
+        gauges=_build_gauges(aggregator, correlator, consecutive_publish_failures),
         groups=groups,
     )

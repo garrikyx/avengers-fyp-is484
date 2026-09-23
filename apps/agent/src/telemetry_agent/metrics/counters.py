@@ -96,6 +96,12 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "callback_failures": AGENT_DIMS,
     "callback_delivered": AGENT_DIMS,
     "callback_queue_dropped": AGENT_DIMS,
+    # Backend Publisher health (spec 004 §4.3), fed the same way from the
+    # publisher's CounterRegistry. These are the windowed trend view;
+    # `BackendUnreachable` itself alerts on the consecutive_publish_failures
+    # gauge instead, for the backoff reason in spec 005 §1.2.
+    "publish_failures": AGENT_DIMS,
+    "publish_rejected": AGENT_DIMS,
     # Parser health, fed by parser.metrics_event.derive_parser_counters.
     # These two are `parse_error_rate`'s numerator and denominator (spec 004
     # §4.5) — the indicator ParseErrorRate reads.

@@ -47,6 +47,7 @@ the rest scroll:**
 | 9 | `FixSessionDown` critical, straight off a `35=5` Logout line printed right above it. |
 | 10 | The agent alerting that its *own* alerts aren't reaching Magic. |
 | 16 | The storm cap — one meta-alert instead of a flood. |
+| 17 | The backend unreachable while Magic keeps trading — alerting carries on locally, nothing is lost, and the alert resolves itself on recovery. |
 
 ## UBS-5 coverage
 
@@ -63,14 +64,13 @@ All 11 stories under the Rule Engine epic, and where each one shows up:
 | UBS-72 Order Volume Spikes | `RejectSpike`, `CancelRejectSpike` | acts 2, 3 |
 | UBS-73 FIX Session Instability | `FixSessionDown`, `SeqGapDetected`, `ClockSkew` | acts 7, 8, 9 |
 | UBS-74 Callback Delivery Failures | `CallbackFailing` | act 10 |
-| UBS-75 Backend Publish Failures | `BackendUnreachable` | **not shown — see below** |
+| UBS-75 Backend Publish Failures | `BackendUnreachable` | act 17 |
 | UBS-76 Alert Storm Protection | `AlertStorm` | act 16 |
 
-**13 of the 14 configured rules fire during the run.** The one that doesn't is
-`BackendUnreachable`: it reads `publish_failures`, which only the Backend
-Publisher (UBS-103/104) can produce, and that isn't built. Say so plainly if
-asked — the rule is wired and reads 0, which is the correct behaviour for a
-counter with no producer.
+**All 14 configured rules fire during the run.** Act 17 closes the last gap:
+it drives a real `BackendPublisher` against a backend answering 503 until the
+`consecutive_publish_failures` gauge reaches 5, then brings the backend back
+and shows the alert resolve on the same `alertId`.
 
 Hot-reload (`FR-RUL-008`/`009`) isn't in this run at all; it needs a live
 process, so it's `make rules-reload-demo` below.
@@ -123,6 +123,7 @@ Sixteen acts in three parts. What to say for each:
 | 14 | A second instance reading nothing, `NoLogActivity` **critical** | While this fires, `FR-RUL-021` suppresses order-flow rules for that instance — absence of data is not evidence of absence of rejects. |
 | 15 | 1 alert, then 10 evaluations → **0** more, then a renotify on the same `alertId` with `notificationCount 1 → 2` | Dedup. One active alert per rule+instance however often it's evaluated; the renotify is a reminder about one incident, not a second incident. |
 | 16 | 3 alerts, then `AlertStorm` **critical**, `AlertStorm events emitted: 1` | Safety valve. At the cap it pages *once*, not once per suppressed alert — a cascading outage can't turn the agent into its own DoS. |
+| 17 | `consecutiveFailures=5`, `BackendUnreachable` **warning**, then `resolved` on the same `alertId` once the backend answers 202 | `NFR-REL-003`. Magic keeps trading throughout; only the agent→backend link is down. Batches stay buffered (`FR-PUB-004`), the alert is raised locally with no backend involved, and recovery resolves it without operator action. |
 
 Three acts use a non-default config to make something visible at demo scale, and
 each says so on screen: act 15 shortens `renotifyInterval` from 1800s to 60s,
@@ -141,9 +142,15 @@ cap honestly.
   observe — it belongs to the Health Reporter's periodic tick. `FixSessionDown`
   sums `logouts + heartbeat_timeouts` and treats a missing counter as 0, so the
   rule works correctly without it.
-- **"Why doesn't `BackendUnreachable` fire?"** It reads `publish_failures`, which
-  needs the Backend Publisher (UBS-103/104). Not built yet. The rule is wired and
-  reads 0.
+- **"Why is `BackendUnreachable` a gauge and not a windowed count?"** Because a
+  windowed count cannot work here. The publisher retries with exponential
+  backoff (`FR-PUB-005`), so each failure pushes the next attempt further out —
+  a fixed window ends up measuring the retry schedule rather than the outage.
+  The rule's earlier `publish_failures > 5` over `1m` form yielded exactly five
+  failures in the first minute under default config, so it could never fire, and
+  decayed toward one per minute as the backoff hit its cap. Spec 005 §1.2 was
+  corrected and the gauge (`FR-MET-031`) restores the original "5 consecutive"
+  intent. `test_a_full_minute_of_outage_yields_exactly_five_failures` pins it.
 - **"Are these thresholds real?"** `HighRejectRate`, `AckLatencyBreach` and
   `ParseErrorRate` are client-confirmed. `PendingOrderTimeout`'s 30s is our own
   reasoning — see its docstring in `defaults.py`. All are configurable.
