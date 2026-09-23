@@ -30,15 +30,15 @@ Total runtime for the full demo: about 3 minutes, most of it you talking.
 ## The 5-minute version
 
 ```bash
-make rules-test          # 80 tests, ~2s
+make rules-test          # 99 tests, ~2s
 make rules-quickstart    # the whole alerting story, ~2s
 make rules-reload-demo   # interactive: hot-reload without losing alert state
 ```
 
 If you only have time for one, run `make rules-quickstart`.
 
-`rules-quickstart` prints 16 acts across three parts — complete, but more than
-you'd narrate live. **If you have five minutes, talk through these four and let
+`rules-quickstart` prints 17 acts across three parts — complete, but more than
+you'd narrate live. **If you have five minutes, talk through these five and let
 the rest scroll:**
 
 | Act | Why this one |
@@ -77,9 +77,120 @@ process, so it's `make rules-reload-demo` below.
 
 ---
 
+## Spoken script — sponsor demo (~3 min)
+
+Run `make rules-quickstart` and let it finish (~2s, ~140 lines), then scroll
+back and talk. Five beats, in scroll order. `alertId` values are random per
+run — point at `same alertId`, don't read the hex aloud.
+
+**Opening (~15s)**
+
+> This is the Rule Engine running on the agent, next to Magic. It reads raw
+> FIX log bytes, derives counters, and evaluates fourteen rules loaded from a
+> YAML file. What you're scrolling through is one session going from healthy
+> to falling apart. Every alert traces back to a log line printed just above it.
+
+**Beat 1 — acts 2 and 4 (~60s)**
+
+> Act two: fifty-one order rejects inside a minute. But look at the rate —
+> 2.49%, against a warning tier of 3%. A purely percentage-based rule stays
+> silent here; at two thousand orders, fifty-one rejects just doesn't move the
+> ratio. That's the gap, and `RejectSpike` catches it on absolute count.
+>
+> Act four: now the rate itself climbs. 3.38% trips warning, then 5.44% trips
+> critical — and this is the part I'd point at, `same alertId: True`. It raised
+> the severity of the alert already open rather than paging a second time. One
+> incident, one alert, escalating in place.
+
+**Beat 2 — act 9 (~25s)**
+
+> A `35=5` Logout from the counterparty, right there in the log. The session is
+> gone, so this is critical — it's the one that wakes somebody up. Note the two
+> above it: a sequence gap of four messages, and eleven messages timestamped two
+> hours in the future. Three separate session-health signals, three rules.
+
+**Beat 3 — act 10 (~35s)**
+
+> Here the agent notices that its *own* alerts aren't getting out — four
+> callback deliveries to Magic's endpoint failed permanently.
+>
+> Two things. It only counts a failure after the dispatcher has exhausted its
+> retries, so a transient 500 that succeeds on retry never appears here. And the
+> whole chain ran locally, with no backend involved.
+
+**Beat 4 — act 16 (~30s)**
+
+> What happens when everything breaks at once. The cap is three here; production
+> default is a hundred. Three alerts fire, the cap holds, and you get a single
+> `AlertStorm` meta-alert — not one page per suppressed rule. A cascading outage
+> can't turn the agent into its own denial-of-service against the on-call engineer.
+
+**Beat 5 — act 17, the close (~50s)**
+
+> Last one, and it's the counterpart to act ten. Here the backend is unreachable
+> — five consecutive publish attempts failed — while Magic carries on trading
+> normally. The agent alerts on it locally, and the alert resolves itself the
+> moment the backend answers again, on the same `alertId`.
+>
+> Two points worth making. Nothing was lost: every batch is still buffered, so
+> the telemetry ships once the link is back. And this is a centrally-hosted
+> alerting system's structural blind spot — it cannot tell you that it can't
+> reach you. Ours can, because the alerting lives on the agent.
+>
+> That's fourteen of fourteen rules firing. Every threshold is configurable in
+> YAML and reloadable without restarting or losing alert state — I can show you
+> that live if it's useful.
+
+**Fallback if something misfires live:** `make rules-test` is 99 tests in about
+two seconds and makes the same argument without the narration.
+
+---
+
+## Metric reference — what each rule reads, and where its number came from
+
+Use this if you're asked "how did you pick that threshold" or "what does that
+metric actually mean". Provenance is the honest answer in each case:
+
+- **Client-confirmed** — a number UBS gave us. Three rules only.
+- **Structural** — not a tuned number. The threshold is "any occurrence at
+  all", because one of these events is already an incident.
+- **Provisional (Q-5)** — our starting value, flagged in spec 005 §1.2 as
+  pending client input. Configurable, and we expect to tune it.
+- **Our reasoning** — no spec or client number existed; the rationale is in the
+  rule's docstring.
+
+| Rule | Reads | What the metric means | Threshold / window | Provenance |
+| --- | --- | --- | --- | --- |
+| `HighRejectRate` | `reject_rate` indicator | `orders_rejected / (orders_acked + orders_rejected)` — the share of orders the venue turned down. Recomputed from summed counters, never averaged. | >3% warn, >5% crit; 5m, ≥20 samples, for 2m | **Client-confirmed** |
+| `AckLatencyBreach` | `ack_latency_ms` p95 | Time from a `35=D` NewOrderSingle to the first `35=8` ExecutionReport for the same ClOrdID. Percentile interpolated from fixed histogram buckets, so reported as approximate. | p95 >500ms warn, >1000ms crit; 5m, ≥50 samples | **Client-confirmed** |
+| `ParseErrorRate` | `parse_error_rate` indicator | `parse_errors / log_lines_read` — the share of log lines the parser could not read. Counts hard failures only, not soft warnings like an unknown MsgType. | >1% warn, >25% crit; 5m, ≥20 samples | **Client-confirmed** |
+| `RejectSpike` | `orders_rejected` counter | `35=8` with ExecType or OrdStatus = Rejected. Absolute count, which is why it catches bursts that the percentage rule misses at high volume. | >50 in 1m | Provisional (Q-5) |
+| `CancelRejectSpike` | `cancel_rejects` counter | `35=9` OrderCancelReject — a cancel or replace the venue refused. Kept apart from order rejects and session rejects so it can't dilute either. | >20 in 5m | Provisional (Q-5) |
+| `SessionRejects` | `session_rejects` counter | `35=3` Reject — a FIX *protocol* problem, not a trading decision. Critical because it usually means malformed traffic or a version mismatch. | >5 in 5m | Provisional (Q-5) |
+| `ClockSkew` | `clock_skew_events` counter | Messages whose SendingTime differs from wall-clock read time by more than `maxClockSkew` (default 5m, configurable). Indicates a host clock drifting. | >10 in 5m | Provisional (Q-5) |
+| `CallbackFailing` | `callback_failures` counter | Alert deliveries to Magic's callback endpoint that failed *permanently* — counted only after the dispatcher exhausts its retries, so transient errors don't inflate it. | >3 in 5m | Provisional (Q-5) |
+| `NoLogActivity` | `messages_total` counter | Every classified FIX message, admin included. Zero for a whole minute means the pipeline is dead, not that trading is quiet. | == 0 over 1m | **Structural** |
+| `NoExecutions` | `executions` counter, guarded by `orders_submitted` | `35=8` with ExecType = Trade. The guard matters: no fills while no orders were sent is a quiet market, not a fault, so the rule only applies when orders actually went out. | == 0 while `orders_submitted` > 0, 15m | **Structural** |
+| `FixSessionDown` | `logouts` + `heartbeat_timeouts` | `35=5` Logout from the counterparty. (`heartbeat_timeouts` has no producer yet and reads 0 — a timeout is the *absence* of a message, so it belongs to the Health Reporter's tick, not to per-message parsing.) | ≥ 1 in 1m | **Structural** |
+| `SeqGapDetected` | `seq_gaps` counter | A MsgSeqNum that skipped ahead — messages were lost in transit. A sequence that goes *backwards* is counted separately as a regression, since it skipped nothing. | > 0 in 1m | **Structural** |
+| `PendingOrderTimeout` | `oldest_pending_age_seconds` gauge | Age of the oldest order still awaiting its *first* response — ack or cancel outcome. Deliberately not time-to-fill, so a resting limit order is never penalised. | >30s | **Our reasoning** — typical institutional order-ack SLA |
+| `BackendUnreachable` | `consecutive_publish_failures` gauge | Publish attempts that failed in a row since the last successful batch commit; resets to 0 on success. A windowed failure count can't work here — the publisher's exponential backoff spaces attempts further apart, so the count *falls* as the outage lengthens. | ≥ 5 | **Our reasoning** — restores the original "5 consecutive" intent |
+
+Two framing points that usually land well:
+
+- **Ratios are never averaged.** A rate is always recomputed from summed
+  numerator and denominator, whether over one agent's window or across every
+  agent at the backend. Averaging per-agent percentages would silently weight a
+  quiet instance the same as a busy one.
+- **A rate returns `null`, not 0, below `minSamples` (default 20).** One reject
+  out of one order is not a 100% reject rate, and an idle minute is not a
+  perfect one.
+
+---
+
 ## 1. `make rules-test`
 
-80 tests covering the FSM, the evaluators, the safety valves, all 14 default
+99 tests covering the FSM, the evaluators, the safety valves, all 14 default
 rules, YAML loading and SIGHUP reload. Run it first so the demo isn't the only
 evidence anything works.
 
@@ -151,9 +262,12 @@ cap honestly.
   decayed toward one per minute as the backoff hit its cap. Spec 005 §1.2 was
   corrected and the gauge (`FR-MET-031`) restores the original "5 consecutive"
   intent. `test_a_full_minute_of_outage_yields_exactly_five_failures` pins it.
-- **"Are these thresholds real?"** `HighRejectRate`, `AckLatencyBreach` and
-  `ParseErrorRate` are client-confirmed. `PendingOrderTimeout`'s 30s is our own
-  reasoning — see its docstring in `defaults.py`. All are configurable.
+- **"Are these thresholds real? How did you derive them?"** See the **Metric
+  reference** table above, which gives the provenance of all fourteen. Short
+  version: `HighRejectRate`, `AckLatencyBreach` and `ParseErrorRate` are
+  client-confirmed; the absence and session rules are structural rather than
+  tuned ("any occurrence is an incident"); the rest are provisional starting
+  values pending Q-5. All are configurable.
 - **"Why is `ParseErrorRate` only 1%, not the 25% critical tier?"** At ~4,900
   lines read, 25% would mean the log had become mostly unparseable. Also worth
   knowing: the most common failure mode (a FIX line with no checksum) is held by
