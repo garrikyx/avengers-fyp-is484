@@ -106,7 +106,8 @@ agent restarts harmless.
       }
     }
   ],
-  "gauges": { "pending_orders": 340, "read_lag_ms": 120, "publish_queue_depth": 4 }
+  "gauges": { "pending_orders": 340, "read_lag_ms": 120, "publish_queue_depth": 4,
+              "consecutive_publish_failures": 0 }
 }
 ```
 
@@ -118,6 +119,12 @@ agent restarts harmless.
 - `FR-MET-027`: A series with all-zero counters MUST be omitted from the snapshot.
 - `FR-MET-028`: Gauges are instantaneous values at bucket close; the backend takes the latest,
   never the sum.
+- `FR-MET-031`: `consecutive_publish_failures` is the number of publish attempts that have
+  failed in a row since the last successful batch commit. It MUST reset to 0 on commit, and
+  MUST be `null` — never 0 — when the agent has no Backend Publisher configured, so an agent
+  that cannot report on publishing is never mistaken for one that is publishing cleanly. It
+  backs `BackendUnreachable` (spec 005 §1.2); the `publish_failures` counter in §4.3 remains
+  the cumulative windowed measure for trends and queries, and is not what that rule reads.
 
 ## 4. Metric catalogue
 
