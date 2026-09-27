@@ -2,7 +2,8 @@
 
 One `AppDeps` is built in `main.py` (or a test) and attached to both the
 public and the internal FastAPI app, so every router sees the same registry,
-store and clock. Routers take `deps: AppDeps = Depends(get_deps)`.
+self-metrics, ingestion service and clock. Routers take
+`deps: AppDeps = Depends(get_deps)`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from fastapi import Request
 
 from telemetry_backend.config import BackendHealthConfig
 from telemetry_backend.services.agent_registry import AgentRegistry
+from telemetry_backend.services.ingestion import IngestionService
+from telemetry_backend.services.self_metrics import SelfMetrics
 
 Clock = Callable[[], datetime]
 
@@ -28,11 +31,19 @@ class AppDeps:
     config: BackendHealthConfig = field(default_factory=BackendHealthConfig)
     clock: Clock = _utc_now
     registry: AgentRegistry = field(init=False)
+    self_metrics: SelfMetrics = field(init=False)  # UBS-96
+    # Set by `main.create_app`, so the internal app's `/readyz` and
+    # `/metrics` read the same ingestion service and store the public app
+    # writes to.
+    ingestion: IngestionService | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.registry = AgentRegistry(
             missing_threshold_seconds=self.config.missing_heartbeat_threshold_seconds,
             clock=self.clock,
+        )
+        self.self_metrics = SelfMetrics(
+            self.registry, clock=self.clock, ingestion=lambda: self.ingestion
         )
 
 

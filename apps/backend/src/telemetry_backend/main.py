@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -31,6 +32,7 @@ from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
 from telemetry_backend.api import health as health_api
+from telemetry_backend.api import internal as internal_api
 from telemetry_backend.config import (
     BackendConfigError,
     StreamProcessorConfig,
@@ -125,6 +127,9 @@ def create_app(
     # clock starts once, here - for the module-level `app = create_app()`
     # below that is import time, matching FR-QRY-005's "since this replica
     # started".
+    # UBS-69: the Agent Registry and the health read side. Shared via
+    # app.state so routers reach the same instance (see deps.py).
+    app_deps = deps or AppDeps()
     if service is not None:
         if processor is not None and processor is not service.stream_processor:
             raise ValueError(
@@ -134,12 +139,17 @@ def create_app(
         ingestion = service
     else:
         ingestion = IngestionService(
-            stream_processor=processor or StreamProcessor(StreamProcessorConfig())
+            stream_processor=processor
+            or StreamProcessor(
+                StreamProcessorConfig(
+                    warmup_window_seconds=int(app_deps.config.warmup_window_seconds)
+                )
+            )
         )
     stream = ingestion.stream_processor
-    # UBS-69: the Agent Registry and the health read side. Shared via
-    # app.state so routers reach the same instance (see deps.py).
-    app_deps = deps or AppDeps()
+    # UBS-96: the internal app's /readyz and /metrics read this same service.
+    app_deps.ingestion = ingestion
+    self_metrics = app_deps.self_metrics
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -178,6 +188,24 @@ def create_app(
             return {"status": "ready"}
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "warming"}
+
+    @app.middleware("http")
+    async def query_latency(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        """UBS-96: server-side latency per *route template* (bounded label
+        set; never the raw path, which would carry agent IDs). Unmatched
+        paths (404s) are labelled `unmatched` so they cannot grow
+        cardinality."""
+        started = time.perf_counter()
+        try:
+            return await call_next(request)
+        finally:
+            route = request.scope.get("route")
+            template = getattr(route, "path", None) or "unmatched"
+            self_metrics.query_latency.labels(route=template).observe(
+                time.perf_counter() - started
+            )
 
     @app.middleware("http")
     async def request_id(
@@ -242,8 +270,10 @@ def create_app(
         if full is not None:
             return full
         # A heartbeat embedded in a batch counts the same as a standalone one.
+        self_metrics.ingest_batches.inc()
         if batch.heartbeat is not None:
             app_deps.registry.record_heartbeat(batch.heartbeat)
+            self_metrics.heartbeats_received.inc()
         return BatchAccepted(
             status="accepted",
             batch_id=str(batch.batch_id),
@@ -295,6 +325,7 @@ def create_app(
         # No explicit received_at: the registry stamps it from the same clock
         # it judges staleness with, so a test (or a replica) can inject one.
         app_deps.registry.record_heartbeat(heartbeat)
+        self_metrics.heartbeats_received.inc()
         return BatchAccepted(
             status="accepted",
             received_at_utc=_received_at_utc(),
@@ -305,6 +336,19 @@ def create_app(
 
 
 app = create_app()
+
+
+def create_internal_app(deps: AppDeps) -> FastAPI:
+    """UBS-96, FR-HLT-012: `/healthz`, `/readyz` and `/metrics` for the
+    internal listener. Pass the `AppDeps` of an app built by `create_app`,
+    so the probes read the ingestion service and store that app writes to.
+    """
+    if deps.ingestion is None:
+        raise ValueError("build the public app with create_app(deps=deps) first")
+    internal = FastAPI(title="Telemetry Backend (internal)")
+    internal.state.deps = deps
+    internal.include_router(internal_api.router)
+    return internal
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -319,12 +363,40 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _serve(deps: AppDeps, log_level: str) -> None:
+    """Two uvicorn servers, one process, one `AppDeps` (FR-HLT-012)."""
+    public = create_app(deps=deps)
+    internal = create_internal_app(deps)
+    public_host, public_port = deps.config.listen_host_port
+    internal_host, internal_port = deps.config.internal_listen_host_port
+    servers = [
+        uvicorn.Server(
+            uvicorn.Config(
+                public, host=public_host, port=public_port, log_level=log_level
+            )
+        ),
+        uvicorn.Server(
+            uvicorn.Config(
+                internal, host=internal_host, port=internal_port, log_level=log_level
+            )
+        ),
+    ]
+    logger.info(
+        "public API on http://%s:%d, internal probes on http://%s:%d",
+        public_host,
+        public_port,
+        internal_host,
+        internal_port,
+    )
+    await asyncio.gather(*(server.serve() for server in servers))
+
+
 def main() -> None:
     """`uv run telemetry-backend [--config config/backend.yaml]`.
 
     A missing config file means defaults (spec 010), so this runs with no
     file at all. `store.warmupWindow` from the file feeds the one shared
-    StreamProcessor, so `/readyz` honours it.
+    StreamProcessor (see `create_app`), so both `/readyz`s honour it.
     """
     args = _build_parser().parse_args()
     logging.basicConfig(
@@ -337,19 +409,7 @@ def main() -> None:
     if args.check_config:
         print(f"config ok: {config}")
         return
-    processor = StreamProcessor(
-        StreamProcessorConfig(
-            warmup_window_seconds=int(config.warmup_window_seconds)
-        )
-    )
-    host, port = config.listen_host_port
-    logger.info("public API on http://%s:%d", host, port)
     try:
-        uvicorn.run(
-            create_app(processor=processor, deps=AppDeps(config=config)),
-            host=host,
-            port=port,
-            log_level=args.log_level,
-        )
+        asyncio.run(_serve(AppDeps(config=config), args.log_level))
     except KeyboardInterrupt:
         pass
