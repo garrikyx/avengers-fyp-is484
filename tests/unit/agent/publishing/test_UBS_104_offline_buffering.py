@@ -138,7 +138,7 @@ def test_data_stays_buffered_through_repeated_backoff() -> None:
     asyncio.run(publisher.publish_once(now=_NOW))
 
     assert publisher.queue_depth() == 1  # never lost, just backing off
-    assert publisher.counters.snapshot()["publish_failed"] == 1
+    assert publisher.counters.snapshot()["publish_failures"] == 1
 
 
 # --- FR-PUB-004: counted drop-oldest, both internally and externally ---------------

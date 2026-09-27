@@ -173,19 +173,53 @@ def test_fix_session_down_fires_on_either_counter() -> None:
     assert _fire(rule, only_heartbeat_timeout)[0].severity == "critical"
 
 
+def test_backend_unreachable_fires_at_five_consecutive_failures() -> None:
+    rule = _rule("BackendUnreachable")
+    outage = make_snapshot(
+        now=_T0, gauges=make_gauges(consecutive_publish_failures=5)
+    )
+    fired = _fire(rule, outage)
+    assert fired[0].severity == "warning"
+    assert fired[0].observed_value == 5
+
+
+def test_backend_unreachable_silent_below_five() -> None:
+    rule = _rule("BackendUnreachable")
+    recovering = make_snapshot(
+        now=_T0, gauges=make_gauges(consecutive_publish_failures=4)
+    )
+    assert _fire(rule, recovering) == []
+
+
+def test_backend_unreachable_silent_when_publishing_is_healthy() -> None:
+    """`_on_commit` zeroes the gauge on the first successful batch — which
+    is what resolves the alert, and why this rule needs no window."""
+    rule = _rule("BackendUnreachable")
+    healthy = make_snapshot(
+        now=_T0, gauges=make_gauges(consecutive_publish_failures=0)
+    )
+    assert _fire(rule, healthy) == []
+
+
+def test_backend_unreachable_silent_when_no_publisher_is_wired() -> None:
+    """FR-MET-031: the gauge is `None`, never 0, on an agent with no
+    Backend Publisher. That must read as "can't tell", not as a fault —
+    and equally must not read as healthy.
+    """
+    rule = _rule("BackendUnreachable")
+    no_publisher = make_snapshot(now=_T0, gauges=make_gauges())
+    assert no_publisher.gauges.consecutive_publish_failures is None
+    assert _fire(rule, no_publisher) == []
+
+
 def test_unwired_counter_rules_read_as_no_fire_not_crash() -> None:
-    # BackendUnreachable's `publish_failures` has no producer yet (it needs
-    # the Backend Publisher), so an otherwise-normal snapshot simply lacks
-    # the counter. Must read as "doesn't fire", never raise.
-    #
-    # SeqGapDetected/ClockSkew (UBS-73) and CallbackFailing (UBS-74) now do
-    # have producers — see tests/integration/agent/test_RE_session_integration.py
+    # SeqGapDetected/ClockSkew (UBS-73) and CallbackFailing (UBS-74) have
+    # producers — see tests/integration/agent/test_RE_session_integration.py
     # and test_RE_callback_integration.py for those firing on real data.
     # They stay in this list because the absent-counter case is still the
     # normal one for them: a window in which nothing went wrong carries no
     # `seq_gaps` key at all, and that must not fire or raise either.
     for name in (
-        "BackendUnreachable",
         "SeqGapDetected",
         "ClockSkew",
         "CallbackFailing",
