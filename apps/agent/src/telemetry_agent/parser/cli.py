@@ -14,7 +14,6 @@ from telemetry_agent.parser.applog.signatures import (
     compile_signature_rules,
     extract_log_level,
 )
-from telemetry_agent.parser.fix.classify import compile_app_log_patterns
 from telemetry_agent.parser.config import DemoConfig, load_demo_config
 from telemetry_agent.parser.corpus import prepare_corpus_line
 from telemetry_agent.parser.display import (
@@ -22,10 +21,12 @@ from telemetry_agent.parser.display import (
     print_demo_summary,
     render_demo_line,
 )
+from telemetry_agent.parser.fix.classify import compile_app_log_patterns
 from telemetry_agent.parser.fix.identifiers import load_hash_key
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.protocol import LineClassification, ParseResult, SourceMeta
 from telemetry_agent.parser.registry import Registry, registered_names
+
 
 def _corpus_files(corpus_path: Path) -> list[Path]:
     if corpus_path.is_file():

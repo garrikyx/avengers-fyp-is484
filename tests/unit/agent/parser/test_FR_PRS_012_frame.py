@@ -5,16 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
+from telemetry_agent.parser.corpus import demo_log_lines
 from telemetry_agent.parser.fix.frame import (
+    SOH,
     DelimiterMode,
     FrameOptions,
     Framer,
     LineJoiner,
-    SOH,
     frame_message,
 )
-from telemetry_agent.parser.corpus import demo_log_lines
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.protocol import LineClassification, SourceMeta
 
@@ -132,3 +131,48 @@ def test_FR_PRS_019_no_panic_on_garbage_bytes(garbage: bytes) -> None:
     )
     result = parser.parse(garbage, meta)
     assert isinstance(result.classification, LineClassification)
+
+
+@pytest.mark.parametrize(
+    "delim,mode",
+    [(b"|", DelimiterMode.PIPE), (SOH, DelimiterMode.SOH)],
+    ids=["pipe", "soh"],
+)
+def test_framing_survives_past_the_auto_delimiter_lock(
+    delim: bytes, mode: DelimiterMode
+) -> None:
+    """Regression: the parser used to go blind after exactly
+    `auto_lock_after` messages.
+
+    `_contains_tag` searched for `tag + delim` (`10=|`), which only matches
+    a checksum with an *empty* value. While the Framer is still sniffing,
+    `_has_checksum_field` falls back to a plain `b"10=" in data` substring
+    test, so the bug stayed invisible. Once the Framer auto-locked its
+    delimiter at message 100, the strict path took over, every well-formed
+    message read as "no checksum yet", and `LineJoiner` buffered each one
+    as an incomplete continuation instead of framing it.
+
+    A real agent tails far more than 100 lines, so this is deliberately run
+    well past the lock on both delimiters.
+    """
+    parser = FixParser(hash_key=b"test-key")
+    meta = SourceMeta(
+        instance_id="test",
+        path="Fix.log",
+        log_type="fix",
+        read_at=datetime.now(tz=UTC),
+    )
+    total = FrameOptions().auto_lock_after * 3
+
+    framed = 0
+    for seq in range(1, total + 1):
+        line = (
+            b"8=FIX.4.2" + delim + b"35=0" + delim + b"49=MAGIC" + delim
+            + b"56=EXCH1" + delim + b"34=%d" % seq + delim
+            + b"52=20260101-10:00:00" + delim + b"10=000" + delim
+        )
+        if parser.parse(line, meta).framed:
+            framed += 1
+
+    assert framed == total
+    assert parser._framer.locked_delimiter is mode  # the lock did happen

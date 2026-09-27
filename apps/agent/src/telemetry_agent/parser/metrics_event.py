@@ -100,6 +100,96 @@ def build_parsed_message_event(
         return ParsedMessageEvent(**kwargs)
 
 
+def derive_session_counters(telemetry: FixTelemetry) -> dict[str, Decimal]:
+    """UBS-73: the session/parser-health counters (spec 004 §4.1) that
+    `FixSessionDown`, `SeqGapDetected` and `ClockSkew` read.
+
+    Separate from `counters.derive_counters` because these come off the
+    parser's own `FixTelemetry`, not off the `ParsedMessageEvent` — the
+    shared contract carries no seq-gap or clock-skew field, and shouldn't:
+    they describe the FIX session's health, not the message's content. The
+    caller merges both dicts into one `ingest_counters` call; the metric
+    names are declared on `counters.SESSION_DIMS`.
+
+    `heartbeat_timeouts` is not derived here. A timeout is the *absence* of
+    a message, which no per-message function can observe — it belongs to
+    the Health Reporter's periodic tick. `FixSessionDown` still fires on
+    `logouts` alone, since `RuleEngine._read_counter_sum` defaults a
+    missing `extra_counter` to 0.
+    """
+    counters: dict[str, Decimal] = {}
+
+    if telemetry.normalized_msg_type == "Logout":
+        counters["logouts"] = Decimal(1)
+    elif telemetry.normalized_msg_type == "Logon":
+        counters["logons"] = Decimal(1)
+
+    if telemetry.clock_skew:
+        counters["clock_skew_events"] = Decimal(1)
+
+    if telemetry.seq_gap is not None:
+        if telemetry.seq_gap.is_regression:
+            # A sequence that went *backwards* is not a gap: SeqTracker
+            # reports gap_size=0 for it, so counting it as seq_gaps would
+            # trip SeqGapDetected (> 0) on a message that skipped nothing.
+            counters["seq_regressions"] = Decimal(1)
+        else:
+            counters["seq_gaps"] = Decimal(1)
+            counters["seq_gap_messages"] = Decimal(telemetry.seq_gap.gap_size)
+
+    return counters
+
+
+def derive_parser_counters(result: ParseResult) -> dict[str, Decimal]:
+    """UBS-18: the two counters `ParseErrorRate` reads.
+
+    `parse_error_rate` is `parse_errors / log_lines_read` (spec 004 §4.5), so
+    these are a ratio's numerator and denominator and have to be counted
+    together, on every line — including lines that produced no
+    `ParsedMessageEvent` at all. That's why they carry `AGENT_DIMS` and go in
+    through `MetricsAggregator.ingest_agent_counters`: a line that failed to
+    parse has no event to read dimensions off.
+
+    Only *hard* failures count as errors. `FixTelemetry.bad_timestamp` and
+    `unknown_msg_type` are soft warnings on a line that otherwise parsed
+    fine; `metrics/demo_sink.py` files them under its own `parse_errors:*`
+    sub-keys, but folding them into this ratio would have `ParseErrorRate`
+    firing on well-formed messages.
+    """
+    counters: dict[str, Decimal] = {"log_lines_read": Decimal(1)}
+    if _parse_error_reason(result) is not None:
+        counters["parse_errors"] = Decimal(1)
+    return counters
+
+
+def parser_counter_dims(result: ParseResult, *, instance_id: str) -> dict[str, str]:
+    """Dimension values for `derive_parser_counters`' output.
+
+    Supplies both `instance_id` (which `log_lines_read` declares) and
+    `reason` (which `parse_errors` additionally declares, per spec 004 §4.3),
+    so one mapping covers both metrics —
+    `MetricsAggregator.ingest_agent_counters` picks the subset each metric
+    actually declares.
+    """
+    return {
+        "instance_id": instance_id,
+        "reason": _parse_error_reason(result) or "none",
+    }
+
+
+def _parse_error_reason(result: ParseResult) -> str | None:
+    """The closed-set reason this line failed to parse, or None if it
+    didn't. `internal_error` is the parser defending itself against an
+    unexpected exception (FR-PRS-019) — a failure with no closed-set reason
+    of its own, so it gets its own label.
+    """
+    if result.error is not None:
+        return result.error.reason
+    if result.internal_error:
+        return "internal_error"
+    return None
+
+
 def _session_id(fields: FixFields) -> str:
     sender = fields.sender_comp_id or "unknown"
     target = fields.target_comp_id or "unknown"

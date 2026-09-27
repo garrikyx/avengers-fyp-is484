@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import pytest
-
 from telemetry_agent.parser.fix.parser import FixParser
-from telemetry_agent.parser.protocol import Confidence, LineClassification, ParseResult, SourceMeta
-from telemetry_agent.parser.registry import Registry, get_parser, register_parser, registered_names
+from telemetry_agent.parser.protocol import (
+    Confidence,
+    LineClassification,
+    ParseResult,
+    SourceMeta,
+)
+from telemetry_agent.parser.registry import (
+    Registry,
+    get_parser,
+    register_parser,
+    registered_names,
+)
 
 
 class StubParser:

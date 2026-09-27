@@ -1,6 +1,7 @@
 """Health Reporter: per-file read lag (UBS-30), status rollup and heartbeat
 payload (UBS-58, FR-HLT-001..004), rolling parse-error window (UBS-59),
-publish queue depth (UBS-60).
+publish queue depth (UBS-60), publish buffer bytes and dropped-event rate
+(UBS-104).
 
 See docs/plan/ubs30-notes.md and docs/plan/ubs58-60-notes.md. UBS-33/34
 additionally surface callback delivery failures here (`failed_deliveries`),
@@ -32,6 +33,8 @@ Clock = Callable[[], datetime]
 # UBS-60: whatever owns the publish queue answers "how deep is it right now".
 QueueDepthProvider = Callable[[], int]
 QueueTrend = Literal["rising", "draining", "flat"]
+# UBS-104: whatever owns the publish buffer answers "how many bytes right now".
+BufferBytesProvider = Callable[[], int]
 
 
 def _utc_now() -> datetime:
@@ -56,6 +59,7 @@ class HealthSignals:
     publish_queue_depth: int | None = None
     # Direction since the previous snapshot; None on the first sample.
     publish_queue_trend: QueueTrend | None = None
+    publish_buffer_bytes: int | None = None
     callback_failures: int | None = None
     dropped_events: int | None = None
 
@@ -88,6 +92,7 @@ class HealthReporter:
         heartbeat: HeartbeatConfig | None = None,
         clock: Clock | None = None,
         queue_depth_provider: QueueDepthProvider | None = None,
+        buffer_bytes_provider: BufferBytesProvider | None = None,
     ) -> None:
         self.monitors = monitors
         base = thresholds or HealthThresholds()
@@ -106,10 +111,14 @@ class HealthReporter:
         self._parse_errors = SlidingWindowCounter(window, clock=self._clock)
         self._lines_read = SlidingWindowCounter(window, clock=self._clock)
         self._parse_signal_seen = False
-        # UBS-60: no Publisher exists yet (M4); until one registers itself the
-        # queue fields stay None on the wire (FR-HLT-004).
+        # UBS-60/104: until a Publisher registers itself, the queue/buffer/
+        # drop fields stay None on the wire (FR-HLT-004) rather than a
+        # fabricated zero.
         self._queue_depth_provider = queue_depth_provider
         self._last_queue_depth: int | None = None
+        self._buffer_bytes_provider = buffer_bytes_provider
+        self._dropped_events = SlidingWindowCounter(window, clock=self._clock)
+        self._dropped_signal_seen = False
 
     @property
     def degraded_threshold_ms(self) -> float:
@@ -194,6 +203,31 @@ class HealthReporter:
         self._queue_depth_provider = provider
         self._last_queue_depth = None
 
+    # --- UBS-104: publish buffer bytes and dropped-event rate -------------------
+
+    def set_buffer_bytes_provider(self, provider: BufferBytesProvider | None) -> None:
+        """Register (or remove) the Publisher's buffer-bytes callback
+        (`publishBufferBytes`, spec 004 §6) -- same parameter-injected shape
+        as `set_queue_depth_provider`, so `HealthReporter` never owns or
+        constructs the Publisher's buffer.
+        """
+        self._buffer_bytes_provider = provider
+
+    def record_dropped_events(self, n: int = 1, now: datetime | None = None) -> None:
+        """Count `n` buffer-eviction drops (`droppedEventsLast5Min`,
+        `FR-PUB-004`) at `now`. The Publisher's buffer calls this once per
+        evicted item.
+
+        Calling this even with `n=0` at wiring time is enough to mark the
+        signal as "has a producer" (`FR-HLT-004`) -- otherwise a healthy
+        Publisher that has never actually dropped anything would report
+        `None` forever instead of a genuine `0`, indistinguishable from no
+        Publisher being wired in at all.
+        """
+        now = now or self._clock()
+        self._dropped_signal_seen = True
+        self._dropped_events.record(now, n)
+
     def _queue_signals(self) -> tuple[int | None, QueueTrend | None]:
         """(depth, trend) sampled now; trend compares with the previous sample
         so consecutive heartbeats show rising vs draining (spec 011 s1.1
@@ -218,6 +252,10 @@ class HealthReporter:
         statuses = self.file_statuses(now=now)
         errors, lines, rate = self._parse_signals(now)
         queue_depth, queue_trend = self._queue_signals()
+        buffer_bytes = (
+            self._buffer_bytes_provider() if self._buffer_bytes_provider else None
+        )
+        dropped = self._dropped_events.count(now) if self._dropped_signal_seen else None
         return HealthSignals(
             sampled_at=now,
             files=statuses,
@@ -227,6 +265,8 @@ class HealthReporter:
             parse_error_rate=rate,
             publish_queue_depth=queue_depth,
             publish_queue_trend=queue_trend,
+            publish_buffer_bytes=buffer_bytes,
+            dropped_events=dropped,
         )
 
     def _parse_signals(
@@ -277,6 +317,7 @@ class HealthReporter:
             parse_error_count_last5_min=signals.parse_error_count,
             callback_failures_last5_min=signals.callback_failures,
             publish_queue_depth=signals.publish_queue_depth,
+            publish_buffer_bytes=signals.publish_buffer_bytes,
             dropped_events_last5_min=signals.dropped_events,
         )
 

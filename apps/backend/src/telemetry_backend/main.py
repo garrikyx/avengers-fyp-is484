@@ -1,21 +1,27 @@
-"""FastAPI entry point for the Telemetry Backend.
+"""FastAPI entry point for the Telemetry Backend (spec 006 §1, §7).
 
-Carries the ingestion contract (UBS-66) plus the operator liveness/readiness
-probes (`FR-HLT-010`, `FR-QRY-005`). `/metrics` is deliberately absent: spec
-007 §5.3 keeps it on the internal listener only (`FR-HLT-012`), and it lands
-with UBS-96 alongside the richer agent-liveness endpoints of UBS-69.
+Serves the ingestion contract (`/telemetry/batch`, `/telemetry/events`,
+`/telemetry/heartbeat`), the two probe endpoints `/healthz` and `/readyz`
+(`FR-HLT-010`, `FR-QRY-005`) and the agent-liveness read side under
+`/telemetry/health` (UBS-69, `FR-ING-010`). The query, alert and NL routes
+depend on components this app doesn't build yet and are out of scope here.
 
-`uv run uvicorn telemetry_backend.main:app`
+    uv run telemetry-backend [--config config/backend.yaml]
+    uv run uvicorn telemetry_backend.main:app
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
+import uvicorn
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -25,10 +31,16 @@ from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
 from telemetry_backend.api import health as health_api
-from telemetry_backend.config import StreamProcessorConfig
+from telemetry_backend.config import (
+    BackendConfigError,
+    StreamProcessorConfig,
+    load_backend_health_config,
+)
 from telemetry_backend.deps import AppDeps
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
 from telemetry_backend.services.stream_processor import StreamProcessor
+
+logger = logging.getLogger(__name__)
 
 
 class ItemCounts(CamelModel):
@@ -107,11 +119,24 @@ def create_app(
     deps: AppDeps | None = None,
 ) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
-    ingestion = service or IngestionService()
-    # Built once per app, not per request: `/readyz`'s warmupWindow clock
-    # starts when this replica starts, matching FR-QRY-005's "since this
-    # replica started" rather than restarting on every probe.
-    readiness = processor or StreamProcessor(StreamProcessorConfig())
+    # One StreamProcessor, shared by ingestion and `/readyz`. `is_ready()`
+    # needs the store to have data, so probing a separate instance that
+    # ingestion never feeds would report `warming` forever. Its warmup
+    # clock starts once, here - for the module-level `app = create_app()`
+    # below that is import time, matching FR-QRY-005's "since this replica
+    # started".
+    if service is not None:
+        if processor is not None and processor is not service.stream_processor:
+            raise ValueError(
+                "processor must be the service's own stream_processor, or "
+                "omitted; /readyz has to probe the store ingestion writes to"
+            )
+        ingestion = service
+    else:
+        ingestion = IngestionService(
+            stream_processor=processor or StreamProcessor(StreamProcessorConfig())
+        )
+    stream = ingestion.stream_processor
     # UBS-69: the Agent Registry and the health read side. Shared via
     # app.state so routers reach the same instance (see deps.py).
     app_deps = deps or AppDeps()
@@ -130,8 +155,29 @@ def create_app(
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
+    app.state.processor = stream
     app.state.deps = app_deps
     app.include_router(health_api.router)
+
+    # The probe endpoints return bare dicts rather than this module's
+    # CamelModel envelopes on purpose: an orchestrator's liveness/readiness
+    # check shouldn't have to parse a telemetry-shaped response.
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        """FR-HLT-010: liveness only — process up, no dependency checks."""
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz(response: Response) -> dict[str, str]:
+        """FR-QRY-005: `warming` (HTTP 503) until `warmupWindow` has elapsed
+        since this replica started *and* ingestion has merged data into the
+        store, so an orchestrator doesn't route traffic to a replica whose
+        just-restarted, empty store would misreport as caught-up-and-idle.
+        """
+        if stream.is_ready(now=datetime.now(UTC)):
+            return {"status": "ready"}
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "warming"}
 
     @app.middleware("http")
     async def request_id(
@@ -174,24 +220,6 @@ def create_app(
             message="Ingestion queue is full; retry the batch later.",
             details=[],
         )
-
-    @app.get("/healthz")
-    def healthz() -> dict[str, str]:
-        """FR-HLT-010: liveness only - process up, no dependency checks. A
-        probe that checked dependencies would have an orchestrator restart a
-        backend that is serving fine while something upstream is down."""
-        return {"status": "ok"}
-
-    @app.get("/readyz")
-    def readyz(response: Response) -> dict[str, str]:
-        """FR-QRY-005: `warming` (503) until `warmupWindow` has elapsed since
-        this replica started *and* data has actually arrived, so an
-        orchestrator does not route queries at a just-restarted, empty store
-        whose emptiness would read as caught-up-and-idle."""
-        if readiness.is_ready(now=_received_at_utc()):
-            return {"status": "ready"}
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "warming"}
 
     @app.post(
         "/telemetry/batch",
@@ -277,3 +305,51 @@ def create_app(
 
 
 app = create_app()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Magic Telemetry Backend")
+    parser.add_argument("--config", type=Path, default=Path("config/backend.yaml"))
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="validate the config file and exit (spec 011 install runbook)",
+    )
+    parser.add_argument("--log-level", default="info")
+    return parser
+
+
+def main() -> None:
+    """`uv run telemetry-backend [--config config/backend.yaml]`.
+
+    A missing config file means defaults (spec 010), so this runs with no
+    file at all. `store.warmupWindow` from the file feeds the one shared
+    StreamProcessor, so `/readyz` honours it.
+    """
+    args = _build_parser().parse_args()
+    logging.basicConfig(
+        level=args.log_level.upper(), format="%(levelname)s %(name)s %(message)s"
+    )
+    try:
+        config = load_backend_health_config(args.config)
+    except BackendConfigError as exc:
+        raise SystemExit(f"config error: {exc}") from exc
+    if args.check_config:
+        print(f"config ok: {config}")
+        return
+    processor = StreamProcessor(
+        StreamProcessorConfig(
+            warmup_window_seconds=int(config.warmup_window_seconds)
+        )
+    )
+    host, port = config.listen_host_port
+    logger.info("public API on http://%s:%d", host, port)
+    try:
+        uvicorn.run(
+            create_app(processor=processor, deps=AppDeps(config=config)),
+            host=host,
+            port=port,
+            log_level=args.log_level,
+        )
+    except KeyboardInterrupt:
+        pass

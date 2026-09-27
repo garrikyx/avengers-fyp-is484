@@ -82,6 +82,15 @@ Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor) and M1.5 (
 bridge) — field extraction itself is done (UBS-43–47); `parseErrorRate` is
 formula-ready but has no producer yet.
 
+UBS-73/74 added two counter producers on top of MA-02's order counters:
+`parser.metrics_event.derive_session_counters` (session health — `logouts`,
+`seq_gaps`, `clock_skew_events` — on `counters.SESSION_DIMS`) and
+`metrics.agent_counters.AgentCounterSampler` (the agent's own callback
+counters on `counters.AGENT_DIMS`, via the new
+`MetricsAggregator.ingest_agent_counters` write path, which deliberately
+leaves `secondsSinceLastEvent` alone). See
+`docs/plan/re-epic-implementation-summary.md` §7.
+
 ## M4 requirement coverage (Stream Processor & Metric Store)
 
 Renumbered since this table was first written: the original single ticket for this

@@ -1,7 +1,6 @@
 """Development CLI for streaming the simulator's two log files."""
 
 import argparse
-import sys
 from pathlib import Path
 
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor

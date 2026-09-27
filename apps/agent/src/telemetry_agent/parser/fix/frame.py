@@ -213,12 +213,21 @@ def _has_checksum_field(data: bytes, locked: DelimiterMode | None) -> bool:
 
 
 def _contains_tag(data: bytes, tag: bytes, delim: bytes) -> bool:
-    needle = tag + delim
-    if needle in data:
+    """Is `tag` present as the start of a field — i.e. preceded by `delim`?
+
+    The delimiter goes *before* the tag, not after it: `tag + delim` would
+    only ever match a field with an empty value (`10=|`), so a well-formed
+    `10=093|` read as "no checksum present". That mattered only once the
+    Framer auto-locked its delimiter, since the unlocked path in
+    `_has_checksum_field` falls back to a plain substring test — which is
+    why it stayed hidden until a run exceeded `auto_lock_after` messages,
+    after which `LineJoiner` buffered every complete message as incomplete.
+    """
+    if delim + tag in data:
         return True
-    if delim == SOH:
-        return data.endswith(tag) or (tag + SOH) in data
-    return False
+    # A message may also begin with the tag when `data` has already been
+    # sliced to start at a field boundary.
+    return data.startswith(tag)
 
 
 def _slice_to_checksum(body: bytes, mode: DelimiterMode) -> bytes | None:
