@@ -1,9 +1,8 @@
 """FastAPI entry point for the Telemetry Backend (spec 006 §1, §7).
 
-Serves the ingestion contract (`/telemetry/batch`, `/telemetry/events`,
-`/telemetry/heartbeat`) plus the two probe endpoints `/healthz` and
-`/readyz` (`FR-HLT-010`, `FR-QRY-005`). The query, alert and NL routes
-depend on components this app doesn't build yet and are out of scope here.
+Serves ingestion (`/telemetry/batch`, `/telemetry/events`,
+`/telemetry/heartbeat`), alert queries (`/telemetry/alerts`), and probe
+endpoints `/healthz` and `/readyz` (`FR-HLT-010`, `FR-QRY-005`).
 
     uv run uvicorn telemetry_backend.main:app
 """
@@ -14,17 +13,22 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import Field
+from pydantic import Field, ValidationError
 from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
+from telemetry_shared.models.alerts_query import AlertDetailResponse, AlertsListResponse
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
 from telemetry_backend.config import StreamProcessorConfig
+from telemetry_backend.services.agent_registry import AgentRegistry
+from telemetry_backend.services.alert_store import AlertStore
+from telemetry_backend.services.heartbeat_monitor import HeartbeatMonitor
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
 from telemetry_backend.services.stream_processor import StreamProcessor
 
@@ -68,6 +72,23 @@ class ErrorEnvelope(CamelModel):
     error: ErrorBody
 
 
+class AlertsQueryParams(CamelModel):
+    """Strict query model for `GET /telemetry/alerts` (`FR-QRY-032`)."""
+
+    status: Literal["active", "resolved", "all"] = "active"
+    application: str | None = None
+    instance_id: str | None = Field(default=None, validation_alias="instanceId")
+    rule_name: str | None = Field(default=None, validation_alias="ruleName")
+    severity: str | None = None
+    since: datetime | None = None
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+_ALERTS_QUERY_KEYS = frozenset(
+    {"status", "application", "instanceId", "ruleName", "severity", "since", "limit"}
+)
+
+
 def _received_at_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -102,30 +123,56 @@ def _error_response(
 def create_app(
     service: IngestionService | None = None,
     processor: StreamProcessor | None = None,
+    alert_store: AlertStore | None = None,
+    agent_registry: AgentRegistry | None = None,
+    heartbeat_monitor: HeartbeatMonitor | None = None,
+    *,
+    enable_heartbeat_monitor: bool = True,
 ) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
-    ingestion = service or IngestionService()
-    # `/readyz` reports against this one instance for the life of the process,
-    # so its warmup clock starts once — here, which for the module-level
-    # `app = create_app()` below means at import time, matching FR-QRY-005's
-    # "since this replica started".
     stream = processor or StreamProcessor(StreamProcessorConfig())
+    if service is not None:
+        ingestion = service
+        store = ingestion.alert_store
+        monitor = ingestion.heartbeat_monitor
+    else:
+        store = alert_store or AlertStore()
+        registry = agent_registry or AgentRegistry()
+        monitor = heartbeat_monitor
+        if monitor is None and enable_heartbeat_monitor:
+            monitor = HeartbeatMonitor(registry=registry, alert_store=store)
+        ingestion = IngestionService(
+            stream_processor=stream,
+            alert_store=store,
+            agent_registry=registry,
+            heartbeat_monitor=monitor,
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         worker = asyncio.create_task(ingestion.run(), name="telemetry-ingestion")
+        heartbeat_task: asyncio.Task[None] | None = None
+        if monitor is not None and enable_heartbeat_monitor:
+            heartbeat_task = asyncio.create_task(
+                monitor.run(), name="telemetry-heartbeat-monitor"
+            )
         try:
             yield
         finally:
             worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass
+            tasks: list[asyncio.Task[None]] = [worker]
+            if heartbeat_task is not None:
+                tasks.append(heartbeat_task)
+            for task in tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
     app.state.processor = stream
+    app.state.alert_store = store
 
     # The probe endpoints return bare dicts rather than this module's
     # CamelModel envelopes on purpose: an orchestrator's liveness/readiness
@@ -258,6 +305,72 @@ def create_app(
             received_at_utc=_received_at_utc(),
             accepted=_counts(),
         )
+
+    @app.get(
+        "/telemetry/alerts",
+        response_model=AlertsListResponse,
+        responses={400: {"model": ErrorEnvelope}},
+    )
+    async def list_alerts(
+        request: Request,
+    ) -> AlertsListResponse | JSONResponse:
+        unknown = set(request.query_params.keys()) - _ALERTS_QUERY_KEYS
+        if unknown:
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_field",
+                message="Unknown query parameter.",
+                details=[
+                    ErrorDetail(field=name, issue="Unknown query parameter.")
+                    for name in sorted(unknown)
+                ],
+            )
+        try:
+            params = AlertsQueryParams.model_validate(dict(request.query_params))
+        except ValidationError as exc:
+            details = [
+                ErrorDetail(
+                    field=".".join(str(part) for part in error["loc"]),
+                    issue=error["msg"],
+                )
+                for error in exc.errors()
+            ]
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_field",
+                message="Query parameter validation failed.",
+                details=details,
+            )
+        return store.list_alerts(
+            status=params.status,
+            application=params.application,
+            instance_id=params.instance_id,
+            rule_name=params.rule_name,
+            severity=params.severity,
+            since=params.since,
+            limit=params.limit,
+        )
+
+    @app.get(
+        "/telemetry/alerts/{alert_id}",
+        response_model=AlertDetailResponse,
+        responses={404: {"model": ErrorEnvelope}},
+    )
+    async def get_alert(
+        request: Request, alert_id: str
+    ) -> AlertDetailResponse | JSONResponse:
+        detail = store.get_alert(alert_id)
+        if detail is None:
+            return _error_response(
+                request,
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="not_found",
+                message="Alert not found.",
+                details=[],
+            )
+        return detail
 
     return app
 

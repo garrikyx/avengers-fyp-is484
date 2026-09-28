@@ -1,4 +1,12 @@
 from telemetry_shared.models.alerts import AlertEvent
+from telemetry_shared.models.alerts_query import (
+    AlertCounts,
+    AlertDelivery,
+    AlertDetailResponse,
+    AlertRecord,
+    AlertsListResponse,
+    AlertTransition,
+)
 from telemetry_shared.models.health import (
     AgentHeartbeat,
     AgentStatus,
@@ -30,7 +38,13 @@ from telemetry_shared.models.snapshot import HistogramPayload, SeriesEntry, Snap
 __all__ = [
     "AgentHeartbeat",
     "AgentStatus",
+    "AlertCounts",
+    "AlertDelivery",
+    "AlertDetailResponse",
     "AlertEvent",
+    "AlertRecord",
+    "AlertsListResponse",
+    "AlertTransition",
     "EventsRequest",
     "FileReadHealth",
     "Gauges",
