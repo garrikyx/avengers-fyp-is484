@@ -16,6 +16,7 @@ from fastapi import Request
 
 from telemetry_backend.config import BackendHealthConfig
 from telemetry_backend.services.agent_registry import AgentRegistry
+from telemetry_backend.services.ingest_guard import IngestGuard
 from telemetry_backend.services.ingestion import IngestionService
 from telemetry_backend.services.self_metrics import SelfMetrics
 
@@ -32,6 +33,7 @@ class AppDeps:
     clock: Clock = _utc_now
     registry: AgentRegistry = field(init=False)
     self_metrics: SelfMetrics = field(init=False)  # UBS-96
+    ingest_guard: IngestGuard = field(init=False)  # UBS-85
     # Set by `main.create_app`, so the internal app's `/readyz` and
     # `/metrics` read the same ingestion service and store the public app
     # writes to.
@@ -42,6 +44,7 @@ class AppDeps:
             missing_threshold_seconds=self.config.missing_heartbeat_threshold_seconds,
             clock=self.clock,
         )
+        self.ingest_guard = IngestGuard(self.config.ingest, clock=self.clock)
         self.self_metrics = SelfMetrics(
             self.registry, clock=self.clock, ingestion=lambda: self.ingestion
         )

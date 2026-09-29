@@ -39,6 +39,7 @@ from telemetry_backend.config import (
     load_backend_health_config,
 )
 from telemetry_backend.deps import AppDeps
+from telemetry_backend.services.ingest_guard import Duplicate, RateLimited
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
 from telemetry_backend.services.stream_processor import StreamProcessor
 
@@ -253,11 +254,39 @@ def create_app(
         "/telemetry/batch",
         response_model=BatchAccepted,
         status_code=status.HTTP_202_ACCEPTED,
-        responses={400: {"model": ErrorEnvelope}, 503: {"model": ErrorEnvelope}},
+        responses={
+            400: {"model": ErrorEnvelope},
+            429: {"model": ErrorEnvelope},
+            503: {"model": ErrorEnvelope},
+        },
     )
     async def ingest_batch(
         request: Request, batch: TelemetryBatch
     ) -> BatchAccepted | JSONResponse:
+        # UBS-85: dedupe by batchId (FR-ING-004), then per-agent rate limit
+        # (FR-ING-008). See services/ingest_guard.py for the ordering.
+        batch_id = str(batch.batch_id)
+        verdict = app_deps.ingest_guard.check(batch.agent_id, batch_id)
+        if isinstance(verdict, Duplicate):
+            self_metrics.dedupe_hits.inc()
+            return BatchAccepted(
+                status="accepted",
+                batch_id=batch_id,
+                received_at_utc=_received_at_utc(),
+                duplicate=True,
+                accepted=_counts(),
+            )
+        if isinstance(verdict, RateLimited):
+            self_metrics.rate_limited.inc()
+            limited = _error_response(
+                request,
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                code="rate_limited",
+                message="Per-agent batch rate exceeded; honour Retry-After.",
+                details=[],
+            )
+            limited.headers["Retry-After"] = str(verdict.retry_after_seconds)
+            return limited
         full = enqueue_or_full(
             request,
             AcceptedIngestion(
@@ -269,14 +298,15 @@ def create_app(
         )
         if full is not None:
             return full
-        # A heartbeat embedded in a batch counts the same as a standalone one.
+        app_deps.ingest_guard.commit(batch.agent_id, batch_id)
         self_metrics.ingest_batches.inc()
+        # A heartbeat embedded in a batch counts the same as a standalone one.
         if batch.heartbeat is not None:
             app_deps.registry.record_heartbeat(batch.heartbeat)
             self_metrics.heartbeats_received.inc()
         return BatchAccepted(
             status="accepted",
-            batch_id=str(batch.batch_id),
+            batch_id=batch_id,
             received_at_utc=_received_at_utc(),
             accepted=_counts(
                 snapshots=len(batch.snapshots),

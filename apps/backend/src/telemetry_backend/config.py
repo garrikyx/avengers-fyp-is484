@@ -79,7 +79,8 @@ class StreamProcessorConfig:
 # --- Backend health / registry settings (UBS-69, UBS-96) ----------------------------
 #
 # Loaded from `config/backend.yaml` (spec 010 s2): `backend.listen`,
-# `backend.internalListen`, `store.warmupWindow`, `alerting.missingHeartbeatThreshold`.
+# `backend.internalListen`, `store.warmupWindow`, `alerting.missingHeartbeatThreshold`
+# and the UBS-85 keys of `ingest:`.
 # Same policy as the agent's health config: a missing file yields defaults, a
 # malformed one is refused at boot.
 
@@ -104,6 +105,24 @@ def parse_duration_seconds(value: str | int | float) -> float:
 
 
 @dataclass(slots=True, frozen=True)
+class IngestGuardConfig:
+    """UBS-85: batch dedupe (FR-ING-004) and per-agent rate limiting
+    (FR-ING-008). Defaults are spec 010's `ingest:` section."""
+
+    max_batches_per_minute_per_agent: int = 30
+    dedupe_cache_size: int = 10_000
+    dedupe_ttl_seconds: float = 1800.0
+
+    def __post_init__(self) -> None:
+        if self.max_batches_per_minute_per_agent < 1:
+            raise BackendConfigError("ingest.maxBatchesPerMinutePerAgent must be >= 1")
+        if self.dedupe_cache_size < 1:
+            raise BackendConfigError("ingest.dedupeCacheSize must be >= 1")
+        if self.dedupe_ttl_seconds <= 0:
+            raise BackendConfigError("ingest.dedupeTtl must be > 0")
+
+
+@dataclass(slots=True, frozen=True)
 class BackendHealthConfig:
     # FR-RUL-030 / spec 005: an agent with no heartbeat for this long is `missing`.
     missing_heartbeat_threshold_seconds: float = 60.0
@@ -112,6 +131,7 @@ class BackendHealthConfig:
     # FR-HLT-012: public API vs internal-only listener (/healthz /readyz /metrics).
     listen: str = "0.0.0.0:8080"
     internal_listen: str = "127.0.0.1:8081"
+    ingest: IngestGuardConfig = field(default_factory=IngestGuardConfig)
 
     def __post_init__(self) -> None:
         if self.missing_heartbeat_threshold_seconds <= 0:
@@ -164,13 +184,22 @@ class _AlertingYaml(_Lenient):
     missing_heartbeat_threshold: str | int | float | None = None
 
 
+class _IngestYaml(_Lenient):
+    # `maxBodyBytes` and `queueSize` live in this section too but are read
+    # elsewhere (or not yet); `extra="allow"` keeps them legal.
+    max_batches_per_minute_per_agent: int | None = None
+    dedupe_cache_size: int | None = None
+    dedupe_ttl: str | int | float | None = None
+
+
 class _BackendConfigYaml(BaseModel):
-    # Sibling sections (ingest:, query:, nl:, ...) belong to other components.
+    # Sibling sections (query:, nl:, ...) belong to other components.
     model_config = ConfigDict(extra="allow")
 
     backend: _BackendYaml | None = None
     store: _StoreYaml | None = None
     alerting: _AlertingYaml | None = None
+    ingest: _IngestYaml | None = None
 
 
 def _drop_none(**kwargs: Any) -> dict[str, Any]:
@@ -197,6 +226,7 @@ def load_backend_health_config(path: Path | str | None) -> BackendHealthConfig:
     backend = parsed.backend or _BackendYaml()
     store = parsed.store or _StoreYaml()
     alerting = parsed.alerting or _AlertingYaml()
+    ingest = parsed.ingest or _IngestYaml()
     return BackendHealthConfig(
         **_drop_none(
             missing_heartbeat_threshold_seconds=(
@@ -211,5 +241,18 @@ def load_backend_health_config(path: Path | str | None) -> BackendHealthConfig:
             ),
             listen=backend.listen,
             internal_listen=backend.internal_listen,
+            ingest=IngestGuardConfig(
+                **_drop_none(
+                    max_batches_per_minute_per_agent=(
+                        ingest.max_batches_per_minute_per_agent
+                    ),
+                    dedupe_cache_size=ingest.dedupe_cache_size,
+                    dedupe_ttl_seconds=(
+                        parse_duration_seconds(ingest.dedupe_ttl)
+                        if ingest.dedupe_ttl is not None
+                        else None
+                    ),
+                )
+            ),
         )
     )

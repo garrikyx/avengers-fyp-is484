@@ -6,7 +6,8 @@ onto the process-global one and tests can build as many as they like.
 Two kinds of number live here:
 
 - Counters this module owns and the routes increment directly: batches
-  accepted, heartbeats recorded, dedupe hits (UBS-85 increments that one).
+  accepted, heartbeats recorded, and UBS-85's dedupe hits and rate-limited
+  batches.
 - Numbers other components already keep - ingestion's rejection and
   queue-full totals and queue depth, the stream processor's readiness and
   too-old drops, the store's memory estimate and drop totals. They are
@@ -148,6 +149,11 @@ class SelfMetrics:
         self.dedupe_hits = Counter(
             f"{_NS}_ingest_dedupe_hits_total",
             "Batches dropped as duplicates by batchId (FR-ING-004, UBS-85)",
+            registry=self.registry,
+        )
+        self.rate_limited = Counter(
+            f"{_NS}_ingest_rate_limited_total",
+            "Batches refused with 429 by per-agent rate limiting (FR-ING-008, UBS-85)",
             registry=self.registry,
         )
         self.query_latency = Histogram(
