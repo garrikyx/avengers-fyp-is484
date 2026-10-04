@@ -37,14 +37,17 @@ import httpx
 from telemetry_agent.callbacks.config import parse_callbacks_config
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import HttpsCallbackSink
+from telemetry_agent.health.config import HealthThresholds
 from telemetry_agent.metrics.agent_counters import AgentCounterSampler
 from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregator
 from telemetry_agent.metrics.correlation import LATENCY_DIMENSIONS, LatencyCorrelator
 from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS, derive_counters
 from telemetry_agent.metrics.snapshot import snapshot
 from telemetry_agent.parser.fix.parser import FixParser
+from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.metrics_event import (
     build_parsed_message_event,
+    derive_heartbeat_timeout_counters,
     derive_parser_counters,
     derive_session_counters,
     parser_counter_dims,
@@ -513,6 +516,59 @@ def _backend_unreachable_act() -> None:
     _show_alerts(demo.tick("1m", advance=resolve_after + 1))
 
 
+def _heartbeat_timeout_act() -> None:
+    """UBS-106. `FixSessionDown`'s other half: a session that simply stops
+    answering, with no Logout anywhere in the log.
+
+    Needs its own instance — act 9 already fired `FixSessionDown` on the
+    main story's instance, and `FR-RUL-021` dedup means one active alert per
+    rule+instance however often it is evaluated.
+    """
+    demo = _Demo()
+    tracker = SessionHeartbeatTracker(
+        timeout_seconds=HealthThresholds().session_heartbeat_timeout_seconds
+    )
+
+    # A healthy session: the venue is answering, so every line refreshes it.
+    lines = [demo.logon(), demo.heartbeat(), demo.heartbeat()]
+    demo.feed(lines)
+    for _ in lines:
+        tracker.observe(
+            msg_type="Heartbeat", sender="MAGIC", target="EXCH1", at=0.0
+        )
+    print(f"  session alive, last heard from at t=0s: {tracker.tracked_sessions()[0]}")
+    print(f"  timeout threshold: {tracker.timeout_seconds:.0f}s "
+          "(health.sessionHeartbeatTimeout, mirrors the backend's)")
+
+    # Then the venue goes quiet. No logout, no error line — nothing at all,
+    # which is exactly why no per-message rule could ever catch this.
+    print("\n  ...then the venue stops answering. No logout, no error line,")
+    print("  nothing in the log at all — the absence *is* the signal.")
+
+    ticks = 0
+    for now in range(10, 130, 10):  # the Health Reporter's 10s tick
+        hits = tracker.timed_out(float(now))
+        ticks += 1
+        for dims, counters in derive_heartbeat_timeout_counters(
+            hits, instance_id=_INSTANCE
+        ):
+            demo.aggregator.ingest_agent_counters(
+                dims=dims, counters=counters, at=_T0
+            )
+        if hits:
+            print(f"  t={now}s: silent {hits[0].silent_seconds:.0f}s -> "
+                  f"heartbeat_timeouts +1 for {hits[0].session_id}")
+
+    print(f"  {ticks} ticks ran, and the counter reads "
+          f"{demo.counters('1m', ('heartbeat_timeouts',))}")
+    print("  One silence, one count — not one per tick. FixSessionDown is")
+    print("  critical at >= 1, so an unlatched counter would turn a single")
+    print("  dead session into a stream of critical pages.")
+    _show_alerts(
+        demo.settle("1m", for_seconds=demo.rule_for_seconds("FixSessionDown"))
+    )
+
+
 def _no_log_activity_act() -> None:
     """UBS-20. Needs an instance that has read *nothing*, so it can't share
     the main story's aggregator — that one has thousands of messages in
@@ -763,6 +819,9 @@ def main() -> None:
 
     _step("17. UBS-75 — the backend goes away, alerting carries on")
     _backend_unreachable_act()
+
+    _step("18. UBS-106 — a session goes silent without logging out")
+    _heartbeat_timeout_act()
 
     _part("Closing")
     print("  Every alert above was produced locally, on the agent, from log")

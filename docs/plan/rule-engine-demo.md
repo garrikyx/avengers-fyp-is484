@@ -37,7 +37,7 @@ make rules-reload-demo   # interactive: hot-reload without losing alert state
 
 If you only have time for one, run `make rules-quickstart`.
 
-`rules-quickstart` prints 17 acts across three parts — complete, but more than
+`rules-quickstart` prints 18 acts across three parts — complete, but more than
 you'd narrate live. **If you have five minutes, talk through these five and let
 the rest scroll:**
 
@@ -48,6 +48,7 @@ the rest scroll:**
 | 10 | The agent alerting that its *own* alerts aren't reaching Magic. |
 | 16 | The storm cap — one meta-alert instead of a flood. |
 | 17 | The backend unreachable while Magic keeps trading — alerting carries on locally, nothing is lost, and the alert resolves itself on recovery. |
+| 18 | A venue that stops answering without logging out — the failure no single log line can show. |
 
 ## UBS-5 coverage
 
@@ -171,7 +172,7 @@ metric actually mean". Provenance is the honest answer in each case:
 | `CallbackFailing` | `callback_failures` counter | Alert deliveries to Magic's callback endpoint that failed *permanently* — counted only after the dispatcher exhausts its retries, so transient errors don't inflate it. | >3 in 5m | Provisional (Q-5) |
 | `NoLogActivity` | `messages_total` counter | Every classified FIX message, admin included. Zero for a whole minute means the pipeline is dead, not that trading is quiet. | == 0 over 1m | **Structural** |
 | `NoExecutions` | `executions` counter, guarded by `orders_submitted` | `35=8` with ExecType = Trade. The guard matters: no fills while no orders were sent is a quiet market, not a fault, so the rule only applies when orders actually went out. | == 0 while `orders_submitted` > 0, 15m | **Structural** |
-| `FixSessionDown` | `logouts` + `heartbeat_timeouts` | `35=5` Logout from the counterparty. (`heartbeat_timeouts` has no producer yet and reads 0 — a timeout is the *absence* of a message, so it belongs to the Health Reporter's tick, not to per-message parsing.) | ≥ 1 in 1m | **Structural** |
+| `FixSessionDown` | `logouts` + `heartbeat_timeouts` | Either half fires it. `logouts` is a `35=5` Logout from the counterparty. `heartbeat_timeouts` (UBS-106) is a session silent past `health.sessionHeartbeatTimeout` — the absence of a message, so it comes from a periodic tick rather than per-message parsing, latched so one silence counts once. | ≥ 1 in 1m | **Structural**; the 60s silence window mirrors the backend's `missingHeartbeatThreshold` |
 | `SeqGapDetected` | `seq_gaps` counter | A MsgSeqNum that skipped ahead — messages were lost in transit. A sequence that goes *backwards* is counted separately as a regression, since it skipped nothing. | > 0 in 1m | **Structural** |
 | `PendingOrderTimeout` | `oldest_pending_age_seconds` gauge | Age of the oldest order still awaiting its *first* response — ack or cancel outcome. Deliberately not time-to-fill, so a resting limit order is never penalised. | >30s | **Our reasoning** — typical institutional order-ack SLA |
 | `BackendUnreachable` | `consecutive_publish_failures` gauge | Publish attempts that failed in a row since the last successful batch commit; resets to 0 on success. A windowed failure count can't work here — the publisher's exponential backoff spaces attempts further apart, so the count *falls* as the outage lengthens. | ≥ 5 | **Our reasoning** — restores the original "5 consecutive" intent |
@@ -248,11 +249,17 @@ cap honestly.
   wide. On a wall clock the demo's own events would age out of their windows
   mid-run. Ingest time is pinned; the engine's clock still advances past each
   rule's `for` delay, which is what makes alerts fire.
-- **"Why doesn't `heartbeat_timeouts` ever fire?"** Nothing produces it. A
-  timeout is the *absence* of a message, which no per-message derivation can
-  observe — it belongs to the Health Reporter's periodic tick. `FixSessionDown`
-  sums `logouts + heartbeat_timeouts` and treats a missing counter as 0, so the
-  rule works correctly without it.
+- **"How can you detect a heartbeat timeout at all?"** Two halves, because the
+  signal is an absence: `SessionHeartbeatTracker.observe` remembers when each
+  session was last heard from (any message counts — FIX only requires a
+  Heartbeat when a session is otherwise idle), and the Health Reporter's
+  periodic tick asks which sessions have gone quiet past the threshold. Each
+  silence is latched so it counts once, not once per tick — `FixSessionDown` is
+  critical at `>= 1`, so re-counting would turn one dead session into a stream
+  of pages. A clean `35=5` Logout drops the session instead of timing it out,
+  so an orderly shutdown posts `logouts` only. Act 18 shows it; the 60s default
+  mirrors the backend's own `missingHeartbeatThreshold` rather than inventing a
+  second number.
 - **"Why is `BackendUnreachable` a gauge and not a windowed count?"** Because a
   windowed count cannot work here. The publisher retries with exponential
   backoff (`FR-PUB-005`), so each failure pushes the next attempt further out —

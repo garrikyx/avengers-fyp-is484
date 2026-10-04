@@ -153,6 +153,18 @@ agent restarts harmless.
 `seq_gap_messages` (sum of gap sizes), `seq_regressions`, `logons`, `logouts`,
 `heartbeat_timeouts`.
 
+- `FR-MET-032`: `heartbeat_timeouts` counts FIX sessions that have gone silent for longer
+  than `health.sessionHeartbeatTimeout` (default `60s`, mirroring the backend's
+  `missingHeartbeatThreshold` in FR-RUL-030 so both ends agree on what a missing heartbeat
+  is). *Any* message refreshes a session, not only `35=0` — FIX requires a Heartbeat only
+  when the session is otherwise idle, so a session busy with orders is demonstrably alive.
+  Each silence MUST be counted **once**, latched until the session speaks again: the
+  detector runs on a periodic tick, and re-counting every tick would scale a single dead
+  session with outage duration in a counter `FixSessionDown` reads at `>= 1` critical.
+  A session that sends `35=5` Logout MUST be dropped rather than timed out, or one orderly
+  shutdown would post both `logouts` and `heartbeat_timeouts` for the same event.
+  Producer: `parser.fix.session_tracker.SessionHeartbeatTracker` (UBS-106).
+
 ### 4.3 Agent self counters
 
 `log_lines_read`, `log_bytes_read`, `parse_errors` (dimension `reason`),
