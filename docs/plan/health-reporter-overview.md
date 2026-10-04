@@ -1,6 +1,6 @@
 # Health Reporter — end-to-end overview (UBS-30 → UBS-58 → UBS-59 → UBS-60)
 
-Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` (stacked, pushed, no PRs yet)
+Status: Living document · Last updated: 2026-09-29 · Agent side (UBS-30/58/59/60) is on `main`; the backend half (UBS-69/85/96, §10) is on `UBS-69-85-96-Backend-Health-Monitor`
 
 This is the reference for the agent-side Health Reporter: what each ticket added, which
 functions do the work, why they are shaped that way, and how the pieces connect from a
@@ -288,10 +288,10 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 | Gap | Effect today | Owner |
 | --- | --- | --- |
-| Backend ingestion (`POST /telemetry/heartbeat`) | Heartbeats reach only the stub receiver | UBS-66 / UBS-87 |
-| Backend health read side (`lastHeartbeatUtc`, `unresponsive`, `/telemetry/health/agents`) | Stub only; UBS-58's two backend ACs live here now | UBS-69 |
-| Backend Publisher | `HttpHeartbeatSink` + `BufferingHeartbeatSink` are stand-ins; `publishBufferBytes` `null` | M4 |
-| Pipeline bridge (monitor → parser → reporter in a real process) | Only the demo calls `record_parse_result()` | M1.5 |
+| ~~Backend ingestion~~ | Done: `POST /telemetry/batch` (UBS-66, on `main`) | — |
+| ~~Backend health read side~~ | Done: registry + `/telemetry/health/agents` (UBS-69, §10) | — |
+| ~~Backend Publisher~~ | Done: heartbeat rides inside `TelemetryBatch` via `heartbeat_provider` (UBS-103) | — |
+| Agent runtime (one process wiring monitor → pipeline → reporter → publisher) | The pieces connect (see `tests/integration/test_health_monitor_e2e.py` and `scripts/health_monitor_demo.py`), but `telemetry_agent/main.py` still only runs the parser CLI | unassigned |
 | Callback Dispatcher wired | `callbackFailuresLast5Min` `null` | UBS-32–34 |
 | Resource sampling (`psutil`?) | `resourceUsage` `null` | team decision |
 | `LogMonitor` rotation count / error state | `rotationsDetected` 0, `state` never `error` | UBS-22/24 owner |
@@ -299,6 +299,23 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 ---
 
 ## 9. How to verify / demo
+
+**Current (full path, real backend):**
+
+```bash
+uv run pytest tests/integration/test_health_monitor_e2e.py -q   # simulator lines -> health API
+
+# three terminals, repo root
+uv run telemetry-backend
+uv run python apps/simulator/src/simulator/mock_logger.py --max-bytes 50000000
+uv run python scripts/health_monitor_demo.py
+```
+
+The demo prints `status=healthy lagMs=… parseErrors5m=… queueDepth=0` after each
+publish; `curl 127.0.0.1:8081/metrics` shows the backend's counters; Ctrl-C the
+demo and the agent reads `missing` 60s later.
+
+**Original agent-only demo (stub receiver, pre-UBS-69):**
 
 ```bash
 uv run pytest tests/unit/agent/health -q            # 71 tests across the four tickets
@@ -320,3 +337,48 @@ Then, in order:
 
 Every number you see in step 1–4 is produced by the code paths in sections 3–6; nothing
 is mocked in the demo.
+
+---
+
+## 10. Backend half — UBS-69, UBS-85, UBS-96
+
+What happens to a heartbeat after the agent publishes it. Decisions are in
+[`ubs69-85-96-notes.md`](./ubs69-85-96-notes.md).
+
+```mermaid
+sequenceDiagram
+    participant P as BackendPublisher (agent)
+    participant R as POST /telemetry/batch
+    participant G as IngestGuard (UBS-85)
+    participant Q as Ingestion queue
+    participant A as AgentRegistry (UBS-69)
+    participant M as SelfMetrics (UBS-96)
+    P->>R: TelemetryBatch{batchId, heartbeat}
+    R->>G: check(agentId, batchId)
+    alt seen within 30m
+        G-->>R: Duplicate
+        R->>M: dedupe_hits++
+        R-->>P: 202 duplicate:true
+    else > 30 batches in last 60s
+        G-->>R: RateLimited(n)
+        R->>M: rate_limited++
+        R-->>P: 429 Retry-After: n
+    else
+        R->>Q: enqueue (503 queue_full if full, nothing remembered)
+        R->>G: commit(agentId, batchId)
+        R->>A: record_heartbeat
+        R->>M: ingest_batches++, heartbeats_received++
+        R-->>P: 202
+    end
+```
+
+| Ticket | Adds | Where |
+| --- | --- | --- |
+| UBS-69 | Agent registry (latest heartbeat per agent, `missing` after `missingHeartbeatThreshold`), `GET /telemetry/health/agents[/{id}]`, `data_completeness.build()` for UBS-91; one `StreamProcessor` shared by ingestion and `/readyz` | `services/agent_registry.py`, `api/health.py`, `main.py` |
+| UBS-85 | `batchId` dedupe (LRU 10 000/agent, TTL 30m → 202 `duplicate:true`) and per-agent rate limit (30/min → 429 `Retry-After`), config from `ingest:` | `services/ingest_guard.py` |
+| UBS-96 | Prometheus `/metrics`, `/healthz`, `/readyz` on the internal listener (`127.0.0.1:8081`); counters owned by the routes, ingestion/store numbers read at scrape time | `services/self_metrics.py`, `api/internal.py`, `create_internal_app()` |
+
+`/readyz` is `warming` (503) until `warmupWindow` has passed since the replica
+started **and** a snapshot has been merged — heartbeats alone never make it
+ready. The internal variant adds `hasData` so "just started" and "never got
+data" can be told apart.

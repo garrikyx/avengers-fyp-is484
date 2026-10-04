@@ -99,6 +99,20 @@ class BackendPublisher:
     def counters(self) -> CounterRegistry:
         return self._counters
 
+    @property
+    def consecutive_failures(self) -> int:
+        """UBS-75 / `FR-MET-031`: failed attempts in a row since the last
+        successful commit — what `BackendUnreachable` alerts on.
+
+        Read rather than a windowed `publish_failures` count because
+        `FR-PUB-005`'s exponential backoff spaces attempts further and
+        further apart, so a fixed window measures the backoff schedule
+        instead of the outage (spec 005 §1.2). This rises monotonically
+        while the backend is unreachable and `_on_commit` zeroes it on the
+        first success, which is what resolves the alert.
+        """
+        return self._consecutive_failures
+
     def enqueue_snapshot(
         self, snapshot: Snapshot, *, now: datetime | None = None
     ) -> None:
@@ -223,7 +237,7 @@ class BackendPublisher:
             self._consecutive_failures += 1
             delay = self._retry_policy.delay_for_attempt(self._consecutive_failures)
             self._backoff_until = now + timedelta(seconds=delay)
-            self._counters.increment("publish_failed")
+            self._counters.increment("publish_failures")
             self._logger.warning(
                 "publish batch %s failed: status=%s error=%s; "
                 "backing off %.1fs (attempt %d)",

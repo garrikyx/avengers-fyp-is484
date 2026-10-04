@@ -159,13 +159,16 @@ rules:
     window: 5m
     dependsOnLogActivity: false
 
+  # Reads a gauge, not a window: FR-PUB-005's exponential backoff spaces
+  # failed attempts further apart as an outage drags on, so a windowed
+  # publish_failures count measures the retry schedule rather than the
+  # outage (spec 005 §1.2, FR-MET-031).
   - name: BackendUnreachable
     kind: threshold
-    source: counter
-    metric: publish_failures
-    operator: ">"
+    source: gauge
+    metric: consecutive_publish_failures
+    operator: ">="
     tiers:
       - severity: warning
         threshold: 5
-    window: 1m
     dependsOnLogActivity: false
