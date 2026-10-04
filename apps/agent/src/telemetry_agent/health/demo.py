@@ -23,6 +23,7 @@ import logging
 import signal
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 
 from telemetry_agent.health.config import HeartbeatConfig, load_health_config
 from telemetry_agent.health.heartbeat import (
@@ -36,6 +37,7 @@ from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.logs.offset_tracker import OffsetTracker
 from telemetry_agent.parser.fix.parser import FixParser
+from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.protocol import SourceMeta
 
 
@@ -82,7 +84,10 @@ def _make_sink(spec: str) -> HeartbeatSink:
 
 
 async def _poll_forever(
-    monitors: dict[str, LogMonitor], reporter: HealthReporter, stop: asyncio.Event
+    monitors: dict[str, LogMonitor],
+    reporter: HealthReporter,
+    stop: asyncio.Event,
+    sessions: SessionHeartbeatTracker | None = None,
 ) -> None:
     """Drain each tailed file every 250ms so read lag / offsets stay honest, and
     feed every line through the FIX parser into the reporter. This is the demo's
@@ -98,9 +103,51 @@ async def _poll_forever(
                     read_at=datetime.now(UTC),
                 )
                 # UBS-22: poll_lines() yields ReadLine (text + byte identity).
-                reporter.record_parse_result(parser.parse(line.text.encode(), meta))
+                result = parser.parse(line.text.encode(), meta)
+                reporter.record_parse_result(result)
+                # UBS-106: every line is evidence its session is alive. The
+                # tick in `_detect_session_timeouts` notices when they stop.
+                if sessions is not None and result.fields is not None:
+                    sessions.observe(
+                        msg_type=(
+                            result.telemetry.normalized_msg_type
+                            if result.telemetry
+                            else None
+                        ),
+                        sender=result.fields.sender_comp_id,
+                        target=result.fields.target_comp_id,
+                        at=monotonic(),
+                    )
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.25)
+        except TimeoutError:
+            continue
+
+
+async def _detect_session_timeouts(
+    sessions: SessionHeartbeatTracker, stop: asyncio.Event, interval_seconds: float
+) -> None:
+    """UBS-106: the periodic half of heartbeat-timeout detection.
+
+    A timeout is the absence of a message, so it can only be noticed by a
+    clock, not by parsing. This logs what it finds rather than ingesting it:
+    this demo carries a `HealthReporter`, not a `MetricsAggregator`, and
+    threading a metrics + rule-engine stack through a health demo to post one
+    counter would be a far bigger change than the signal is worth. The
+    aggregator wiring lives in `rules/demo_quickstart.py`'s act 18, where an
+    aggregator already exists; here you can watch real detection against a
+    real tailed log by stopping the simulator and waiting.
+    """
+    while not stop.is_set():
+        for timeout in sessions.timed_out(monotonic()):
+            logging.warning(
+                "heartbeat timeout: session %s silent for %.0fs "
+                "(heartbeat_timeouts +1; FixSessionDown reads this)",
+                timeout.session_id,
+                timeout.silent_seconds,
+            )
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
         except TimeoutError:
             continue
 
@@ -140,6 +187,10 @@ async def _main_async(args: argparse.Namespace) -> None:
         reporter.set_queue_depth_provider(lambda: len(buffered))
         sink = buffered
     emitter = HeartbeatEmitter(reporter, sink)
+    # UBS-106: one tracker for the process, driven by the two loops below.
+    sessions = SessionHeartbeatTracker(
+        timeout_seconds=thresholds.session_heartbeat_timeout_seconds
+    )
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -157,7 +208,11 @@ async def _main_async(args: argparse.Namespace) -> None:
         ", ".join(str(p) for p in paths),
     )
     try:
-        await asyncio.gather(emitter.run(stop), _poll_forever(monitors, reporter, stop))
+        await asyncio.gather(
+            emitter.run(stop),
+            _poll_forever(monitors, reporter, stop, sessions),
+            _detect_session_timeouts(sessions, stop, emitter.interval_seconds),
+        )
     finally:
         for monitor in monitors.values():
             monitor.close()

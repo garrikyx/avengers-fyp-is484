@@ -81,11 +81,12 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "session_rejects": REJECT_DIMS,
     "rejects_total": REJECT_DIMS,
     # Session counters, derived from the parser's FixTelemetry rather than
-    # from the event itself (parser.metrics_event.derive_session_counters) —
-    # `heartbeat_timeouts` is deliberately absent, since nothing produces it
-    # yet and RuleEngine._read_counter_sum already defaults a missing
-    # extra_counter to 0.
+    # from the event itself (parser.metrics_event.derive_session_counters).
+    # `heartbeat_timeouts` is the exception within the exception: it comes
+    # from SessionHeartbeatTracker's periodic tick rather than from any
+    # single message, because a timeout is the absence of one (UBS-106).
     "logons": SESSION_DIMS,
+    "heartbeat_timeouts": SESSION_DIMS,
     "logouts": SESSION_DIMS,
     "seq_gaps": SESSION_DIMS,
     "seq_gap_messages": SESSION_DIMS,

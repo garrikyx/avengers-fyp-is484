@@ -25,8 +25,10 @@ from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregat
 from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS, derive_counters
 from telemetry_agent.metrics.snapshot import snapshot
 from telemetry_agent.parser.fix.parser import FixParser
+from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.metrics_event import (
     build_parsed_message_event,
+    derive_heartbeat_timeout_counters,
     derive_session_counters,
 )
 from telemetry_agent.parser.protocol import SourceMeta
@@ -93,6 +95,52 @@ def _ingest(lines: list[bytes]) -> MetricsAggregator:
 def _counters(aggregator: MetricsAggregator, window: str) -> dict[str, Decimal]:
     row = aggregator.snapshot(window, group_by=()).get(())
     return {} if row is None else dict(row.counters)
+
+
+def _tracker_fed(lines: list[bytes]) -> SessionHeartbeatTracker:
+    """A tracker that has watched `lines` go past, so it knows which
+    sessions exist and when each was last heard from. Mirrors what
+    `health/demo.py`'s `_poll_forever` does per tailed line.
+    """
+    parser = FixParser(hash_key=_KEY)
+    meta = SourceMeta(
+        instance_id=_INSTANCE, path="Fix.log", log_type="fix", read_at=_T0
+    )
+    tracker = SessionHeartbeatTracker(timeout_seconds=60.0)
+    for line in lines:
+        result = parser.parse(line, meta)
+        if result.fields is None:
+            continue
+        tracker.observe(
+            msg_type=result.telemetry.normalized_msg_type if result.telemetry else None,
+            sender=result.fields.sender_comp_id,
+            target=result.fields.target_comp_id,
+            at=0.0,  # every fixture line shares one read time
+        )
+    return tracker
+
+
+def _ingest_tick(
+    aggregator: MetricsAggregator,
+    tracker: SessionHeartbeatTracker,
+    *,
+    now: float,
+) -> None:
+    """One health-tick's worth of timeout detection, ingested."""
+    for dims, counters in derive_heartbeat_timeout_counters(
+        tracker.timed_out(now), instance_id=_INSTANCE
+    ):
+        aggregator.ingest_agent_counters(dims=dims, counters=counters, at=_T0)
+
+
+def _ingest_timeouts(
+    aggregator: MetricsAggregator, lines: list[bytes], *, after_seconds: float
+) -> None:
+    """Feed `lines` to a fresh tracker, then take one tick `after_seconds`
+    later. `lines` matters: a fixture ending in a Logout leaves the tracker
+    with nothing to time out, which is the point of the logout test.
+    """
+    _ingest_tick(aggregator, _tracker_fed(lines), now=after_seconds)
 
 
 def _fire(rule_names: tuple[str, ...], aggregator: MetricsAggregator, window: str) -> (
@@ -163,15 +211,67 @@ def test_ten_skewed_messages_stay_under_the_threshold() -> None:
     assert _fire(("ClockSkew",), aggregator, "5m") == []
 
 
-def test_fix_session_down_fires_without_any_heartbeat_timeouts_producer() -> None:
-    """`FixSessionDown` sums `logouts` + `heartbeat_timeouts`, and nothing
-    produces the latter yet (it needs a timer, so it belongs to the Health
-    Reporter). The rule must still work off `logouts` alone rather than
-    reading as insufficient data.
+def test_fix_session_down_fires_on_logouts_alone() -> None:
+    """`FixSessionDown` sums `logouts` + `heartbeat_timeouts`. A logout with
+    no timeout must still fire off `logouts` alone rather than reading as
+    insufficient data — the counters are independent halves of one rule.
     """
     aggregator = _ingest(_HEALTHY + _UNSTABLE)
     assert "heartbeat_timeouts" not in _counters(aggregator, "1m")
     assert _fire(("FixSessionDown",), aggregator, "1m")[0].severity == "critical"
+
+
+def test_fix_session_down_fires_on_a_heartbeat_timeout_alone() -> None:
+    """UBS-106, the other half: a session that simply goes quiet, with no
+    Logout anywhere in the log, must still fire `FixSessionDown` critical.
+
+    This is the case the rule could never detect before — a venue that stops
+    responding without logging out looks identical to a healthy idle session
+    from any single message.
+    """
+    aggregator = _ingest(_HEALTHY)
+    assert "logouts" not in _counters(aggregator, "1m")
+    assert _fire(("FixSessionDown",), aggregator, "1m") == []
+
+    _ingest_timeouts(aggregator, _HEALTHY, after_seconds=120.0)
+
+    assert _counters(aggregator, "1m")["heartbeat_timeouts"] == Decimal(1)
+    fired = _fire(("FixSessionDown",), aggregator, "1m")
+    assert fired[0].severity == "critical"
+    assert fired[0].observed_value == 1
+    # The alert must name both summed counters. Saying "logouts >= 1" here
+    # would send the on-call engineer looking for a logout that never
+    # happened — there is none in this log.
+    assert fired[0].matched_condition.startswith("logouts + heartbeat_timeouts >=")
+
+
+def test_a_clean_logout_does_not_also_produce_a_timeout() -> None:
+    """Otherwise one orderly shutdown would post both `logouts` and
+    `heartbeat_timeouts` into the same rule and look like two incidents.
+    """
+    aggregator = _ingest(_HEALTHY + _UNSTABLE)
+    # _UNSTABLE ends in a 35=5 Logout, so the tracker should have forgotten
+    # the session entirely — hours of subsequent silence produce nothing.
+    _ingest_timeouts(aggregator, _HEALTHY + _UNSTABLE, after_seconds=7200.0)
+
+    counters = _counters(aggregator, "1m")
+    assert counters["logouts"] == Decimal(1)
+    assert "heartbeat_timeouts" not in counters
+
+
+def test_one_silence_counts_once_however_often_the_tick_runs() -> None:
+    """The latch, end to end. A 10s health tick across a 10-minute outage
+    must post a single `heartbeat_timeouts`, not sixty — `FixSessionDown` is
+    critical at `>= 1`, so an unlatched counter would turn one dead session
+    into a stream of critical alerts.
+    """
+    aggregator = _ingest(_HEALTHY)
+    tracker = _tracker_fed(_HEALTHY)
+
+    for tick in range(10, 600, 10):  # 10s ticks, 60s threshold
+        _ingest_tick(aggregator, tracker, now=float(tick))
+
+    assert _counters(aggregator, "1m")["heartbeat_timeouts"] == Decimal(1)
 
 
 def test_session_counters_are_scoped_to_the_session_not_the_symbol() -> None:

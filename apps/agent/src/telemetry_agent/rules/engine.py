@@ -168,7 +168,14 @@ def _matched_tier(
 
 def _matched_condition(rule: RuleConfig, tier: SeverityTier, observed: Decimal) -> str:
     window_part = f" over {rule.window}" if rule.window else ""
-    condition = f"{rule.metric} {rule.operator} {tier.threshold}{window_part}"
+    # Name every counter that was summed, not just the primary one
+    # (`_read_counter_sum` adds `extra_counters`). `FixSessionDown` sums
+    # `logouts + heartbeat_timeouts`, so reporting it as "logouts >= 1" on a
+    # heartbeat timeout tells the on-call engineer to go looking for a
+    # logout that never happened. Harmless until UBS-106 gave the second
+    # counter a producer; a lie now.
+    metric = " + ".join((rule.metric, *rule.extra_counters))
+    condition = f"{metric} {rule.operator} {tier.threshold}{window_part}"
     return f"{condition} (observed {observed})"
 
 

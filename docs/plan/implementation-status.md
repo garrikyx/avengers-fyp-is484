@@ -120,10 +120,11 @@ write-through remain separate ingestion stories.
 | RE-03 | The 14 default rules | `FR-RUL-010` | Done | `test_RE_04_default_rules.py` |
 
 Full detail and the alert-readiness table: `docs/plan/re-epic-implementation-summary.md`.
-Not yet wired: consecutive-failure streak tracking (no rule kind or
-producer), session-message counters (`logouts`, `heartbeat_timeouts`,
-`seq_gaps`, `clock_skew_events`), Callback Dispatcher and Backend Publisher
-(so their self-health rules have no data). `config/rules.yaml` loading and
+Not yet wired: consecutive-failure streak tracking as a general rule kind
+(`BackendUnreachable` gets the effect from a publisher-maintained gauge,
+FR-MET-031). Session-message counters (`logouts`, `seq_gaps`,
+`clock_skew_events`) landed with UBS-73 and `heartbeat_timeouts` with
+UBS-106 (FR-MET-032). `config/rules.yaml` loading and
 SIGHUP reload are implemented (`config_loader.py`); only the call to
 `SighupRuleReloader.install()` from a real running process is unwired,
 since no agent supervisor loop exists yet (M1).

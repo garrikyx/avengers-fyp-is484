@@ -34,7 +34,7 @@ MA-04 indicator — and picks the *highest* tier whose condition holds.
 | `ParseErrorRate` | rate | warning@1%, critical@25% | 5m | wired (UBS-18) |
 | `NoLogActivity` | absence | critical@0 (`messages_total`) | 1m | wired |
 | `NoExecutions` | absence (guarded) | warning@0 while `orders_submitted`>0 | 15m | wired |
-| `FixSessionDown` | threshold | critical@1 (`logouts` or `heartbeat_timeouts`) | 1m | wired (UBS-73, `logouts` only) |
+| `FixSessionDown` | threshold | critical@1 (`logouts` or `heartbeat_timeouts`) | 1m | wired (UBS-73 `logouts`, UBS-106 `heartbeat_timeouts`) |
 | `SeqGapDetected` | threshold | warning@0 | 1m | wired (UBS-73) |
 | `ClockSkew` | threshold | warning@10 | 5m | wired (UBS-73) |
 | `CallbackFailing` | threshold | warning@3 | 5m | wired (UBS-74) |
@@ -141,7 +141,7 @@ reload mechanism are both fully unit-tested, including a real
 | `test_RE_05_config_loader.py` | Valid YAML round-trips to the same `RuleConfig`s; a missing file falls back to `DEFAULT_RULES`; `config/rules.yaml` itself matches `DEFAULT_RULES` one-for-one (catches drift between the two); every malformed shape (bad `kind`/`operator`, empty `tiers`, duplicate name, unknown field, empty rule list) raises `RuleConfigError` naming the rule, and never silently falls back once the file exists; duration-string parsing (`"30s"`/`"2m"`/`"1h"`). |
 | `test_RE_06_reload.py` | `apply_rules` preserves `alertId`/`firstObservedUtc` across a reload that changes a surviving rule's threshold (proven via a post-reload renotify carrying the same `alertId`); force-resolves a `firing` alert whose rule was removed (one `resolved` event) but drops a `pending` one silently; `SighupRuleReloader.reload()` swaps in a valid file and rejects a malformed one (old rules keep firing, error logged); a real `os.kill(os.getpid(), signal.SIGHUP)` round-trip proves `install()`'s OS wiring, not just the Python method. |
 | `tests/integration/agent/test_RE_integration.py` | Real `MetricsAggregator`/`LatencyCorrelator`/`snapshot()` output actually drives `RuleEngine.evaluate()` correctly — one rule per snapshot substructure (indicator, latency, gauge, counter), not the hand-built `MetricsSnapshot` fixtures the rest of this suite uses. Caught a real gap: `snapshot()`'s `min_sample_size` nulls latency percentiles independent of what a given rule's own `min_samples` would accept. |
-| `tests/integration/agent/test_RE_session_integration.py` (UBS-73) | Raw FIX bytes through the real `FixParser` and the `metrics_event` bridge fire `FixSessionDown`, `SeqGapDetected` and `ClockSkew` — including that ten skewed messages stay under `ClockSkew`'s `> 10`, that `FixSessionDown` still works with no `heartbeat_timeouts` producer, and that session counters answer a `session_id` query but are correctly absent from a `symbol` one (FR-MET-030). |
+| `tests/integration/agent/test_RE_session_integration.py` (UBS-73) | Raw FIX bytes through the real `FixParser` and the `metrics_event` bridge fire `FixSessionDown`, `SeqGapDetected` and `ClockSkew` — including that ten skewed messages stay under `ClockSkew`'s `> 10`, that `FixSessionDown` fires from either half alone — a logout with no timeout and (UBS-106) a timeout with no logout — that a clean logout does not also post a timeout, that one silence counts once however often the tick runs, and that session counters answer a `session_id` query but are correctly absent from a `symbol` one (FR-MET-030). |
 | `tests/integration/agent/test_RE_callback_integration.py` (UBS-74) | Real dispatcher failures against a mock Magic endpoint reach `CallbackFailing` through `AgentCounterSampler`; three failures stay under threshold; successful deliveries never touch the failure counter; repeated sampling of the monotonic registry doesn't inflate 3 failures into a false alert; and the agent's own counters leave `secondsSinceLastEvent` null. |
 | `test_MA_05_agent_counters.py` (UBS-74) | `ingest_agent_counters` dimension handling, cardinality folding, out-of-window drop, and that it leaves `_last_event_at` alone while `ingest_counters` still sets it; `AgentCounterSampler`'s first-sample baseline, delta arithmetic, registry-reset rebaselining, and per-bucket placement. |
 
@@ -183,11 +183,15 @@ sampler — and that separate write path deliberately does **not** touch
 `_last_event_at`, because the agent's own dispatcher retrying is not
 evidence that Magic is still producing log activity.
 
-`heartbeat_timeouts` is still unproduced, by choice: a timeout is the
-*absence* of a message, which no per-message derivation can observe. It
-belongs to the Health Reporter's periodic tick. `FixSessionDown` sums it
-with `logouts` and defaults a missing counter to 0, so the rule works
-correctly without it.
+`heartbeat_timeouts` is produced by UBS-106. A timeout is the *absence* of
+a message, which no per-message derivation can observe, so it needs two
+halves: `SessionHeartbeatTracker.observe` remembers when each session was
+last heard from, and `timed_out(now)` is called from the Health Reporter's
+periodic tick. Each silence is latched so it counts once rather than once
+per tick, and a `35=5` Logout drops the session instead of timing it out —
+otherwise one orderly shutdown would post both counters into this one rule.
+`FixSessionDown` still defaults a missing counter to 0, so either half
+fires the rule on its own.
 
 `parse_errors` and `log_lines_read` are `parse_error_rate`'s numerator and
 denominator, so they ride `ingest_agent_counters` too — every line has to be

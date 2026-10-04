@@ -12,6 +12,7 @@ field-by-field translation.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -23,7 +24,8 @@ from telemetry_shared.models.parsed_message import (
 )
 
 from telemetry_agent.parser.fix.fields import FixFields
-from telemetry_agent.parser.fix.telemetry import FixTelemetry
+from telemetry_agent.parser.fix.session_tracker import SessionTimeout
+from telemetry_agent.parser.fix.telemetry import FixTelemetry, session_id_for
 from telemetry_agent.parser.fix.timestamps import parse_fix_timestamp
 from telemetry_agent.parser.protocol import LineClassification, ParseResult, SourceMeta
 
@@ -111,11 +113,11 @@ def derive_session_counters(telemetry: FixTelemetry) -> dict[str, Decimal]:
     caller merges both dicts into one `ingest_counters` call; the metric
     names are declared on `counters.SESSION_DIMS`.
 
-    `heartbeat_timeouts` is not derived here. A timeout is the *absence* of
-    a message, which no per-message function can observe — it belongs to
-    the Health Reporter's periodic tick. `FixSessionDown` still fires on
-    `logouts` alone, since `RuleEngine._read_counter_sum` defaults a
-    missing `extra_counter` to 0.
+    `heartbeat_timeouts` is not derived here, for the reason this function
+    cannot help with: a timeout is the *absence* of a message, which no
+    per-message function can observe. It comes from
+    `fix.session_tracker.SessionHeartbeatTracker`'s periodic tick instead —
+    see `derive_heartbeat_timeout_counters` below (UBS-106).
     """
     counters: dict[str, Decimal] = {}
 
@@ -138,6 +140,46 @@ def derive_session_counters(telemetry: FixTelemetry) -> dict[str, Decimal]:
             counters["seq_gap_messages"] = Decimal(telemetry.seq_gap.gap_size)
 
     return counters
+
+
+def derive_heartbeat_timeout_counters(
+    timeouts: Sequence[SessionTimeout], *, instance_id: str
+) -> list[tuple[dict[str, str], dict[str, Decimal]]]:
+    """UBS-106: one `(dims, counters)` pair per session that just timed out.
+
+    Takes `SessionHeartbeatTracker.timed_out(now)`'s output. Returns a pair
+    per session rather than one merged dict because `heartbeat_timeouts`
+    carries `SESSION_DIMS` — each session is its own label set, so each needs
+    its own `ingest_agent_counters` call:
+
+        for dims, counters in derive_heartbeat_timeout_counters(hits, ...):
+            aggregator.ingest_agent_counters(dims=dims, counters=counters, at=now)
+
+    Labels with `SessionTimeout.session_id`, never `.session_key`: the key is
+    direction-aware internal state, the id is the `FR-MET-030` dimension
+    value that `logouts` and `seq_gaps` already use. Using the key here would
+    split one session across two rows and stop `FixSessionDown` seeing a
+    logout and a timeout as the same session.
+
+    Always exactly 1 per session, never a running total: the tracker latches
+    each silence so a session is reported once per episode, which is what
+    makes `FixSessionDown`'s `>= 1` mean "this session went down" rather than
+    "this session has been down for N ticks".
+
+    `ingest_agent_counters` is the right write path even though these are
+    session counters, not agent counters: it takes explicit `dims` (a tick
+    has no `ParsedMessageEvent` to read them off), and it deliberately does
+    not advance `_last_event_at` — correct twice over for a timeout, since
+    the whole signal *is* an absence of log activity and must not be
+    recorded as evidence of it.
+    """
+    return [
+        (
+            {"instance_id": instance_id, "session_id": timeout.session_id},
+            {"heartbeat_timeouts": Decimal(1)},
+        )
+        for timeout in timeouts
+    ]
 
 
 def derive_parser_counters(result: ParseResult) -> dict[str, Decimal]:
@@ -191,9 +233,10 @@ def _parse_error_reason(result: ParseResult) -> str | None:
 
 
 def _session_id(fields: FixFields) -> str:
-    sender = fields.sender_comp_id or "unknown"
-    target = fields.target_comp_id or "unknown"
-    return f"{sender}->{target}"
+    # Delegates so this format has exactly one definition — UBS-106's
+    # heartbeat-timeout path needs the same label without a FixFields in
+    # hand. See `session_id_for`.
+    return session_id_for(fields.sender_comp_id, fields.target_comp_id)
 
 
 def _to_decimal(raw: str | None) -> Decimal | None:
