@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-17
+Status: Live document · Last updated: 2026-09-26
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | M1.5 | Pipeline bridge (monitor → parser) | **Partial** — UBS-48 library done; UBS-49 integration (supervisor, MA-01, heartbeat) not started |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), plus the basic FastAPI ingestion contract and bounded asynchronous hand-off, are implemented and tested. Authentication, dedupe/rate/body limits, allowlists, agent-registry write-through, the agent's Backend Publisher, and query HTTP remain unstarted. |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), the FastAPI ingestion contract and bounded asynchronous hand-off, and ingest-side dimension/field allowlists and series-cardinality enforcement are implemented and tested. Authentication, dedupe/rate/body limits, agent-registry write-through, and query HTTP remain unstarted; the agent's Backend Publisher is implemented. |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -103,13 +103,13 @@ table beneath). UBS-93 (Alert Store) is a separate, later epic.
 | UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
 | UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
 | UBS-66 | Ingestion API and payload contract | `POST /telemetry/batch`, `/events`, `/heartbeat`; basic schema validation; bounded hand-off | Done | `tests/unit/backend/api/test_ingestion.py` |
+| UBS-86 | Dimension/field allowlists and cardinality enforcement at ingest | `FR-ING-006`, `FR-ING-007`, `NFR-SEC-002` | Done | `tests/unit/backend/api/test_ingestion.py` |
 
 Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
 §7. The backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
-accepted snapshots. No agent Backend Publisher exists yet, and events, alerts, and heartbeats
-remain queued typed payloads until their dedicated stores are implemented. Authentication,
-dedupe/rate/body limits, dimension/field allowlists, and Agent Registry write-through remain
-separate ingestion stories (UBS-85–87).
+accepted snapshots. Events, alerts, and heartbeats remain queued typed payloads until their
+dedicated stores are implemented. Authentication, dedupe/rate/body limits, and Agent Registry
+write-through remain separate ingestion stories.
 
 ## M5 requirement coverage (RE-01–04)
 

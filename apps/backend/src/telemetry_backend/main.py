@@ -242,12 +242,32 @@ def create_app(
     ) -> JSONResponse | None:
         if ingestion.enqueue(item):
             return None
+        ingestion.release_cardinality_reservation(item)
         return _error_response(
             request,
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="queue_full",
             message="Ingestion queue is full; retry the batch later.",
             details=[],
+        )
+
+    def validate_or_reject(
+        request: Request, item: AcceptedIngestion
+    ) -> JSONResponse | None:
+        issues = ingestion.validate_and_reserve(item)
+        if not issues:
+            return None
+        ingestion.record_rejection()
+        issue_codes = {issue.code for issue in issues}
+        code = issue_codes.pop() if len(issue_codes) == 1 else "invalid_field"
+        return _error_response(
+            request,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=code,
+            message="Request payload failed ingestion policy validation.",
+            details=[
+                ErrorDetail(field=issue.field, issue=issue.issue) for issue in issues
+            ],
         )
 
     @app.post(
@@ -287,15 +307,16 @@ def create_app(
             )
             limited.headers["Retry-After"] = str(verdict.retry_after_seconds)
             return limited
-        full = enqueue_or_full(
-            request,
-            AcceptedIngestion(
-                snapshots=tuple(batch.snapshots),
-                events=tuple(batch.events),
-                alerts=tuple(batch.alerts),
-                heartbeat=batch.heartbeat,
-            ),
+        item = AcceptedIngestion(
+            snapshots=tuple(batch.snapshots),
+            events=tuple(batch.events),
+            alerts=tuple(batch.alerts),
+            heartbeat=batch.heartbeat,
         )
+        invalid = validate_or_reject(request, item)
+        if invalid is not None:
+            return invalid
+        full = enqueue_or_full(request, item)
         if full is not None:
             return full
         app_deps.ingest_guard.commit(batch.agent_id, batch_id)
@@ -324,7 +345,11 @@ def create_app(
     async def ingest_events(
         request: Request, payload: EventsRequest
     ) -> BatchAccepted | JSONResponse:
-        full = enqueue_or_full(request, AcceptedIngestion(events=tuple(payload.events)))
+        item = AcceptedIngestion(events=tuple(payload.events))
+        invalid = validate_or_reject(request, item)
+        if invalid is not None:
+            return invalid
+        full = enqueue_or_full(request, item)
         if full is not None:
             return full
         return BatchAccepted(

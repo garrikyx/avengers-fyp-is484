@@ -123,6 +123,7 @@ dev = [
     { name = "ruff" },
     { name = "telemetry-agent" },
     { name = "telemetry-backend" },
+    { name = "telemetry-simulator" },
     { name = "types-pyyaml" },
 ]
 
@@ -136,6 +137,7 @@ dev = [
     { name = "ruff", specifier = ">=0.11" },
     { name = "telemetry-agent", editable = "apps/agent" },
     { name = "telemetry-backend", editable = "apps/backend" },
+    { name = "telemetry-simulator", editable = "apps/simulator" },
     { name = "types-pyyaml" },
 ]
 
