@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-23
+Status: Live document · Last updated: 2026-09-29
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | M1.5 | Pipeline bridge (monitor → parser) | **Partial** — UBS-48 library done; UBS-49 integration (supervisor, MA-01, heartbeat) not started |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), plus the basic FastAPI ingestion contract and bounded asynchronous hand-off, are implemented and tested. Authentication, dedupe/rate/body limits, allowlists, agent-registry write-through, the agent's Backend Publisher, and query HTTP remain unstarted. |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor, Metric Store, ingestion contract, alert query API, and metrics query API (`POST /telemetry/query/metrics`) are implemented and tested. Authentication, dedupe/rate/body limits, allowlists, agent-registry write-through (UBS-87), health read API (UBS-69), and the agent's Backend Publisher remain unstarted. |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -106,6 +106,12 @@ table beneath). UBS-93–95 (Alert Store epic) are now implemented.
 | UBS-93 | Alert state storage and merge by `alertId` | `FR-QRY-016`, `FR-QRY-017` | Done | `test_FR_QRY_016_017_alert_store.py` |
 | UBS-94 | Alert query API (list + detail) | `GET /telemetry/alerts`, `GET /telemetry/alerts/{alertId}` (spec 007 §4) | Done | `test_UBS_94_alerts_query.py` |
 | UBS-95 | Backend-owned `AgentHeartbeatMissing` | `FR-QRY-018`, `FR-RUL-030` | Done | `test_FR_QRY_018_heartbeat_missing.py` |
+| UBS-68 | Metrics query API (shape, filters, grouping) | `POST /telemetry/query/metrics`, `FR-QRY-006`–`010`, spec 007 §3 | Done | `test_UBS_68_query_engine.py`, `test_UBS_68_metrics_query.py` |
+| UBS-91 | Query clamping, timeouts, `dataCompleteness` | `FR-QRY-011`, `013`–`015` | Done | `test_UBS_91_query_limits.py` |
+| UBS-92 | Multi-replica scatter-gather | `NFR-SCA-003`–`004`, `queryMode: fanout \| colocated` | Done | `test_UBS_92_replica_fanout.py` |
+
+UBS-68's original alert-query AC is satisfied by UBS-94 (split per epic scope). API
+examples: [`metrics-query-api.md`](./metrics-query-api.md).
 
 Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
 §7. The backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
@@ -174,7 +180,11 @@ backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
 | Stream Processor (window alignment, staleness) | `apps/backend/src/telemetry_backend/services/stream_processor.py` |
 | Metric Store (cross-agent merge, ring buffer) | `apps/backend/src/telemetry_backend/services/metric_store.py` |
 | Stream Processor / Metric Store config | `apps/backend/src/telemetry_backend/config.py` |
-| Backend HTTP entrypoint (`/healthz`, `/readyz`, `/telemetry/alerts`) | `apps/backend/src/telemetry_backend/main.py` |
+| Backend HTTP entrypoint (`/healthz`, `/readyz`, `/telemetry/alerts`, `/telemetry/query/metrics`) | `apps/backend/src/telemetry_backend/main.py` |
+| Metrics Query Engine | `apps/backend/src/telemetry_backend/services/query_engine.py` |
+| Replica fan-out (UBS-92) | `apps/backend/src/telemetry_backend/services/replica_fanout.py` |
+| Shared metrics query models | `packages/telemetry_shared/src/telemetry_shared/models/metrics_query.py` |
+| Query alias tables | `packages/telemetry_shared/src/telemetry_shared/query/aliases.py` |
 | Alert Store (active + resolved history) | `apps/backend/src/telemetry_backend/services/alert_store.py` |
 | Minimal agent heartbeat registry | `apps/backend/src/telemetry_backend/services/agent_registry.py` |
 | Backend `AgentHeartbeatMissing` monitor | `apps/backend/src/telemetry_backend/services/heartbeat_monitor.py` |

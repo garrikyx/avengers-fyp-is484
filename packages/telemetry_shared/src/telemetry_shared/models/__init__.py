@@ -33,6 +33,16 @@ from telemetry_shared.models.metrics import (
     MetricsSnapshot,
     WindowBounds,
 )
+from telemetry_shared.models.metrics_query import (
+    DataCompleteness,
+    EffectiveTimeRange,
+    MetricsQueryRequest,
+    MetricsQueryResponse,
+    QueryGroup,
+    QueryInterpretation,
+    QueryTimeRange,
+    SeriesPoint,
+)
 from telemetry_shared.models.snapshot import HistogramPayload, SeriesEntry, Snapshot
 
 __all__ = [
@@ -54,8 +64,16 @@ __all__ = [
     "Indicator",
     "Indicators",
     "LatencySummary",
+    "DataCompleteness",
+    "EffectiveTimeRange",
     "MetricsGroup",
+    "MetricsQueryRequest",
+    "MetricsQueryResponse",
     "MetricsSnapshot",
+    "QueryGroup",
+    "QueryInterpretation",
+    "QueryTimeRange",
+    "SeriesPoint",
     "ResourceUsage",
     "SeriesEntry",
     "Snapshot",

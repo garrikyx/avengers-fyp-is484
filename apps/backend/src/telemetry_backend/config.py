@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from telemetry_shared.metrics import DEFAULT_MIN_SAMPLE_SIZE, DEFAULT_PERCENTILES
 
@@ -44,6 +45,34 @@ class IngestionConfig:
     def __post_init__(self) -> None:
         if self.queue_size < 1:
             raise ValueError("queue_size must be at least 1")
+
+
+@dataclass(slots=True, frozen=True)
+class QueryConfig:
+    """Query engine limits (spec 006 §5, spec 010 `query.*`)."""
+
+    query_timeout_seconds: float = 3.0
+    max_range_seconds: int = 21600
+    max_groups: int = 500
+    max_series_points: int = 1500
+    query_mode: Literal["fanout", "colocated"] = "colocated"
+    replica_registry: tuple[str, ...] = ()
+    fanout_timeout_seconds: float = 1.5
+    missing_heartbeat_threshold_seconds: int = 60
+
+    def __post_init__(self) -> None:
+        if self.query_timeout_seconds <= 0:
+            raise ValueError("query_timeout_seconds must be positive")
+        if self.max_range_seconds < 1:
+            raise ValueError("max_range_seconds must be at least 1")
+        if self.max_groups < 1:
+            raise ValueError("max_groups must be at least 1")
+        if self.max_series_points < 1:
+            raise ValueError("max_series_points must be at least 1")
+        if self.fanout_timeout_seconds <= 0:
+            raise ValueError("fanout_timeout_seconds must be positive")
+        if self.missing_heartbeat_threshold_seconds < 1:
+            raise ValueError("missing_heartbeat_threshold_seconds must be at least 1")
 
 
 @dataclass(slots=True, frozen=True)

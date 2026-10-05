@@ -564,6 +564,7 @@ version = "0.1.0"
 source = { editable = "apps/backend" }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "redis" },
     { name = "telemetry-shared" },
     { name = "uvicorn" },
@@ -572,6 +573,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "redis", specifier = ">=5" },
     { name = "telemetry-shared", editable = "packages/telemetry_shared" },
     { name = "uvicorn", specifier = ">=0.34" },

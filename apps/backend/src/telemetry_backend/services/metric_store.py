@@ -36,7 +36,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from telemetry_shared.metrics import (
@@ -190,6 +190,11 @@ class MetricStore:
         # FR-QRY-003: buckets evicted by `_shed_oldest_tier` under memory
         # pressure, as opposed to ordinary retention-window eviction.
         self.shed_buckets_total = 0
+        self._instance_applications: dict[str, str] = {}
+
+    @property
+    def instance_applications(self) -> dict[str, str]:
+        return dict(self._instance_applications)
 
     def _bucket_index(self, at: datetime) -> int:
         return int(at.timestamp() // self._config.canonical_bucket_seconds)
@@ -294,6 +299,7 @@ class MetricStore:
                     self.dropped_after_retention_total += 1
                 return
             self.has_data = True
+            self._instance_applications[snapshot.instance_id] = snapshot.application
 
             native_bucket_epoch = int(snapshot.bucket_start_utc.timestamp())
             bucket.contributing_agent_ids.add(snapshot.agent_id)
@@ -516,6 +522,109 @@ class MetricStore:
                 )
                 if bucket.restarted_agent_ids
             )
+
+    def list_instance_ids(self, *, now: datetime | None = None) -> list[str]:
+        """Instances with at least one occupied bucket in retention."""
+        now = now or datetime.now(UTC)
+        oldest_valid = self._bucket_index(now) - self._capacity + 1
+        result: list[str] = []
+        for instance_id, ring in self._rings.items():
+            found = self._existing_instance(instance_id)
+            if found is None:
+                continue
+            _, lock = found
+            with lock:
+                if any(
+                    bucket.start is not None and bucket.start >= oldest_valid
+                    for bucket in ring
+                ):
+                    result.append(instance_id)
+        return sorted(result)
+
+    def retention_bounds(
+        self, *, now: datetime | None = None
+    ) -> tuple[datetime | None, datetime | None]:
+        """Oldest and newest canonical bucket timestamps still resident."""
+        now = now or datetime.now(UTC)
+        oldest_valid = self._bucket_index(now) - self._capacity + 1
+        min_index: int | None = None
+        max_index: int | None = None
+        for instance_id in list(self._rings.keys()):
+            found = self._existing_instance(instance_id)
+            if found is None:
+                continue
+            ring, lock = found
+            with lock:
+                for bucket in ring:
+                    if bucket.start is None or bucket.start < oldest_valid:
+                        continue
+                    min_index = (
+                        bucket.start
+                        if min_index is None
+                        else min(min_index, bucket.start)
+                    )
+                    max_index = (
+                        bucket.start
+                        if max_index is None
+                        else max(max_index, bucket.start)
+                    )
+        if min_index is None or max_index is None:
+            return None, None
+        step = self._config.canonical_bucket_seconds
+        oldest = datetime.fromtimestamp(min_index * step, tz=UTC)
+        newest = datetime.fromtimestamp((max_index + 1) * step, tz=UTC)
+        return oldest, newest
+
+    def contributing_agent_ids(
+        self, instance_id: str, *, from_utc: datetime, to_utc: datetime
+    ) -> set[str]:
+        found = self._existing_instance(instance_id)
+        if found is None:
+            return set()
+        ring, lock = found
+        agents: set[str] = set()
+        with lock:
+            for bucket in self._in_range_buckets(
+                ring, from_utc=from_utc, to_utc=to_utc
+            ):
+                agents.update(bucket.contributing_agent_ids)
+        return agents
+
+    def read_series(
+        self,
+        instance_id: str,
+        *,
+        from_utc: datetime,
+        to_utc: datetime,
+        step: str,
+        group_by: tuple[str, ...] = (),
+    ) -> list[tuple[datetime, list[MetricsGroup]]]:
+        """Per-step bucket reads; empty group list means a null gap."""
+        step_seconds = {"10s": 10, "1m": 60, "5m": 300}[step]
+        aligned_from = self._align_step(from_utc, step_seconds)
+        aligned_to = self._align_step(to_utc, step_seconds)
+        if aligned_from > aligned_to:
+            return []
+
+        points: list[tuple[datetime, list[MetricsGroup]]] = []
+        current = aligned_from
+        while current <= aligned_to:
+            step_end = current + timedelta(seconds=step_seconds)
+            groups = self.read(
+                instance_id,
+                from_utc=current,
+                to_utc=step_end - timedelta(microseconds=1),
+                group_by=group_by,
+            )
+            points.append((current, groups))
+            current += timedelta(seconds=step_seconds)
+        return points
+
+    @staticmethod
+    def _align_step(at: datetime, step_seconds: int) -> datetime:
+        epoch = int(at.timestamp())
+        aligned = (epoch // step_seconds) * step_seconds
+        return datetime.fromtimestamp(aligned, tz=UTC)
 
     def read(
         self,

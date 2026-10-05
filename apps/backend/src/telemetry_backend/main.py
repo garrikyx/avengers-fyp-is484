@@ -1,8 +1,9 @@
 """FastAPI entry point for the Telemetry Backend (spec 006 §1, §7).
 
 Serves ingestion (`/telemetry/batch`, `/telemetry/events`,
-`/telemetry/heartbeat`), alert queries (`/telemetry/alerts`), and probe
-endpoints `/healthz` and `/readyz` (`FR-HLT-010`, `FR-QRY-005`).
+`/telemetry/heartbeat`), metrics queries (`POST /telemetry/query/metrics`),
+alert queries (`/telemetry/alerts`), and probe endpoints `/healthz` and
+`/readyz` (`FR-HLT-010`, `FR-QRY-005`).
 
     uv run uvicorn telemetry_backend.main:app
 """
@@ -24,12 +25,25 @@ from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.alerts_query import AlertDetailResponse, AlertsListResponse
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
+from telemetry_shared.models.metrics_query import (
+    MetricsQueryRequest,
+    MetricsQueryResponse,
+)
 
-from telemetry_backend.config import StreamProcessorConfig
+from telemetry_backend.config import QueryConfig, StreamProcessorConfig
 from telemetry_backend.services.agent_registry import AgentRegistry
 from telemetry_backend.services.alert_store import AlertStore
 from telemetry_backend.services.heartbeat_monitor import HeartbeatMonitor
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
+from telemetry_backend.services.query_engine import (
+    QueryEngine,
+    QueryTimeoutError,
+    QueryValidationError,
+)
+from telemetry_backend.services.replica_fanout import (
+    REPLICA_QUERY_HEADER,
+    HttpxFanoutClient,
+)
 from telemetry_backend.services.stream_processor import StreamProcessor
 
 
@@ -126,16 +140,21 @@ def create_app(
     alert_store: AlertStore | None = None,
     agent_registry: AgentRegistry | None = None,
     heartbeat_monitor: HeartbeatMonitor | None = None,
+    query_engine: QueryEngine | None = None,
+    query_config: QueryConfig | None = None,
     *,
     enable_heartbeat_monitor: bool = True,
 ) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
-    stream = processor or StreamProcessor(StreamProcessorConfig())
+    qconfig = query_config or QueryConfig()
     if service is not None:
         ingestion = service
+        stream = ingestion.stream_processor
         store = ingestion.alert_store
         monitor = ingestion.heartbeat_monitor
+        registry = ingestion.agent_registry
     else:
+        stream = processor or StreamProcessor(StreamProcessorConfig())
         store = alert_store or AlertStore()
         registry = agent_registry or AgentRegistry()
         monitor = heartbeat_monitor
@@ -147,6 +166,16 @@ def create_app(
             agent_registry=registry,
             heartbeat_monitor=monitor,
         )
+
+    engine = query_engine or QueryEngine(
+        stream.store,
+        stream_processor=stream,
+        agent_registry=registry,
+        query_config=qconfig,
+    )
+    fanout_client: HttpxFanoutClient | None = None
+    if qconfig.query_mode == "fanout" and qconfig.replica_registry:
+        fanout_client = HttpxFanoutClient()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -168,11 +197,15 @@ def create_app(
                     await task
                 except asyncio.CancelledError:
                     pass
+            if fanout_client is not None:
+                await fanout_client.aclose()
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
     app.state.processor = stream
     app.state.alert_store = store
+    app.state.query_engine = engine
+    app.state.fanout_client = fanout_client
 
     # The probe endpoints return bare dicts rather than this module's
     # CamelModel envelopes on purpose: an orchestrator's liveness/readiness
@@ -305,6 +338,41 @@ def create_app(
             received_at_utc=_received_at_utc(),
             accepted=_counts(),
         )
+
+    @app.post(
+        "/telemetry/query/metrics",
+        response_model=MetricsQueryResponse,
+        responses={
+            400: {"model": ErrorEnvelope},
+            504: {"model": ErrorEnvelope},
+        },
+    )
+    async def query_metrics(
+        request: Request, body: MetricsQueryRequest
+    ) -> MetricsQueryResponse | JSONResponse:
+        skip_fanout = request.headers.get(REPLICA_QUERY_HEADER) == "1"
+        try:
+            return await engine.query(
+                body,
+                skip_fanout=skip_fanout,
+                fanout_client=fanout_client,
+            )
+        except QueryValidationError as exc:
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=exc.code,
+                message=exc.message,
+                details=[ErrorDetail(field=exc.field, issue=exc.issue)],
+            )
+        except QueryTimeoutError:
+            return _error_response(
+                request,
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                code="query_timeout",
+                message="Query exceeded the server-side deadline.",
+                details=[],
+            )
 
     @app.get(
         "/telemetry/alerts",
