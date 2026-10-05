@@ -17,6 +17,7 @@ from telemetry_backend.services.alert_store import AlertStore
 logger = logging.getLogger(__name__)
 
 _RULE_NAME = "AgentHeartbeatMissing"
+_DEFAULT_APPLICATION = "Magic"
 
 
 def backend_alert_id(agent_id: str) -> str:
@@ -89,42 +90,39 @@ class HeartbeatMonitor:
             notification_count=1,
         )
 
+    @staticmethod
+    def _instance_id(agent_id: str, record_instance_ids: list[str]) -> str:
+        return record_instance_ids[0] if record_instance_ids else agent_id
+
     def evaluate_once(self) -> None:
         now = self._now_fn()
-        threshold = self._config.missing_heartbeat_threshold_seconds
-        stale_records = self._registry.agents_exceeding_threshold(
-            threshold, now=now
-        )
-        stale_ids = {record.agent_id for record in stale_records}
+        stale_ids = set(self._registry.stale_agents(at=now))
 
-        for record in stale_records:
-            instance_id = (
-                record.instance_ids[0] if record.instance_ids else record.agent_id
-            )
-            age = (now - record.last_heartbeat_utc).total_seconds()  # type: ignore[operator]
+        for agent_id in stale_ids:
+            record = self._registry.get(agent_id)
+            if record is None:
+                continue
+            instance_id = self._instance_id(agent_id, record.instance_ids)
+            age = (now - record.received_at).total_seconds()
             event = self._build_firing_event(
-                agent_id=record.agent_id,
-                application=record.application,
+                agent_id=agent_id,
+                application=_DEFAULT_APPLICATION,
                 instance_id=instance_id,
                 age_seconds=age,
             )
             self._alert_store.merge(event, source="backend", now=now)
-            self._firing.add(record.agent_id)
+            self._firing.add(agent_id)
 
         recovered = self._firing - stale_ids
         for agent_id in recovered:
-            agent_record = self._registry.get_record(agent_id)
-            if agent_record is None:
+            record = self._registry.get(agent_id)
+            if record is None:
                 self._firing.discard(agent_id)
                 continue
-            instance_id = (
-                agent_record.instance_ids[0]
-                if agent_record.instance_ids
-                else agent_record.agent_id
-            )
+            instance_id = self._instance_id(agent_id, record.instance_ids)
             event = self._build_resolved_event(
                 agent_id=agent_id,
-                application=agent_record.application,
+                application=_DEFAULT_APPLICATION,
                 instance_id=instance_id,
             )
             self._alert_store.merge(event, source="backend", now=now)
@@ -139,20 +137,16 @@ class HeartbeatMonitor:
         """Resolve a backend alert immediately when a fresh heartbeat arrives."""
         if agent_id not in self._firing:
             return
-        record = self._registry.get_record(agent_id)
+        record = self._registry.get(agent_id)
         if record is None:
             self._firing.discard(agent_id)
             return
         now = self._now_fn()
-        threshold = self._config.missing_heartbeat_threshold_seconds
-        last = record.last_heartbeat_utc
-        if last is not None and (now - last).total_seconds() <= threshold:
-            instance_id = (
-                record.instance_ids[0] if record.instance_ids else record.agent_id
-            )
+        if not self._registry.is_stale(record, at=now):
+            instance_id = self._instance_id(agent_id, record.instance_ids)
             event = self._build_resolved_event(
                 agent_id=agent_id,
-                application=record.application,
+                application=_DEFAULT_APPLICATION,
                 instance_id=instance_id,
             )
             self._alert_store.merge(event, source="backend", now=now)

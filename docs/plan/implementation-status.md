@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-23
+Status: Live document · Last updated: 2026-09-26
 
 Specs state the target; this document states what exists. Where the two differ, the difference
 is recorded here rather than by quietly editing the spec.
@@ -14,7 +14,7 @@ is recorded here rather than by quietly editing the spec.
 | M1.5 | Pipeline bridge (monitor → parser) | **Partial** — UBS-48 library done; UBS-49 integration (supervisor, MA-01, heartbeat) not started |
 | **M2** | **FIX parser (UBS-40–47)** | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline |
 | **M3** | **Metrics aggregation** | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge) |
-| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), plus the basic FastAPI ingestion contract and bounded asynchronous hand-off, are implemented and tested. Authentication, dedupe/rate/body limits, allowlists, agent-registry write-through, the agent's Backend Publisher, and query HTTP remain unstarted. |
+| **M4** | **Backend ingestion, store, query** | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), the FastAPI ingestion contract and bounded asynchronous hand-off, and ingest-side dimension/field allowlists and series-cardinality enforcement are implemented and tested. Authentication, dedupe/rate/body limits, agent-registry write-through, and query HTTP remain unstarted; the agent's Backend Publisher is implemented. |
 | **M5** | **Rules, alerts, callbacks** | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started |
 | M6 | Natural language layer | Not started |
 | M7 | Operability hardening | Not started |
@@ -103,18 +103,18 @@ table beneath). UBS-93–95 (Alert Store epic) are now implemented.
 | UBS-88 | Window alignment, staleness, and agent reconciliation | `FR-STM-001`, `FR-ING-005`, `FR-STM-005`, `FR-STM-006` | Done | `test_STM_01_window_alignment.py`, `test_STM_03_warmup.py` |
 | UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
 | UBS-66 | Ingestion API and payload contract | `POST /telemetry/batch`, `/events`, `/heartbeat`; basic schema validation; bounded hand-off | Done | `tests/unit/backend/api/test_ingestion.py` |
+| UBS-86 | Dimension/field allowlists and cardinality enforcement at ingest | `FR-ING-006`, `FR-ING-007`, `NFR-SEC-002` | Done | `tests/unit/backend/api/test_ingestion.py` |
 | UBS-93 | Alert state storage and merge by `alertId` | `FR-QRY-016`, `FR-QRY-017` | Done | `test_FR_QRY_016_017_alert_store.py` |
 | UBS-94 | Alert query API (list + detail) | `GET /telemetry/alerts`, `GET /telemetry/alerts/{alertId}` (spec 007 §4) | Done | `test_UBS_94_alerts_query.py` |
 | UBS-95 | Backend-owned `AgentHeartbeatMissing` | `FR-QRY-018`, `FR-RUL-030` | Done | `test_FR_QRY_018_heartbeat_missing.py` |
 
 Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
 §7. The backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
-accepted snapshots, `AlertStore.merge()` for alerts, and a minimal heartbeat registry for
-`AgentHeartbeatMissing`. Events remain accept-and-drop (no Event Store story yet). Alert
-query responses carry placeholder `delivery.status: unknown` until agent callback delivery
-is published to the backend. Authentication, dedupe/rate/body limits, dimension/field
-allowlists, and full Agent Registry write-through (UBS-87) and health read API (UBS-69)
-remain separate stories.
+accepted snapshots and `AlertStore.merge()` for alerts. Heartbeats update the Agent Registry
+(UBS-69/87) and feed `AgentHeartbeatMissing` (UBS-95). Events remain accept-and-drop (no Event
+Store story yet). Alert query responses carry placeholder `delivery.status: unknown` until
+agent callback delivery is published to the backend. Authentication and body-size limits
+remain separate stories; dedupe/rate limiting (UBS-85) and health read API (UBS-69) are done.
 
 ## M5 requirement coverage (RE-01–04)
 
@@ -125,10 +125,11 @@ remain separate stories.
 | RE-03 | The 14 default rules | `FR-RUL-010` | Done | `test_RE_04_default_rules.py` |
 
 Full detail and the alert-readiness table: `docs/plan/re-epic-implementation-summary.md`.
-Not yet wired: consecutive-failure streak tracking (no rule kind or
-producer), session-message counters (`logouts`, `heartbeat_timeouts`,
-`seq_gaps`, `clock_skew_events`), Callback Dispatcher and Backend Publisher
-(so their self-health rules have no data). `config/rules.yaml` loading and
+Not yet wired: consecutive-failure streak tracking as a general rule kind
+(`BackendUnreachable` gets the effect from a publisher-maintained gauge,
+FR-MET-031). Session-message counters (`logouts`, `seq_gaps`,
+`clock_skew_events`) landed with UBS-73 and `heartbeat_timeouts` with
+UBS-106 (FR-MET-032). `config/rules.yaml` loading and
 SIGHUP reload are implemented (`config_loader.py`); only the call to
 `SighupRuleReloader.install()` from a real running process is unwired,
 since no agent supervisor loop exists yet (M1).

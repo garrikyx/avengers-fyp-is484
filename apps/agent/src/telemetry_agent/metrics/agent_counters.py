@@ -28,6 +28,15 @@ DEFAULT_AGENT_METRICS: frozenset[str] = frozenset(
     {"callback_failures", "callback_delivered", "callback_queue_dropped"}
 )
 
+# UBS-75: the same treatment for the Backend Publisher's registry. Kept as
+# a separate set rather than folded into the default, because a sampler is
+# per-registry (see the class docstring) — the publisher and the dispatcher
+# each need their own, and one sampler tracking both names would diff each
+# registry against the other's baseline.
+PUBLISH_AGENT_METRICS: frozenset[str] = frozenset(
+    {"publish_failures", "publish_rejected"}
+)
+
 
 class AgentCounterSampler:
     """Turns monotonic since-startup counters into per-bucket deltas.

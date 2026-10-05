@@ -106,7 +106,8 @@ agent restarts harmless.
       }
     }
   ],
-  "gauges": { "pending_orders": 340, "read_lag_ms": 120, "publish_queue_depth": 4 }
+  "gauges": { "pending_orders": 340, "read_lag_ms": 120, "publish_queue_depth": 4,
+              "consecutive_publish_failures": 0 }
 }
 ```
 
@@ -118,6 +119,12 @@ agent restarts harmless.
 - `FR-MET-027`: A series with all-zero counters MUST be omitted from the snapshot.
 - `FR-MET-028`: Gauges are instantaneous values at bucket close; the backend takes the latest,
   never the sum.
+- `FR-MET-031`: `consecutive_publish_failures` is the number of publish attempts that have
+  failed in a row since the last successful batch commit. It MUST reset to 0 on commit, and
+  MUST be `null` — never 0 — when the agent has no Backend Publisher configured, so an agent
+  that cannot report on publishing is never mistaken for one that is publishing cleanly. It
+  backs `BackendUnreachable` (spec 005 §1.2); the `publish_failures` counter in §4.3 remains
+  the cumulative windowed measure for trends and queries, and is not what that rule reads.
 
 ## 4. Metric catalogue
 
@@ -145,6 +152,18 @@ agent restarts harmless.
 `fix_messages_total`, `fix_messages_by_type` (dimension `msgType`), `seq_gaps`,
 `seq_gap_messages` (sum of gap sizes), `seq_regressions`, `logons`, `logouts`,
 `heartbeat_timeouts`.
+
+- `FR-MET-032`: `heartbeat_timeouts` counts FIX sessions that have gone silent for longer
+  than `health.sessionHeartbeatTimeout` (default `60s`, mirroring the backend's
+  `missingHeartbeatThreshold` in FR-RUL-030 so both ends agree on what a missing heartbeat
+  is). *Any* message refreshes a session, not only `35=0` — FIX requires a Heartbeat only
+  when the session is otherwise idle, so a session busy with orders is demonstrably alive.
+  Each silence MUST be counted **once**, latched until the session speaks again: the
+  detector runs on a periodic tick, and re-counting every tick would scale a single dead
+  session with outage duration in a counter `FixSessionDown` reads at `>= 1` critical.
+  A session that sends `35=5` Logout MUST be dropped rather than timed out, or one orderly
+  shutdown would post both `logouts` and `heartbeat_timeouts` for the same event.
+  Producer: `parser.fix.session_tracker.SessionHeartbeatTracker` (UBS-106).
 
 ### 4.3 Agent self counters
 

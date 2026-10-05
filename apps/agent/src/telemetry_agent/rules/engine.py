@@ -115,7 +115,11 @@ def _read_counter_sum(rule: RuleConfig, group: MetricsGroup | None) -> Decimal:
 
 
 def _read_gauge(rule: RuleConfig, snapshot: MetricsSnapshot) -> Decimal | None:
-    value = getattr(snapshot.gauges, rule.metric)
+    # Default to None rather than letting getattr raise: a gauge name is
+    # hand-typed in rules.yaml just like a counter name, and an unknown
+    # counter already reads as no-fire (`_read_counter_sum`). A typo should
+    # silence one rule, not crash every evaluation with an AttributeError.
+    value = getattr(snapshot.gauges, rule.metric, None)
     return _decimal_or_none(value)
 
 
@@ -164,7 +168,14 @@ def _matched_tier(
 
 def _matched_condition(rule: RuleConfig, tier: SeverityTier, observed: Decimal) -> str:
     window_part = f" over {rule.window}" if rule.window else ""
-    condition = f"{rule.metric} {rule.operator} {tier.threshold}{window_part}"
+    # Name every counter that was summed, not just the primary one
+    # (`_read_counter_sum` adds `extra_counters`). `FixSessionDown` sums
+    # `logouts + heartbeat_timeouts`, so reporting it as "logouts >= 1" on a
+    # heartbeat timeout tells the on-call engineer to go looking for a
+    # logout that never happened. Harmless until UBS-106 gave the second
+    # counter a producer; a lie now.
+    metric = " + ".join((rule.metric, *rule.extra_counters))
+    condition = f"{metric} {rule.operator} {tier.threshold}{window_part}"
     return f"{condition} (observed {observed})"
 
 

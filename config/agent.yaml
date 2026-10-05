@@ -58,3 +58,8 @@
 #   publishQueueHighWatermark: 10
 #   publishQueueCriticalWatermark: 100
 #   callbackFailuresDegraded: 1
+#   # UBS-106: FIX session silence counted as a heartbeat_timeouts event,
+#   # feeding FixSessionDown (spec 005 §1.2). Mirrors the backend's own
+#   # missingHeartbeatThreshold (FR-RUL-030) so both ends agree on
+#   # "missing heartbeat"; spec 004 §4.2 supplies no interval of its own.
+#   sessionHeartbeatTimeout: 60s

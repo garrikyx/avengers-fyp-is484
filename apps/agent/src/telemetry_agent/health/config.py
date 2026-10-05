@@ -73,6 +73,15 @@ class HealthThresholds:
     publish_queue_critical_watermark: int = 100
     # spec 011 §2: callback failures > 0 in last 5 minutes => degraded
     callback_failures_degraded: int = 1
+    # UBS-106: FIX session silence that counts as a heartbeat timeout. Spec
+    # 004 §4.2 names `heartbeat_timeouts` but gives no interval, so this
+    # mirrors the backend's own AgentRegistry.missing_threshold_seconds
+    # (FR-RUL-030 `missingHeartbeatThreshold`, 60s) rather than inventing a
+    # separate number — agent and backend then agree on what "missing
+    # heartbeat" means. Not an agent-health threshold like its siblings: it
+    # describes the FIX session, and lives here because the Health
+    # Reporter's tick is what notices the silence.
+    session_heartbeat_timeout_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         if self.parse_error_rate_degraded >= self.parse_error_rate_unhealthy:
@@ -88,6 +97,10 @@ class HealthThresholds:
         # shorter cannot be represented and would fail later, at reporter build.
         if self.rolling_window_seconds < 1:
             raise HealthConfigError("health.rollingWindow must be >= 1s")
+        if self.session_heartbeat_timeout_seconds <= 0:
+            raise HealthConfigError(
+                "health.sessionHeartbeatTimeout must be > 0"
+            )
 
 
 # --- YAML shape -------------------------------------------------------------
@@ -118,6 +131,7 @@ class _HealthYaml(_Strict):
     publish_queue_high_watermark: int | None = None
     publish_queue_critical_watermark: int | None = None
     callback_failures_degraded: int | None = None
+    session_heartbeat_timeout: str | int | float | None = None
 
 
 class _AgentConfigYaml(BaseModel):
@@ -203,6 +217,11 @@ def load_health_config(
             publish_queue_high_watermark=health.publish_queue_high_watermark,
             publish_queue_critical_watermark=health.publish_queue_critical_watermark,
             callback_failures_degraded=health.callback_failures_degraded,
+            session_heartbeat_timeout_seconds=(
+                parse_duration_seconds(health.session_heartbeat_timeout)
+                if health.session_heartbeat_timeout is not None
+                else None
+            ),
         )
     )
     return hb, thresholds

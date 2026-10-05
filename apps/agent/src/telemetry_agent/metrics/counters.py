@@ -81,11 +81,12 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "session_rejects": REJECT_DIMS,
     "rejects_total": REJECT_DIMS,
     # Session counters, derived from the parser's FixTelemetry rather than
-    # from the event itself (parser.metrics_event.derive_session_counters) —
-    # `heartbeat_timeouts` is deliberately absent, since nothing produces it
-    # yet and RuleEngine._read_counter_sum already defaults a missing
-    # extra_counter to 0.
+    # from the event itself (parser.metrics_event.derive_session_counters).
+    # `heartbeat_timeouts` is the exception within the exception: it comes
+    # from SessionHeartbeatTracker's periodic tick rather than from any
+    # single message, because a timeout is the absence of one (UBS-106).
     "logons": SESSION_DIMS,
+    "heartbeat_timeouts": SESSION_DIMS,
     "logouts": SESSION_DIMS,
     "seq_gaps": SESSION_DIMS,
     "seq_gap_messages": SESSION_DIMS,
@@ -96,6 +97,12 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "callback_failures": AGENT_DIMS,
     "callback_delivered": AGENT_DIMS,
     "callback_queue_dropped": AGENT_DIMS,
+    # Backend Publisher health (spec 004 §4.3), fed the same way from the
+    # publisher's CounterRegistry. These are the windowed trend view;
+    # `BackendUnreachable` itself alerts on the consecutive_publish_failures
+    # gauge instead, for the backoff reason in spec 005 §1.2.
+    "publish_failures": AGENT_DIMS,
+    "publish_rejected": AGENT_DIMS,
     # Parser health, fed by parser.metrics_event.derive_parser_counters.
     # These two are `parse_error_rate`'s numerator and denominator (spec 004
     # §4.5) — the indicator ParseErrorRate reads.
