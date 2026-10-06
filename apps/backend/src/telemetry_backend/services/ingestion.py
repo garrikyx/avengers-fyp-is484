@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from telemetry_shared.models.alerts import AlertEvent
-from telemetry_shared.models.ingestion import Heartbeat, TelemetryEvent
+from telemetry_shared.models.ingestion import (
+    WIRE_DIMENSION_KEYS,
+    Heartbeat,
+    TelemetryEvent,
+)
 from telemetry_shared.models.snapshot import Snapshot
 
 from telemetry_backend.services.stream_processor import (
@@ -19,23 +23,9 @@ from telemetry_backend.services.stream_processor import (
 _SeriesKey = tuple[tuple[str, str], ...]
 _CardinalityBucketKey = tuple[str, int]
 
-# spec 004 §5 / FR-ING-007. These are wire-format names, so they stay in
-# camelCase even though Python model attributes use snake_case.
-ALLOWED_DIMENSION_KEYS: frozenset[str] = frozenset(
-    {
-        "application",
-        "instanceId",
-        "session",
-        "symbol",
-        "side",
-        "ordType",
-        "msgType",
-        "rejectReason",
-        "sessionRejectReason",
-        "reason",
-        "severity",
-    }
-)
+# spec 004 §5 / FR-ING-007. The vocabulary itself is shared with the agent
+# (FR-MET-030's "one shared table") so the two sides cannot drift.
+ALLOWED_DIMENSION_KEYS: frozenset[str] = WIRE_DIMENSION_KEYS
 
 # spec 003 §4 is the security allowlist for values that may leave an agent.
 # The backend repeats that allowlist at its own trust boundary (NFR-SEC-002).

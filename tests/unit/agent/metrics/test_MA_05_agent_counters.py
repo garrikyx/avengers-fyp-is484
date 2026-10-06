@@ -26,9 +26,7 @@ _INSTANCE = "magic-prod-01"
 
 def _aggregator(clock: FakeClock | None = None) -> MetricsAggregator:
     config = AggregatorConfig(metric_dimensions=dict(COUNTER_DIMENSIONS))
-    return MetricsAggregator(
-        config=config, clock=clock or FakeClock(_T0.timestamp())
-    )
+    return MetricsAggregator(config=config, clock=clock or FakeClock(_T0.timestamp()))
 
 
 def _total(aggregator: MetricsAggregator, metric: str) -> Decimal:
@@ -134,7 +132,11 @@ def test_sample_older_than_the_retained_window_is_dropped_not_stored() -> None:
     assert _total(aggregator, "callback_failures") == Decimal(0)
 
 
-def test_cardinality_cap_folds_agent_labels_like_any_other_metric() -> None:
+def test_cardinality_cap_counts_agent_labels_but_never_folds_instance_id() -> None:
+    # Agent counters still count against the cap (the fold is observable),
+    # but `instance_id` is the one dimension never folded: it becomes the
+    # wire snapshot's top-level `instanceId`, and an instance named
+    # `__other__` would be published as if it were a real Magic instance.
     config = AggregatorConfig(
         metric_dimensions=dict(COUNTER_DIMENSIONS), max_label_sets=2
     )
@@ -147,7 +149,8 @@ def test_cardinality_cap_folds_agent_labels_like_any_other_metric() -> None:
         )
     assert aggregator.cardinality_folded == 3
     grouped = aggregator.snapshot("5m", group_by=("instance_id",))
-    assert grouped[(OTHER_LABEL,)].counters["callback_failures"] == Decimal(3)
+    assert (OTHER_LABEL,) not in grouped
+    assert {key[0] for key in grouped} == {f"instance-{i}" for i in range(5)}
 
 
 # --- AgentCounterSampler --------------------------------------------------
@@ -197,9 +200,7 @@ def test_untracked_registry_keys_are_ignored() -> None:
     sampler = AgentCounterSampler(aggregator, instance_id=_INSTANCE)
     # `callback_queue_dropped` is tracked; `some_other_counter` is not
     # declared in COUNTER_DIMENSIONS and would raise if it were ingested.
-    sampler.sample(
-        {"callback_queue_dropped": 2, "some_other_counter": 99}, at=_T0
-    )
+    sampler.sample({"callback_queue_dropped": 2, "some_other_counter": 99}, at=_T0)
     assert _total(aggregator, "callback_queue_dropped") == Decimal(2)
 
 

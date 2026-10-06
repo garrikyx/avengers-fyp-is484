@@ -11,10 +11,11 @@ cap, and re-aggregate.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from telemetry_shared.metrics.histogram import Histogram
@@ -23,6 +24,9 @@ from telemetry_shared.models.parsed_message import ParsedMessageEvent
 Clock = Callable[[], float]
 
 OTHER_LABEL = "__other__"
+
+# Never folded into OTHER_LABEL (see `_folded_label`).
+INSTANCE_DIMENSION = "instance_id"
 
 DEFAULT_WINDOWS = {"1m": 60, "5m": 300, "15m": 900}
 
@@ -120,6 +124,10 @@ class _Bucket:
     admitted: dict[str, set[tuple[str, ...]]] = field(default_factory=dict)
     # Total series admitted across every metric (FR-MET-030's maxSeriesPerBucket).
     total_admitted: int = 0
+    # Written to since `take_completed_buckets` last returned it. A late
+    # event (FR-MET-003) re-dirties an already-published bucket, so it is
+    # published again in full.
+    dirty: bool = False
 
     def clear(self) -> None:
         self.start = None
@@ -127,6 +135,21 @@ class _Bucket:
         self.histograms.clear()
         self.admitted.clear()
         self.total_admitted = 0
+        self.dirty = False
+
+
+@dataclass(frozen=True, slots=True)
+class RawBucket:
+    """A copy of one completed ring bucket, labels unflattened — the input
+    to a spec 004 §3 wire snapshot (`FR-MET-024`: counters are this
+    bucket's deltas, not a window's totals). Each label tuple is ordered by
+    `AggregatorConfig.metric_dimensions[metric]`.
+    """
+
+    start_utc: datetime
+    bucket_seconds: int
+    counters: dict[str, dict[tuple[str, ...], Decimal]]
+    histograms: dict[str, dict[tuple[str, ...], Histogram]]
 
 
 class MetricsAggregator:
@@ -137,7 +160,12 @@ class MetricsAggregator:
     `observe_latency` (derived histogram samples, driven by
     correlation.LatencyCorrelator), and `ingest_agent_counters` (the agent's
     own self-observability counters, which have no event behind them at all).
-    One read path: `snapshot`.
+    Two read paths: `snapshot` (a summed window, for the Rule Engine) and
+    `take_completed_buckets` (per-bucket deltas, for the Backend Publisher).
+
+    Every public method holds one lock: the pipeline's parser workers are
+    threads, and a reader iterating a bucket's dicts while a worker writes
+    to them would raise mid-iteration.
     """
 
     def __init__(
@@ -160,6 +188,12 @@ class MetricsAggregator:
         # "no log activity" alert reads this rather than inferring staleness
         # from bucket contents).
         self._last_event_at: float | None = None
+        # Re-entrant: the write and read paths call `tick()` while held.
+        self._lock = threading.RLock()
+
+    def now(self) -> float:
+        """The clock bucket completion is judged against."""
+        return self._clock()
 
     def _bucket_start(self, ts: float) -> int:
         return int(ts // self.config.bucket_seconds)
@@ -172,11 +206,12 @@ class MetricsAggregator:
         loop, so an idle aggregator's counters decay even without new events
         or queries arriving.
         """
-        now = self._clock() if now is None else now
-        oldest_valid = self._bucket_start(now) - self.config.capacity + 1
-        for bucket in self._buckets:
-            if bucket.start is not None and bucket.start < oldest_valid:
-                bucket.clear()
+        with self._lock:
+            now = self._clock() if now is None else now
+            oldest_valid = self._bucket_start(now) - self.config.capacity + 1
+            for bucket in self._buckets:
+                if bucket.start is not None and bucket.start < oldest_valid:
+                    bucket.clear()
 
     def _get_bucket(self, ts: float, *, now: float) -> _Bucket | None:
         start = self._bucket_start(ts)
@@ -208,10 +243,22 @@ class MetricsAggregator:
         at_bucket_cap = bucket.total_admitted >= self.config.max_series_per_bucket
         if at_metric_cap or at_bucket_cap:
             self.cardinality_folded += 1
-            return (OTHER_LABEL,) * len(label)
+            return self._folded_label(metric, label)
         admitted.add(label)
         bucket.total_admitted += 1
         return label
+
+    def _folded_label(self, metric: str, label: tuple[str, ...]) -> tuple[str, ...]:
+        """Fold every dimension to OTHER_LABEL except `instance_id`. That
+        one is bounded by configuration (spec 004 §5), not by traffic, and
+        on the wire it is the snapshot's own `instanceId` — folding it would
+        publish a snapshot for an instance literally named `__other__`.
+        """
+        dims = self._dims_for(metric)
+        return tuple(
+            value if dim == INSTANCE_DIMENSION else OTHER_LABEL
+            for dim, value in zip(dims, label, strict=True)
+        )
 
     def seconds_since_last_event(self) -> float | None:
         """None if nothing has ever been ingested."""
@@ -228,23 +275,25 @@ class MetricsAggregator:
         label = self._admit_label(bucket, metric, label)
         series = bucket.counters.setdefault(metric, {})
         series[label] = series.get(label, Decimal(0)) + amount
+        bucket.dirty = True
 
     def ingest_counters(
         self, event: ParsedMessageEvent, counters: dict[str, Decimal]
     ) -> None:
-        now = self._clock()
-        self._last_event_at = now
-        self.tick(now)
-        bucket = self._get_bucket(event.event_time_utc.timestamp(), now=now)
-        if bucket is None:
-            return
-        for metric, amount in counters.items():
-            dims = self._dims_for(metric)
-            label = tuple(
-                _dimension_value(event, dim, self._resolve_reject_reason)
-                for dim in dims
-            )
-            self._add_counter(bucket, metric, label, amount)
+        with self._lock:
+            now = self._clock()
+            self._last_event_at = now
+            self.tick(now)
+            bucket = self._get_bucket(event.event_time_utc.timestamp(), now=now)
+            if bucket is None:
+                return
+            for metric, amount in counters.items():
+                dims = self._dims_for(metric)
+                label = tuple(
+                    _dimension_value(event, dim, self._resolve_reject_reason)
+                    for dim in dims
+                )
+                self._add_counter(bucket, metric, label, amount)
 
     def ingest_agent_counters(
         self,
@@ -264,22 +313,23 @@ class MetricsAggregator:
         count as such would make a log-starved agent look alive through the
         `secondsSinceLastEvent` gauge.
         """
-        now = self._clock()
-        self.tick(now)
-        bucket = self._get_bucket(at.timestamp(), now=now)
-        if bucket is None:
-            return
-        for metric, amount in counters.items():
-            declared = self._dims_for(metric)
-            try:
-                label = tuple(dims[dim] for dim in declared)
-            except KeyError as exc:
-                msg = (
-                    f"metric {metric!r} declares dimension {exc.args[0]!r}, "
-                    f"which is absent from dims={sorted(dims)}"
-                )
-                raise KeyError(msg) from exc
-            self._add_counter(bucket, metric, label, amount)
+        with self._lock:
+            now = self._clock()
+            self.tick(now)
+            bucket = self._get_bucket(at.timestamp(), now=now)
+            if bucket is None:
+                return
+            for metric, amount in counters.items():
+                declared = self._dims_for(metric)
+                try:
+                    label = tuple(dims[dim] for dim in declared)
+                except KeyError as exc:
+                    msg = (
+                        f"metric {metric!r} declares dimension {exc.args[0]!r}, "
+                        f"which is absent from dims={sorted(dims)}"
+                    )
+                    raise KeyError(msg) from exc
+                self._add_counter(bucket, metric, label, amount)
 
     def observe_latency(
         self,
@@ -289,20 +339,22 @@ class MetricsAggregator:
         value_ms: Decimal,
         at: datetime,
     ) -> None:
-        now = self._clock()
-        self._last_event_at = now
-        self.tick(now)
-        bucket = self._get_bucket(at.timestamp(), now=now)
-        if bucket is None:
-            return
-        dims = self._dims_for(metric)
-        label = tuple(
-            _dimension_value(dims_event, dim, self._resolve_reject_reason)
-            for dim in dims
-        )
-        label = self._admit_label(bucket, metric, label)
-        series = bucket.histograms.setdefault(metric, {})
-        series.setdefault(label, Histogram()).record(value_ms)
+        with self._lock:
+            now = self._clock()
+            self._last_event_at = now
+            self.tick(now)
+            bucket = self._get_bucket(at.timestamp(), now=now)
+            if bucket is None:
+                return
+            dims = self._dims_for(metric)
+            label = tuple(
+                _dimension_value(dims_event, dim, self._resolve_reject_reason)
+                for dim in dims
+            )
+            label = self._admit_label(bucket, metric, label)
+            series = bucket.histograms.setdefault(metric, {})
+            series.setdefault(label, Histogram()).record(value_ms)
+            bucket.dirty = True
 
     def snapshot(
         self, window: str, group_by: Sequence[str] = ()
@@ -328,18 +380,44 @@ class MetricsAggregator:
                 f"group_by must be a subset of {sorted(self.config.known_dimensions)}"
             )
 
-        now = self._clock()
-        self.tick(now)
-        window_buckets = self.config.windows[window] // self.config.bucket_seconds
-        cutoff = self._bucket_start(now) - window_buckets + 1
+        with self._lock:
+            now = self._clock()
+            self.tick(now)
+            window_buckets = self.config.windows[window] // self.config.bucket_seconds
+            cutoff = self._bucket_start(now) - window_buckets + 1
 
-        result: dict[tuple[str, ...], MetricRow] = {}
-        for bucket in self._buckets:
-            if bucket.start is None or bucket.start < cutoff:
-                continue
-            self._merge_counters(bucket, group_by, result)
-            self._merge_histograms(bucket, group_by, result)
-        return result
+            result: dict[tuple[str, ...], MetricRow] = {}
+            for bucket in self._buckets:
+                if bucket.start is None or bucket.start < cutoff:
+                    continue
+                self._merge_counters(bucket, group_by, result)
+                self._merge_histograms(bucket, group_by, result)
+            return result
+
+    def take_completed_buckets(self, *, now: float | None = None) -> list[RawBucket]:
+        """Copies of every bucket that has closed and been written to since
+        the last call, oldest first; marks each one clean.
+
+        An event that lands after its bucket was taken (FR-MET-003)
+        re-dirties it, and it is returned again in full: the backend keys
+        each contribution on `(agentId, bucketStartUtc)` and replaces rather
+        than adds on a repeat, so a re-publish corrects rather than
+        double-counts.
+        """
+        with self._lock:
+            now = self._clock() if now is None else now
+            self.tick(now)
+            width = self.config.bucket_seconds
+            completed: list[RawBucket] = []
+            for bucket in self._buckets:
+                if bucket.start is None or not bucket.dirty:
+                    continue
+                if (bucket.start + 1) * width > now:  # still open
+                    continue
+                completed.append(_copy_bucket(bucket, width))
+                bucket.dirty = False
+            completed.sort(key=lambda raw: raw.start_utc)
+            return completed
 
     def _row_key(
         self, dims: tuple[str, ...], group_by: tuple[str, ...], label: tuple[str, ...]
@@ -384,3 +462,23 @@ class MetricsAggregator:
                     existing = Histogram()
                     row.histograms[metric] = existing
                 existing.merge(hist)
+
+
+def _copy_bucket(bucket: _Bucket, bucket_seconds: int) -> RawBucket:
+    """Detached from the ring: the caller reads it outside the lock while
+    workers keep writing, and `Histogram` is mutable."""
+    assert bucket.start is not None
+    histograms: dict[str, dict[tuple[str, ...], Histogram]] = {}
+    for metric, series in bucket.histograms.items():
+        copied: dict[tuple[str, ...], Histogram] = {}
+        for label, hist in series.items():
+            clone = Histogram()
+            clone.merge(hist)
+            copied[label] = clone
+        histograms[metric] = copied
+    return RawBucket(
+        start_utc=datetime.fromtimestamp(bucket.start * bucket_seconds, tz=UTC),
+        bucket_seconds=bucket_seconds,
+        counters={metric: dict(series) for metric, series in bucket.counters.items()},
+        histograms=histograms,
+    )

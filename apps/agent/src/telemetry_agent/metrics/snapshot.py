@@ -32,7 +32,7 @@ from telemetry_shared.models.metrics import (
 )
 
 
-def _build_gauges(
+def build_gauges(
     aggregator: MetricsAggregator,
     correlator: LatencyCorrelator | None,
     consecutive_publish_failures: int | None,
@@ -111,6 +111,6 @@ def snapshot(
         ),
         generated_at_utc=now,
         group_by=group_by,
-        gauges=_build_gauges(aggregator, correlator, consecutive_publish_failures),
+        gauges=build_gauges(aggregator, correlator, consecutive_publish_failures),
         groups=groups,
     )

@@ -76,6 +76,7 @@ UBS-49 targets: `main.py`, `config.py`, `pipeline/event_bridge.py`, `health/repo
 | MA-02 | Order/execution/reject counters | spec 004 §4.1 | Done | `test_MA_02_counters.py` |
 | MA-03 | Order correlation and latency | spec 004 §4.4 | Done | `test_MA_03_correlation.py`, `test_histogram.py` |
 | MA-04 | Calculated indicators and snapshot output | `FR-QRY-007`, `FR-QRY-010`, `FR-QRY-012` | Done | `test_MA_04_snapshot.py` |
+| — | Aggregator → Backend Publisher bridge (per-bucket wire snapshots) | `FR-MET-024`–`028`, `FR-MET-031`, `FR-MET-003` (re-publish on late event) | Done (library; not yet called from a running agent — UBS-49) | `test_MA_06_emitter.py`, `tests/integration/agent/test_snapshot_publish_backend.py` |
 
 Full detail and an alert-readiness mapping: `docs/plan/ma-epic-implementation-summary.md`.
 Not yet wired: real events into MA-01–04 depend on M1 (Log Monitor) and M1.5 (pipeline
@@ -90,6 +91,34 @@ counters on `counters.AGENT_DIMS`, via the new
 `MetricsAggregator.ingest_agent_counters` write path, which deliberately
 leaves `secondsSinceLastEvent` alone). See
 `docs/plan/re-epic-implementation-summary.md` §7.
+
+`metrics.emitter.SnapshotEmitter` connects the aggregator to the Backend
+Publisher. It reads *completed buckets* (`MetricsAggregator.take_completed_buckets`),
+not MA-04's summed window — publishing a window each tick would re-send the
+same events every tick — and emits one spec 004 §3 `Snapshot` per bucket per
+instance: `instance_id` becomes the top-level `instanceId`, and other
+dimensions are renamed to wire keys (`emitter.WIRE_DIMENSION`) drawn from the
+shared `telemetry_shared.models.ingestion.WIRE_DIMENSION_KEYS`, which is now
+also the backend's allowlist. A bucket dirtied by a late event is re-published
+in full, and the Metric Store replaces rather than adds. Snapshots are pushed
+into `BackendPublisher.enqueue_snapshot` on a bucket-width ticker
+(`SnapshotEmitter.run`), so collection continues while the publisher is backing
+off. Each configured instance (`instance_ids`) also gets a series-less
+snapshot for every completed bucket it was idle in (FR-MET-024 is per bucket
+per instance), which is what keeps the backend's gauges — notably
+`seconds_since_last_event` — current through a quiet period. Gauges follow
+spec 004 §3: `pending_orders`, `read_lag_ms`, `publish_queue_depth` and
+`consecutive_publish_failures` (plus `oldest_pending_age_seconds` and
+`seconds_since_last_event`); an unwired source is omitted, never sent as 0.
+`read_lag_ms` is the agent-wide worst file lag
+(`HealthReporter.overall_read_lag_ms`) because file statuses don't yet carry
+their instance. The aggregator now holds a lock on every public method
+(pipeline workers are threads), and never folds `instance_id` into `__other__`.
+
+Still to do in UBS-49: construct and run it from `main.py` with
+`bucket_seconds=10` (`FR-MET-001`; `AggregatorConfig` still defaults to 1s),
+and the spec 002 §8.2 shutdown sequence — collect the still-open bucket, then
+one final `publish_once` — which needs both components stopped together.
 
 ## M4 requirement coverage (Stream Processor & Metric Store)
 
@@ -163,6 +192,7 @@ backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
 | Unit tests (parser) | `tests/unit/agent/parser/` |
 | Metrics aggregator, counters, correlation, histogram | `apps/agent/src/telemetry_agent/metrics/` |
 | Calculated indicators and snapshot output | `apps/agent/src/telemetry_agent/metrics/snapshot.py` |
+| Aggregator → wire snapshot bridge | `apps/agent/src/telemetry_agent/metrics/emitter.py` |
 | Shared snapshot contract | `packages/telemetry_shared/src/telemetry_shared/models/metrics.py` |
 | Unit tests (metrics) | `tests/unit/agent/metrics/` |
 | Shared histogram, ratios, latency summary | `packages/telemetry_shared/src/telemetry_shared/metrics/` |

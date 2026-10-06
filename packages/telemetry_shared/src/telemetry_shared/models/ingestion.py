@@ -12,6 +12,26 @@ from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.snapshot import Snapshot
 
+# spec 004 §5 / FR-MET-030 / FR-ING-007: the one dimension-key vocabulary
+# allowed on the wire. The backend rejects any other key at its trust
+# boundary, so it lives here rather than in either app. Wire-format names,
+# hence camelCase.
+WIRE_DIMENSION_KEYS: frozenset[str] = frozenset(
+    {
+        "application",
+        "instanceId",
+        "session",
+        "symbol",
+        "side",
+        "ordType",
+        "msgType",
+        "rejectReason",
+        "sessionRejectReason",
+        "reason",
+        "severity",
+    }
+)
+
 
 class TelemetryEvent(CamelModel):
     """One derived operational event."""
