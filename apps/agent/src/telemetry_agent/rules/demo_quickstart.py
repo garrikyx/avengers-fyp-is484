@@ -27,6 +27,7 @@ events out from under it mid-run.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -53,6 +54,7 @@ from telemetry_agent.parser.metrics_event import (
     parser_counter_dims,
 )
 from telemetry_agent.parser.protocol import SourceMeta
+from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.publishing.config import parse_publish_config
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import PublishResult
@@ -569,6 +571,59 @@ def _heartbeat_timeout_act() -> None:
     )
 
 
+def _alerts_to_backend_act() -> None:
+    """UBS-109. Every act above raised its alert locally and stopped there —
+    `BackendPublisher.enqueue_alert()` was called nowhere. This routes a real
+    alert through `AlertRouter` into the publisher and prints the actual
+    `TelemetryBatch` that goes over the wire to `POST /telemetry/batch`.
+    """
+    demo = _Demo()
+    demo.feed(demo.rejected_orders(51, start=1))
+    alerts = demo.settle("1m", for_seconds=demo.rule_for_seconds("RejectSpike"))
+    print(f"  the engine raised {len(alerts)} alert(s): "
+          f"{', '.join(a.rule_name for a in alerts)}")
+
+    sent: list[bytes] = []
+
+    class _CapturingSink:
+        async def send(
+            self, *, body: bytes, headers: Mapping[str, str]
+        ) -> PublishResult:
+            sent.append(body)
+            return PublishResult(status_code=202, latency_ms=1.0)
+
+    publisher = BackendPublisher(
+        _CapturingSink(),
+        parse_publish_config({"endpoint": _PUBLISH_ENDPOINT}),
+        agent_id="agent-sg-01",
+        application="Magic",
+    )
+    router = AlertRouter(publisher, agent_id="agent-sg-01", application="Magic")
+    routed = router.route(alerts, now=_T0)
+    asyncio.run(publisher.publish_once(now=_T0))
+
+    batch = json.loads(sent[0])
+    print(f"  routed {routed}, published 1 batch to {_PUBLISH_ENDPOINT}:\n")
+    print(f"    schemaVersion  {batch['schemaVersion']}")
+    print(f"    batchId        {batch['batchId']}")
+    print(f"    batchSeq       {batch['batchSeq']}")
+    print(f"    agentId        {batch['agentId']}")
+    print(f"    application    {batch['application']}")
+    print(f"    sentAtUtc      {batch['sentAtUtc']}")
+    print(f"    alerts[]       {len(batch['alerts'])} item(s)")
+    first = batch["alerts"][0]
+    for key in (
+        "alertId", "ruleName", "severity", "status",
+        "instanceId", "observedValue", "threshold", "matchedCondition",
+    ):
+        print(f"      {key:<16} {first[key]}")
+    print(f"    snapshots[]    {len(batch['snapshots'])}  "
+          "(not the rule engine's output — out of scope)")
+    print("\n  Same shape as telemetry_shared.models.ingestion.TelemetryBatch,")
+    print("  camelCase on the wire. The backend's alert store (UBS-93/94/95)")
+    print("  merges it and serves it back from GET /telemetry/alerts.")
+
+
 def _no_log_activity_act() -> None:
     """UBS-20. Needs an instance that has read *nothing*, so it can't share
     the main story's aggregator — that one has thousands of messages in
@@ -823,13 +878,17 @@ def main() -> None:
     _step("18. UBS-106 — a session goes silent without logging out")
     _heartbeat_timeout_act()
 
+    _step("19. UBS-109 — the alert leaves the agent for the backend")
+    _alerts_to_backend_act()
+
     _part("Closing")
     print("  Every alert above was produced locally, on the agent, from log")
     print("  bytes — no backend involved. Act 10 is the agent noticing that its")
     print("  own alerts are not reaching Magic, and act 17 is it noticing it")
     print("  cannot reach the backend — exactly the two failures a centrally-")
     print("  hosted alerting system could not report (NFR-REL-003).")
-    print("\n  All 14 rules in config/rules.yaml now have producers.")
+    print("\n  All 14 rules in config/rules.yaml now have producers, and act 19")
+    print("  is the same alerts leaving the agent for the backend's alert store.")
     print("\n  Hot-reload (FR-RUL-008) needs a live process to signal:")
     print("      make rules-reload-demo")
 

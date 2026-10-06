@@ -13,6 +13,8 @@
 # publish:
 #   enabled: true
 #   endpoint: https://telemetry.internal.example/telemetry/batch
+#   # ^ Rule Engine alerts ride this same batch endpoint in TelemetryBatch.alerts
+#   #   (UBS-109, via pipeline.AlertRouter) — there is no alerts-specific route.
 #   allowInsecureEndpoint: false
 #   dryRun: true
 #   interval: 10s
