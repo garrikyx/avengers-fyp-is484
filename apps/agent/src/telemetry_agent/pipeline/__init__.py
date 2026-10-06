@@ -4,6 +4,7 @@ from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.pipeline.committer import PipelineCommitter
 from telemetry_agent.pipeline.config import PipelineConfig
 from telemetry_agent.pipeline.deduper import ProcessedLineDeduper
+from telemetry_agent.pipeline.evaluator import RuleEvaluator
 from telemetry_agent.pipeline.monitor_adapter import MonitorPipelineAdapter
 from telemetry_agent.pipeline.supervisor import PipelineBridge
 from telemetry_agent.pipeline.types import ParsedEvent, QueuedLine
@@ -17,4 +18,5 @@ __all__ = [
     "PipelineConfig",
     "ProcessedLineDeduper",
     "QueuedLine",
+    "RuleEvaluator",
 ]

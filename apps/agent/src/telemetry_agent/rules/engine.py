@@ -291,6 +291,12 @@ class RuleEngine:
             if state.status in (AlertStatus.FIRING, AlertStatus.RESOLVING)
         )
 
+    @property
+    def rules(self) -> tuple[RuleConfig, ...]:
+        """The active rule set, including any `apply_rules()` hot-swap, so a
+        caller can tell which windows need a snapshot this tick."""
+        return self._rules
+
     def status_of(self, rule_name: str) -> AlertStatus | None:
         """Current lifecycle status for one rule, or `None` if untracked
         (`inactive`). Read-only introspection, e.g. for a future health/debug
