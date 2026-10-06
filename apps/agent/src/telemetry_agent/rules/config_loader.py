@@ -27,6 +27,7 @@ from pydantic.alias_generators import to_camel
 from telemetry_agent.rules.defaults import DEFAULT_RULES
 from telemetry_agent.rules.engine import _OPERATORS, RuleEngine
 from telemetry_agent.rules.types import RuleConfig, RuleKind, SeverityTier, ValueSource
+from telemetry_shared.models.alerts import AlertEvent
 
 _DURATION_RE = re.compile(r"^(\d+)([smh])$")
 _DURATION_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
@@ -171,18 +172,28 @@ class SighupRuleReloader:
         self._path = path
         self._logger = logger or logging.getLogger(__name__)
 
-    def reload(self, *, now: datetime | None = None) -> None:
+    def reload(self, *, now: datetime | None = None) -> list[AlertEvent]:
+        """Returns the `resolved` events `apply_rules()` emits for alerts
+        whose rule was removed, so a caller can route them (UBS-113). Empty
+        when the new file is rejected and the last-known-good set stays.
+        """
         try:
             new_rules = load_rules(self._path)
         except RuleConfigError as exc:
             self._logger.error(
                 "rules reload rejected, keeping last-known-good: %s", exc
             )
-            return
-        self._engine.apply_rules(new_rules, now=now or datetime.now(UTC))
+            return []
+        resolved = self._engine.apply_rules(new_rules, now=now or datetime.now(UTC))
         self._logger.info(
             "rules reloaded: %d rules from %s", len(new_rules), self._path
         )
+        return resolved
 
     def install(self) -> None:
+        """Standalone use only: this reloads inside the signal handler and
+        drops the returned `resolved` events. A running agent should
+        instead register `RuleEvaluator.request_reload` with
+        `loop.add_signal_handler(SIGHUP, ...)`, which defers the reload to
+        the next evaluation tick and routes those events (UBS-113)."""
         signal.signal(signal.SIGHUP, lambda *_: self.reload())
