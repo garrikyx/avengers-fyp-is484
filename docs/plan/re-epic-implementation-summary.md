@@ -176,8 +176,29 @@ alerts batched with it. UBS-110 adds the second destination: given a
 That includes alerts the identity check keeps off the backend, because a
 callback carries a single alert and has no batch to break. Each enqueue is
 guarded separately, so a fault on one path never costs the other its alert
-(`NFR-REL-003`). Not yet wired: a live supervisor to call the router outside
-demos and tests.
+(`NFR-REL-003`).
+
+**What drives evaluation (UBS-113).** `pipeline.RuleEvaluator` is the
+periodic loop: every `interval_seconds` (default 10s) it does six things.
+
+1. Applies a pending SIGHUP rule reload.
+2. Ticks the aggregator and correlator.
+3. Ingests heartbeat timeouts for FIX sessions that went silent.
+4. Samples the dispatcher's and publisher's counters into the windowed store.
+5. Builds one snapshot per rule window and evaluates each.
+6. Routes everything that changed through the `AlertRouter`.
+
+A tick that raises is counted, and the loop carries on. Rule reloads are
+now safe. `SighupRuleReloader.reload()` used to throw away the `resolved`
+events `apply_rules()` returns. It now returns them, and
+`request_reload()` only sets a flag, so the reload runs between
+evaluations instead of inside a signal handler. The ingest side (UBS-112)
+must agree on two things. First, session times passed to
+`SessionHeartbeatTracker` use `time.monotonic()`. Second, if ingest runs
+on another thread, both sides share one `threading.Lock`.
+`RuleEvaluator(lock=...)` holds it while building snapshots. Still not
+wired: the agent entry point (UBS-114) that constructs this and runs
+`evaluator.run(stop)`.
 
 ## 7. Counter producers (UBS-73 / UBS-74)
 
