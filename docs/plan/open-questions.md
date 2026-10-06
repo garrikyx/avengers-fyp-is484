@@ -1,6 +1,6 @@
 # Open Questions and Decisions Required
 
-Status: Live document · Last updated: 2026-07-31
+Status: Live document · Last updated: 2026-09-27
 
 Each question records why it matters, what the specs currently assume so work is not blocked,
 and what has to change once it is answered. When a question is resolved, record the answer here,
@@ -20,6 +20,7 @@ update the affected specs, and add an ADR if the answer is a design decision rat
 | Q-10 | Who receives alerts besides Magic | Notification design | Open |
 | Q-11 | Scope of "Callback audit" under Integration Service | UBS-102, spec 008 §6/§7 shape | Open |
 | Q-12 | Config/control push from backend to agent (thresholds, rules) | Day-1 vs Day-2 scope boundary | Open |
+| Q-13 | Production deployment topology (local vs cloud, DB requirement) | Hosting plan, persistence design, FYP demo vs production target | **Open — raised 2026-09-23 sponsor call** |
 
 ---
 
@@ -240,6 +241,67 @@ spec 001 §1's diagram caption saying so, so future readers don't assume it's im
 confirmed Day-1: this needs its own epic (agent-side config-fetch/apply, backend-side
 config-distribution API) and is a scope addition, not something already covered by the epics
 created in this pass.
+
+---
+
+## Q-13 — Production deployment topology (local vs cloud, DB requirement)
+
+**Why it matters.** The team planned a sprint to "host everything to cloud" because no UBS
+server is available for FYP development. In the 2026-09-23 sponsor call, Avinash clarified
+that cloud is acceptable for test/demo purposes, but **actual client data in production
+cannot sit on public cloud** due to sensitive/shared information; **local is preferable**,
+with local filesystem or MongoDB/Postgres on a **local/on-prem server** acceptable. This
+question separates three things that are easy to conflate: (1) where the **backend service
+runs**, (2) whether **derived telemetry** (not raw logs) may be stored centrally, and (3)
+whether a **database** is required at all. It also resolves tension between the formal Day-1
+design ([ADR 0005](../adr/0005-in-memory-metric-store.md): in-memory ring buffer, no DB) and
+stale README/scaffold language that mentions Redis (Day-1) and PostgreSQL (Day-2).
+
+**Current assumption.**
+
+- **Agent:** colocated on the Magic host; read-only log access; never persists or transmits
+  raw log content ([ADR 0004](../adr/0004-no-raw-log-persistence.md)).
+- **Backend Day-1:** process-local in-memory metric and alert stores, 6h default retention
+  (24h max); no database deployed ([ADR 0005](../adr/0005-in-memory-metric-store.md)).
+- **FYP/demo:** student-managed cloud or local Docker is acceptable with simulator data only.
+- **Production (provisional, from sponsor call):** backend on local/on-prem server; optional
+  local MongoDB or Postgres if persistence is needed; public cloud not for client data.
+
+**What is needed from the sponsor.**
+
+1. Confirm the **production target topology**: agent on Magic host + backend on
+   **UBS/on-prem local server** (not public cloud)?
+2. Confirm whether **public cloud is FYP/demo-only** — i.e. we should not treat cloud
+   hosting as the final production architecture.
+3. Confirm whether **in-memory backend retention (6–24h)** is acceptable for Day-1/FYP
+   delivery, or whether a **local MongoDB/Postgres** is **required** for derived metrics
+   and/or alert history.
+4. If a local DB is required: **MongoDB vs Postgres preference**, and what must be
+   persisted (metrics, alert history, agent registry/audit)?
+5. Clarify whether the "no cloud" rule applies to **derived aggregates** (reject rates,
+   session metrics, hashed identifiers) or only to raw/sensitive log content — our design
+   already excludes raw logs everywhere.
+6. Will UBS provide a **local VM/server** for integration/UAT, or should the team
+   self-host locally until handover?
+7. Is a **single backend instance** acceptable for production/UAT initially, or is
+   multi-replica HA/failover in scope for FYP delivery?
+
+**On resolution.**
+
+- Update spec 001 §§3–5 (technology stack, deployment topology, scaling) with the confirmed
+  production profile (`fyp-local`, `fyp-cloud-demo`, `ubs-onprem`, etc.).
+- If local DB is required: add an ADR reversing or extending ADR 0005 (scope: derived data
+  only; no raw logs; local/on-prem placement).
+- If cloud is FYP-only: remove or deprioritise "cloud hosting sprint" work; align M7
+  `docker-compose` demo path to the production-local model.
+- Reconcile stale README/compose Redis/Postgres language with the decided storage model.
+- If single-server is confirmed: document that scatter-gather / consistent-hash routing
+  (spec 006 `NFR-SCA-003`/`004`) is deferred until HA is required.
+
+**Related:** [Q-4](#q-4--preferred-deployment-topology) (agent placement),
+[Q-7](#q-7--what-data-retention-approach-is-required-for-day-2-historical-analysis)
+(retention drives DB need). Sponsor email draft:
+[sponsor-email-deployment-clarifications.md](./sponsor-email-deployment-clarifications.md).
 
 ---
 

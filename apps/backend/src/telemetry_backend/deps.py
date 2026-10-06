@@ -14,8 +14,10 @@ from datetime import UTC, datetime
 
 from fastapi import Request
 
-from telemetry_backend.config import BackendHealthConfig
+from telemetry_backend.config import AlertingConfig, BackendHealthConfig
 from telemetry_backend.services.agent_registry import AgentRegistry
+from telemetry_backend.services.alert_store import AlertStore
+from telemetry_backend.services.heartbeat_monitor import HeartbeatMonitor
 from telemetry_backend.services.ingest_guard import IngestGuard
 from telemetry_backend.services.ingestion import IngestionService
 from telemetry_backend.services.self_metrics import SelfMetrics
@@ -32,6 +34,8 @@ class AppDeps:
     config: BackendHealthConfig = field(default_factory=BackendHealthConfig)
     clock: Clock = _utc_now
     registry: AgentRegistry = field(init=False)
+    alert_store: AlertStore = field(default_factory=AlertStore)
+    heartbeat_monitor: HeartbeatMonitor = field(init=False)
     self_metrics: SelfMetrics = field(init=False)  # UBS-96
     ingest_guard: IngestGuard = field(init=False)  # UBS-85
     # Set by `main.create_app`, so the internal app's `/readyz` and
@@ -47,6 +51,16 @@ class AppDeps:
         self.ingest_guard = IngestGuard(self.config.ingest, clock=self.clock)
         self.self_metrics = SelfMetrics(
             self.registry, clock=self.clock, ingestion=lambda: self.ingestion
+        )
+        self.heartbeat_monitor = HeartbeatMonitor(
+            registry=self.registry,
+            alert_store=self.alert_store,
+            config=AlertingConfig(
+                missing_heartbeat_threshold_seconds=int(
+                    self.config.missing_heartbeat_threshold_seconds
+                ),
+            ),
+            now_fn=self.clock,
         )
 
 

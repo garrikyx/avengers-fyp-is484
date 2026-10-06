@@ -14,6 +14,34 @@ from telemetry_shared.metrics import DEFAULT_MIN_SAMPLE_SIZE, DEFAULT_PERCENTILE
 
 
 @dataclass(slots=True, frozen=True)
+class AlertStoreConfig:
+    """Alert store retention (spec 006 §6, spec 010 `store.recentAlertLimit`)."""
+
+    recent_alert_limit: int = 500
+    max_transitions: int = 50
+
+    def __post_init__(self) -> None:
+        if self.recent_alert_limit < 1:
+            raise ValueError("recent_alert_limit must be at least 1")
+        if self.max_transitions < 1:
+            raise ValueError("max_transitions must be at least 1")
+
+
+@dataclass(slots=True, frozen=True)
+class AlertingConfig:
+    """Backend-owned alerting rules (spec 005 `FR-RUL-030`)."""
+
+    missing_heartbeat_threshold_seconds: int = 60
+    monitor_interval_seconds: int = 10
+
+    def __post_init__(self) -> None:
+        if self.missing_heartbeat_threshold_seconds < 1:
+            raise ValueError("missing_heartbeat_threshold_seconds must be at least 1")
+        if self.monitor_interval_seconds < 1:
+            raise ValueError("monitor_interval_seconds must be at least 1")
+
+
+@dataclass(slots=True, frozen=True)
 class IngestionConfig:
     """Configuration for the bounded ingestion hand-off."""
 

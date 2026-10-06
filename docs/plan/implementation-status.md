@@ -96,7 +96,7 @@ leaves `secondsSinceLastEvent` alone). See
 Renumbered since this table was first written: the original single ticket for this
 work (UBS-79/UBS-88 in earlier drafts) split into UBS-89 (cross-agent merge
 correctness — the rows below) and UBS-90 (store memory & concurrency — its own
-table beneath). UBS-93 (Alert Store) is a separate, later epic.
+table beneath). UBS-93–95 (Alert Store epic) are now implemented.
 
 | ID | Story | Requirement | Status | Verified by |
 | --- | --- | --- | --- | --- |
@@ -104,12 +104,17 @@ table beneath). UBS-93 (Alert Store) is a separate, later epic.
 | UBS-88 | Cross-agent merge semantics (counters/ratios/histograms) | `FR-STM-002`–`004` | Done | `test_STM_02_merge_semantics.py` |
 | UBS-66 | Ingestion API and payload contract | `POST /telemetry/batch`, `/events`, `/heartbeat`; basic schema validation; bounded hand-off | Done | `tests/unit/backend/api/test_ingestion.py` |
 | UBS-86 | Dimension/field allowlists and cardinality enforcement at ingest | `FR-ING-006`, `FR-ING-007`, `NFR-SEC-002` | Done | `tests/unit/backend/api/test_ingestion.py` |
+| UBS-93 | Alert state storage and merge by `alertId` | `FR-QRY-016`, `FR-QRY-017` | Done | `test_FR_QRY_016_017_alert_store.py` |
+| UBS-94 | Alert query API (list + detail) | `GET /telemetry/alerts`, `GET /telemetry/alerts/{alertId}` (spec 007 §4) | Done | `test_UBS_94_alerts_query.py` |
+| UBS-95 | Backend-owned `AgentHeartbeatMissing` | `FR-QRY-018`, `FR-RUL-030` | Done | `test_FR_QRY_018_heartbeat_missing.py` |
 
 Full detail and known gaps: [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md)
 §7. The backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
-accepted snapshots. Events, alerts, and heartbeats remain queued typed payloads until their
-dedicated stores are implemented. Authentication, dedupe/rate/body limits, and Agent Registry
-write-through remain separate ingestion stories.
+accepted snapshots and `AlertStore.merge()` for alerts. Heartbeats update the Agent Registry
+(UBS-69/87) and feed `AgentHeartbeatMissing` (UBS-95). Events remain accept-and-drop (no Event
+Store story yet). Alert query responses carry placeholder `delivery.status: unknown` until
+agent callback delivery is published to the backend. Authentication and body-size limits
+remain separate stories; dedupe/rate limiting (UBS-85) and health read API (UBS-69) are done.
 
 ## M5 requirement coverage (RE-01–04)
 
@@ -170,7 +175,11 @@ backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
 | Stream Processor (window alignment, staleness) | `apps/backend/src/telemetry_backend/services/stream_processor.py` |
 | Metric Store (cross-agent merge, ring buffer) | `apps/backend/src/telemetry_backend/services/metric_store.py` |
 | Stream Processor / Metric Store config | `apps/backend/src/telemetry_backend/config.py` |
-| Backend HTTP entrypoint (`/healthz`, `/readyz`) | `apps/backend/src/telemetry_backend/main.py` |
+| Backend HTTP entrypoint (`/healthz`, `/readyz`, `/telemetry/alerts`) | `apps/backend/src/telemetry_backend/main.py` |
+| Alert Store (active + resolved history) | `apps/backend/src/telemetry_backend/services/alert_store.py` |
+| Minimal agent heartbeat registry | `apps/backend/src/telemetry_backend/services/agent_registry.py` |
+| Backend `AgentHeartbeatMissing` monitor | `apps/backend/src/telemetry_backend/services/heartbeat_monitor.py` |
+| Shared alert query response models | `packages/telemetry_shared/src/telemetry_shared/models/alerts_query.py` |
 | Unit tests (backend services) | `tests/unit/backend/services/` |
 | Unit tests (shared metrics/snapshot model) | `tests/unit/telemetry_shared/metrics/`, `tests/unit/telemetry_shared/models/` |
 | Rule types, FSM, default rules | `apps/agent/src/telemetry_agent/rules/` |

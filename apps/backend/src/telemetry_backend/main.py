@@ -1,10 +1,9 @@
 """FastAPI entry point for the Telemetry Backend (spec 006 §1, §7).
 
-Serves the ingestion contract (`/telemetry/batch`, `/telemetry/events`,
-`/telemetry/heartbeat`), the two probe endpoints `/healthz` and `/readyz`
-(`FR-HLT-010`, `FR-QRY-005`) and the agent-liveness read side under
-`/telemetry/health` (UBS-69, `FR-ING-010`). The query, alert and NL routes
-depend on components this app doesn't build yet and are out of scope here.
+Serves ingestion (`/telemetry/batch`, `/telemetry/events`,
+`/telemetry/heartbeat`), alert queries (`/telemetry/alerts`), agent health
+(`/telemetry/health`), and probe endpoints `/healthz` and `/readyz`
+(`FR-HLT-010`, `FR-QRY-005`).
 
     uv run telemetry-backend [--config config/backend.yaml]
     uv run uvicorn telemetry_backend.main:app
@@ -20,15 +19,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import Field
+from pydantic import Field, ValidationError
 from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
+from telemetry_shared.models.alerts_query import AlertDetailResponse, AlertsListResponse
 from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
 
 from telemetry_backend.api import health as health_api
@@ -85,6 +86,23 @@ class ErrorEnvelope(CamelModel):
     error: ErrorBody
 
 
+class AlertsQueryParams(CamelModel):
+    """Strict query model for `GET /telemetry/alerts` (`FR-QRY-032`)."""
+
+    status: Literal["active", "resolved", "all"] = "active"
+    application: str | None = None
+    instance_id: str | None = Field(default=None, validation_alias="instanceId")
+    rule_name: str | None = Field(default=None, validation_alias="ruleName")
+    severity: str | None = None
+    since: datetime | None = None
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+_ALERTS_QUERY_KEYS = frozenset(
+    {"status", "application", "instanceId", "ruleName", "severity", "since", "limit"}
+)
+
+
 def _received_at_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -116,20 +134,21 @@ def _error_response(
     )
 
 
+def _notify_heartbeat(
+    ingestion: IngestionService, agent_id: str
+) -> None:
+    if ingestion.heartbeat_monitor is not None:
+        ingestion.heartbeat_monitor.on_heartbeat(agent_id)
+
+
 def create_app(
     service: IngestionService | None = None,
     processor: StreamProcessor | None = None,
     deps: AppDeps | None = None,
+    *,
+    enable_heartbeat_monitor: bool = True,
 ) -> FastAPI:
     """Build an application, allowing tests and deployment to supply a service."""
-    # One StreamProcessor, shared by ingestion and `/readyz`. `is_ready()`
-    # needs the store to have data, so probing a separate instance that
-    # ingestion never feeds would report `warming` forever. Its warmup
-    # clock starts once, here - for the module-level `app = create_app()`
-    # below that is import time, matching FR-QRY-005's "since this replica
-    # started".
-    # UBS-69: the Agent Registry and the health read side. Shared via
-    # app.state so routers reach the same instance (see deps.py).
     app_deps = deps or AppDeps()
     if service is not None:
         if processor is not None and processor is not service.stream_processor:
@@ -139,40 +158,51 @@ def create_app(
             )
         ingestion = service
     else:
+        monitor = app_deps.heartbeat_monitor if enable_heartbeat_monitor else None
         ingestion = IngestionService(
             stream_processor=processor
             or StreamProcessor(
                 StreamProcessorConfig(
                     warmup_window_seconds=int(app_deps.config.warmup_window_seconds)
                 )
-            )
+            ),
+            alert_store=app_deps.alert_store,
+            heartbeat_monitor=monitor,
         )
     stream = ingestion.stream_processor
-    # UBS-96: the internal app's /readyz and /metrics read this same service.
+    store = ingestion.alert_store
     app_deps.ingestion = ingestion
     self_metrics = app_deps.self_metrics
+    monitor = ingestion.heartbeat_monitor
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         worker = asyncio.create_task(ingestion.run(), name="telemetry-ingestion")
+        heartbeat_task: asyncio.Task[None] | None = None
+        if monitor is not None:
+            heartbeat_task = asyncio.create_task(
+                monitor.run(), name="telemetry-heartbeat-monitor"
+            )
         try:
             yield
         finally:
             worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass
+            tasks: list[asyncio.Task[None]] = [worker]
+            if heartbeat_task is not None:
+                tasks.append(heartbeat_task)
+            for task in tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
     app.state.processor = stream
     app.state.deps = app_deps
+    app.state.alert_store = store
     app.include_router(health_api.router)
 
-    # The probe endpoints return bare dicts rather than this module's
-    # CamelModel envelopes on purpose: an orchestrator's liveness/readiness
-    # check shouldn't have to parse a telemetry-shaped response.
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         """FR-HLT-010: liveness only — process up, no dependency checks."""
@@ -283,8 +313,6 @@ def create_app(
     async def ingest_batch(
         request: Request, batch: TelemetryBatch
     ) -> BatchAccepted | JSONResponse:
-        # UBS-85: dedupe by batchId (FR-ING-004), then per-agent rate limit
-        # (FR-ING-008). See services/ingest_guard.py for the ordering.
         batch_id = str(batch.batch_id)
         verdict = app_deps.ingest_guard.check(batch.agent_id, batch_id)
         if isinstance(verdict, Duplicate):
@@ -321,10 +349,10 @@ def create_app(
             return full
         app_deps.ingest_guard.commit(batch.agent_id, batch_id)
         self_metrics.ingest_batches.inc()
-        # A heartbeat embedded in a batch counts the same as a standalone one.
         if batch.heartbeat is not None:
             app_deps.registry.record_heartbeat(batch.heartbeat)
             self_metrics.heartbeats_received.inc()
+            _notify_heartbeat(ingestion, batch.heartbeat.agent_id)
         return BatchAccepted(
             status="accepted",
             batch_id=batch_id,
@@ -373,19 +401,80 @@ def create_app(
         full = enqueue_or_full(request, AcceptedIngestion(heartbeat=heartbeat))
         if full is not None:
             return full
-        # FR-ING-010: record every agent's last heartbeat, version and
-        # connectivity state in the Agent Registry as telemetry arrives.
-        # `record_heartbeat` returns True on first contact - the unknown-agent
-        # event that hangs off it is UBS-87.
-        # No explicit received_at: the registry stamps it from the same clock
-        # it judges staleness with, so a test (or a replica) can inject one.
         app_deps.registry.record_heartbeat(heartbeat)
         self_metrics.heartbeats_received.inc()
+        _notify_heartbeat(ingestion, heartbeat.agent_id)
         return BatchAccepted(
             status="accepted",
             received_at_utc=_received_at_utc(),
             accepted=_counts(),
         )
+
+    @app.get(
+        "/telemetry/alerts",
+        response_model=AlertsListResponse,
+        responses={400: {"model": ErrorEnvelope}},
+    )
+    async def list_alerts(
+        request: Request,
+    ) -> AlertsListResponse | JSONResponse:
+        unknown = set(request.query_params.keys()) - _ALERTS_QUERY_KEYS
+        if unknown:
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_field",
+                message="Unknown query parameter.",
+                details=[
+                    ErrorDetail(field=name, issue="Unknown query parameter.")
+                    for name in sorted(unknown)
+                ],
+            )
+        try:
+            params = AlertsQueryParams.model_validate(dict(request.query_params))
+        except ValidationError as exc:
+            details = [
+                ErrorDetail(
+                    field=".".join(str(part) for part in error["loc"]),
+                    issue=error["msg"],
+                )
+                for error in exc.errors()
+            ]
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_field",
+                message="Query parameter validation failed.",
+                details=details,
+            )
+        return store.list_alerts(
+            status=params.status,
+            application=params.application,
+            instance_id=params.instance_id,
+            rule_name=params.rule_name,
+            severity=params.severity,
+            since=params.since,
+            limit=params.limit,
+        )
+
+    @app.get(
+        "/telemetry/alerts/{alert_id}",
+        response_model=AlertDetailResponse,
+        responses={404: {"model": ErrorEnvelope}},
+    )
+    async def get_alert(
+        request: Request, alert_id: str
+    ) -> AlertDetailResponse | JSONResponse:
+        detail = store.get_alert(alert_id)
+        if detail is None:
+            return _error_response(
+                request,
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="not_found",
+                message="Alert not found.",
+                details=[],
+            )
+        return detail
 
     return app
 
