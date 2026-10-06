@@ -1,4 +1,5 @@
-"""UBS-109: routes Rule Engine alerts to the Backend Publisher.
+"""UBS-109/110: routes Rule Engine alerts to the Backend Publisher and the
+Callback Dispatcher.
 
 `RuleEngine.evaluate()` returns `AlertEvent`s and `BackendPublisher` accepts
 them via `enqueue_alert()`, but nothing joined the two — the publisher's own
@@ -11,19 +12,21 @@ because `rules/` must not import `publishing/`: the Rule Engine deliberately
 knows nothing about transports so a backend outage cannot affect alerting
 (`NFR-REL-003`).
 
-Alerts are *also* consumed by the Callback Dispatcher, which has its own
-`enqueue()`. Wiring that is UBS-32/33/34's; `route()` is shaped so a second
-sink is additive rather than a rewrite.
+UBS-110 adds the second consumer: the Callback Dispatcher (UBS-32/33/34),
+which notifies Magic directly. The two paths are isolated from each other
+(`NFR-REL-003`): each `enqueue` is guarded separately, so a fault in one never
+costs the other its alert.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from telemetry_shared.models.alerts import AlertEvent
 
+from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.publishing.publisher import BackendPublisher
 
@@ -48,6 +51,10 @@ class AlertRouter:
 
     Catching it at enqueue costs one comparison and contains the damage to
     the one alert that is actually wrong.
+
+    The guard applies to the backend path only. A callback carries one alert,
+    not a batch, so there is nothing for a mismatch to poison — Magic still
+    gets every alert the engine raised.
     """
 
     def __init__(
@@ -56,10 +63,12 @@ class AlertRouter:
         *,
         agent_id: str,
         application: str,
+        dispatcher: CallbackDispatcher | None = None,
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._publisher = publisher
+        self._dispatcher = dispatcher
         self._agent_id = agent_id
         self._application = application
         self._counters = counters or CounterRegistry()
@@ -75,30 +84,55 @@ class AlertRouter:
     def route(
         self, alerts: Sequence[AlertEvent], *, now: datetime | None = None
     ) -> int:
-        """Enqueue every alert whose identity matches the batch's. Returns
-        how many were enqueued.
+        """Hand every alert to the Callback Dispatcher (if configured), and
+        every alert whose identity matches the batch's to the publisher.
+        Returns how many were enqueued for the backend.
 
-        Non-blocking and never raises: `enqueue_alert` is a synchronous deque
-        append (`FR-PUB-007`), so routing can never stall rule evaluation,
-        and a rejected alert is counted rather than thrown — the Rule Engine
-        has already done its job by the time we are called, and failing here
-        would lose the alert from the callback path too.
+        Non-blocking and never raises: both `enqueue`s are synchronous
+        appends (`FR-PUB-007`, `FR-CBK-007`), so routing can never stall rule
+        evaluation, and a rejected or failed alert is counted rather than
+        thrown — the Rule Engine has already done its job by the time we are
+        called.
         """
         routed = 0
+        dispatched = 0
         for alert in alerts:
+            if self._dispatcher is not None and self._guarded(
+                "callback", alert, self._dispatcher.enqueue
+            ):
+                dispatched += 1
             if not self._identity_matches(alert):
                 self._reject(alert)
                 continue
-            self._publisher.enqueue_alert(alert, now=now)
-            routed += 1
+            if self._guarded(
+                "publish",
+                alert,
+                lambda a: self._publisher.enqueue_alert(a, now=now),
+            ):
+                routed += 1
         if routed:
             self._counters.increment("alerts_routed", routed)
+        if dispatched:
+            self._counters.increment("alerts_dispatched", dispatched)
         return routed
+
+    def _guarded(
+        self, path: str, alert: AlertEvent, enqueue: Callable[[AlertEvent], None]
+    ) -> bool:
+        """Run one path's enqueue so its failure stays on that path."""
+        try:
+            enqueue(alert)
+        except Exception:
+            self._counters.increment(f"alerts_{path}_enqueue_failed")
+            self._logger.exception(
+                "failed to enqueue alert %s on the %s path", alert.alert_id, path
+            )
+            return False
+        return True
 
     def _identity_matches(self, alert: AlertEvent) -> bool:
         return (
-            alert.agent_id == self._agent_id
-            and alert.application == self._application
+            alert.agent_id == self._agent_id and alert.application == self._application
         )
 
     def _reject(self, alert: AlertEvent) -> None:
