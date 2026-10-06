@@ -160,7 +160,7 @@ here).
 yet (M1 Log Monitor / an agent supervisor loop). All are documented,
 deliberate deferrals, not oversights.
 
-**Where alerts go (UBS-109).** `RuleEngine.evaluate()` takes a
+**Where alerts go (UBS-109/110).** `RuleEngine.evaluate()` takes a
 `MetricsSnapshot` and returns `AlertEvent`s — it never sees a parsed event,
 so alerts are its only output. `pipeline.AlertRouter` carries them into
 `BackendPublisher.enqueue_alert()`, which until UBS-109 was called nowhere:
@@ -170,9 +170,14 @@ the backend's alert store (UBS-93/94/95), queryable from
 `agentId`/`application` differs from the publisher's at enqueue time, because
 `TelemetryBatch` validates that inside `publish_once`, uncaught — one bad
 alert would otherwise kill the publish loop and silently discard the good
-alerts batched with it. Not yet wired: the same alerts to the Callback
-Dispatcher (`route()` is shaped for a second sink), and a live supervisor to
-call the router outside demos and tests.
+alerts batched with it. UBS-110 adds the second destination: given a
+`dispatcher`, the router also hands every alert to
+`CallbackDispatcher.enqueue()`, which signs it and delivers it to Magic.
+That includes alerts the identity check keeps off the backend, because a
+callback carries a single alert and has no batch to break. Each enqueue is
+guarded separately, so a fault on one path never costs the other its alert
+(`NFR-REL-003`). Not yet wired: a live supervisor to call the router outside
+demos and tests.
 
 ## 7. Counter producers (UBS-73 / UBS-74)
 
