@@ -189,6 +189,10 @@ def create_app(
             worker.cancel()
             tasks: list[asyncio.Task[None]] = [worker]
             if heartbeat_task is not None:
+                # monitor.run() is `while True`; awaiting it uncancelled hung
+                # shutdown forever (every `with TestClient(app)` exit, and a
+                # real SIGTERM).
+                heartbeat_task.cancel()
                 tasks.append(heartbeat_task)
             for task in tasks:
                 try:

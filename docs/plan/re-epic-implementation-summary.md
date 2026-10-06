@@ -160,6 +160,20 @@ here).
 yet (M1 Log Monitor / an agent supervisor loop). All are documented,
 deliberate deferrals, not oversights.
 
+**Where alerts go (UBS-109).** `RuleEngine.evaluate()` takes a
+`MetricsSnapshot` and returns `AlertEvent`s — it never sees a parsed event,
+so alerts are its only output. `pipeline.AlertRouter` carries them into
+`BackendPublisher.enqueue_alert()`, which until UBS-109 was called nowhere:
+they now ride `TelemetryBatch.alerts` to `POST /telemetry/batch` and land in
+the backend's alert store (UBS-93/94/95), queryable from
+`GET /telemetry/alerts`. The router rejects any alert whose
+`agentId`/`application` differs from the publisher's at enqueue time, because
+`TelemetryBatch` validates that inside `publish_once`, uncaught — one bad
+alert would otherwise kill the publish loop and silently discard the good
+alerts batched with it. Not yet wired: the same alerts to the Callback
+Dispatcher (`route()` is shaped for a second sink), and a live supervisor to
+call the router outside demos and tests.
+
 ## 7. Counter producers (UBS-73 / UBS-74)
 
 The session-message and callback counters listed above as gaps now have
