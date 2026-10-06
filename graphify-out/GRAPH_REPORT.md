@@ -1,17 +1,17 @@
 # Graph Report - avengers-fyp-is484  (2026-10-06)
 
 ## Corpus Check
-- 297 files · ~160,999 words
+- 300 files · ~163,682 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 15 file(s) not represented in the graph (top: (none) 12, .example 1, .typed 1)
 
 ## Summary
-- 3755 nodes · 9462 edges · 253 communities (134 shown, 119 thin omitted)
-- Extraction: 82% EXTRACTED · 18% INFERRED · 0% AMBIGUOUS · INFERRED: 1679 edges (avg confidence: 0.94)
+- 3876 nodes · 9716 edges · 259 communities (152 shown, 107 thin omitted)
+- Extraction: 83% EXTRACTED · 17% INFERRED · 0% AMBIGUOUS · INFERRED: 1677 edges (avg confidence: 0.94)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b3a95e5d`
+- Built from commit: `9da1b964`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -19,7 +19,7 @@
 - telemetry_backend/main.py
 - frame.py
 - test_RE_session_integration.py
-- RuleConfig
+- Decimal
 - make_snapshot
 - config_loader.py
 - HealthReporter
@@ -34,24 +34,24 @@
 - Registry
 - telemetry_agent_metrics_aggregator
 - PublishResult
-- MetricsAggregator
-- HealthThresholds
-- classify_http_status
+- aggregator.py
+- reporter.py
+- SourceMeta
 - MetricStore
 - Scaffold and Build Plan
 - test_UBS_106_session_tracker.py
 - AgentHeartbeat wire contract
 - Telemetry Backend Service
-- to_ingestion_heartbeat
-- HeartbeatMonitor
+- heartbeat.py
+- collections_abc
 - parse_publish_config
-- publish_fixtures.py
-- dispatcher.py
-- load_health_config
 - test_RE_publish_integration.py
-- AggregatorConfig
-- LineClassification
-- test_UBS_103_publisher_backend.py
+- DeliveryTracker
+- load_health_config
+- test_MA_05_agent_counters.py
+- MetricsAggregator
+- fix/parser.py
+- test_UBS_113_evaluator.py
 - test_MA_03_correlation.py
 - OffsetTracker
 - config/rules.yaml live rule set
@@ -59,28 +59,28 @@
 - protocol.py
 - MetricsAggregator ring buffer
 - services/self_metrics.py
-- SourceMeta
+- FixParser
 - test_parse_errors.py
 - SlidingWindowCounter
 - 001 — Architecture
 - CamelModel
 - test_metrics_event.py
 - callbacks/config.py
-- typing
+- logging
 - telemetry_agent_parser_applog_parser
 - ParseResult
-- SeverityTier
-- Snapshot
+- RuleConfig
+- StreamProcessor
 - datetime
 - test_degraded_status_flows_into_heartbeat_payload
 - SessionHeartbeatTracker
 - test_FR_CBK_001_002_003_payload.py
 - HttpsCallbackSink
-- metrics/demo.py
-- metrics/__init__.py
+- CounterRegistry
+- SignatureMatcher
 - test_queue_depth.py
 - AgentRegistry
-- DropOldestQueue
+- dispatcher.py
 - SeqTracker
 - enrich.py
 - BackendPublisher
@@ -90,7 +90,7 @@
 - BoundedQueue
 - test_internal_api.py
 - parse_fix_timestamp
-- test_agent_heartbeat_reaches_the_health_endpoint
+- test_heartbeat_roundtrip.py
 - heartbeat_receiver_stub.py
 - 009 — Non-Functional Requirements and Security
 - Histogram
@@ -98,12 +98,12 @@
 - ADR 0001: Telemetry Agent written in Go (Superseded)
 - Telemetry System Documentation Index
 - Pipeline Bridge Requirements (FR-PIP-001–007, asymmetric queue sizing)
-- test_RE_parse_error_integration.py
+- .__init__
 - pipeline_demo.py
-- collections_abc
-- demo_reload.py
+- RuleEvaluator
+- mock_logger.py
 - services/demo_quickstart.py
-- telemetry_agent_pipeline_committer
+- evaluator.py
 - Log Monitor Requirements (FR-LOG-001–024, identity/digest checkpointing)
 - rules/demo_quickstart.py
 - test_ING_004_008_routes.py
@@ -111,32 +111,32 @@
 - demo_logs.txt FIX test corpus
 - FIX Field Allowlist (FR-PRS-020/021, security-critical)
 - publisher.py
-- heartbeat_json
+- test_RE_callback_integration.py
 - telemetry_agent_callbacks_backoff
 - StreamProcessorConfig
 - test_STM_04_efficiency.py
 - ParsedMessageEvent
 - telemetry_agent_logs_multi_log_monitor
-- fix/parser.py
+- test_FR_PRS_021_identifiers.py
 - test_RE_01_fsm.py
-- decimal
+- test_QRY_04_concurrency.py
 - test_agent_registry.py
 - AgentHeartbeat
 - test_UBS_109_alert_router.py
 - ADR 0005: Backend metric store is in-memory time buckets, no database on Day-1
 - health-reporter-overview.md
-- telemetry_backend/config.py
+- test_ING_004_008_ingest_guard.py
 - test_log_monitor_status.py
 - 008 — Natural Language Query Layer (Copilot/Teams)
-- pytest
+- test_QRY_03_memory.py
 - telemetry_shared shared schema package
 - deps.py
 - Requirement ID Scheme (FR-<AREA>-<NNN>)
 - NFR-REL-003: Backend Outage Must Not Affect Alerting
 - test_reporter.py
 - test_UBS_109_rule_engine_to_backend.py
-- SessionTimeout
-- test_RE_02_evaluators.py
+- Snapshot
+- health/demo.py
 - Stream Processor (component)
 - Query Engine Requirements (FR-QRY-006–014)
 - Implementation Status live document
@@ -144,12 +144,12 @@
 - test_UBS_104_outage_isolation.py
 - telemetry_agent_parser_applog_signatures
 - Rule Engine demo runbook
-- test_default_threshold_mirrors_the_backend_registry
+- build_parsed_message_event
 - effective_reject_reason
 - ADR 0004: Raw log content is never persisted or transmitted
 - Monitor to parser bridge (bounded line queue + parser worker pool)
-- telemetry_agent_callbacks_config
-- telemetry_agent_callbacks_dispatcher
+- test_UBS_113_evaluation_loop.py
+- telemetry_backend/config.py
 - telemetry-shared
 - telemetry_agent_parser_applog_telemetry
 - telemetry_agent_parser_config
@@ -219,71 +219,77 @@
 - telemetry_agent_parser_registry
 - telemetry_agent_callbacks_self_metrics
 - telemetry_agent_callbacks_signing
-- telemetry_agent_callbacks_sink
+- ingest_guard.py
 - telemetry_shared_metrics
 - telemetry_shared_metrics_histogram
-- telemetry_agent_callbacks_status
+- normalize.py
 - telemetry_agent_common_backoff
-- telemetry_agent_common_self_metrics
-- telemetry_agent_parser_fix_parser
-- MultiLogMonitor
-- telemetry_agent_parser_fix_session_tracker
+- demo_reload.py
+- .__init__
+- json
+- IngestGuardConfig
 - publishing/sink.py
 - metrics_event.py
-- telemetry_agent_parser_metrics_event
-- telemetry_agent_parser_protocol
+- BackendHealthConfig
+- AppLogParser
 - telemetry_agent_logs_log_monitor
 - telemetry_agent_logs_offset_tracker
 - telemetry_agent_parser_fix_fields
-- telemetry_agent_pipeline_config
+- .__init__
 - telemetry_agent_parser_fix_seq_tracker
 - telemetry_agent_parser_fix_timestamps
-- telemetry_agent_pipeline_deduper
-- telemetry_agent_pipeline_monitor_adapter
+- .__init__
+- test_UBS45_integration.py
 - AlertEvent
-- telemetry_agent_pipeline_supervisor
-- telemetry_agent_pipeline_types
+- HeartbeatEmitter
+- PipelineStats
 - telemetry_agent_publishing_batch
 - telemetry_shared_models_parsed_message
 - telemetry_agent_publishing_buffer
-- telemetry_agent_publishing_config
+- DryRunPublishSink
 - telemetry_agent_publishing_outcome
-- telemetry_agent_publishing_publisher
-- telemetry_agent_publishing_sink
+- FakeClock
+- main
 - telemetry_backend_api
 - telemetry_backend_services_ingest_guard
 - telemetry_backend_services_ingestion
 - telemetry_backend_services_stream_processor
-- telemetry_shared_models_alerts
+- .fire
 - telemetry_shared_models_alerts_query
 - telemetry_shared_models_base
 - telemetry_shared_models_ingestion
-- telemetry_shared_models_metrics
+- IngestionConfig
 - telemetry_shared_models_snapshot
+- .seed
+- BaseModel
+- Exception
+- field_validator
+- Decimal
+- Protocol
 
 ## God Nodes (most connected - your core abstractions)
 1. `MetricsAggregator` - 90 edges
 2. `HealthReporter` - 77 edges
-3. `SourceMeta` - 67 edges
-4. `FixParser` - 65 edges
-5. `AlertEvent` - 63 edges
-6. `StreamProcessorConfig` - 62 edges
-7. `LogMonitor` - 61 edges
-8. `create_app()` - 60 edges
-9. `MetricStore` - 59 edges
-10. `ParseResult` - 58 edges
+3. `SourceMeta` - 68 edges
+4. `FixParser` - 66 edges
+5. `StreamProcessorConfig` - 62 edges
+6. `LogMonitor` - 61 edges
+7. `create_app()` - 60 edges
+8. `MetricStore` - 59 edges
+9. `ParseResult` - 58 edges
+10. `make_snapshot()` - 58 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `4.5 Placeholder receiver — `scripts/heartbeat_receiver_stub.py`` --references--> `AgentHeartbeat`  [INFERRED]
+  docs/plan/health-reporter-overview.md → packages/telemetry_shared/src/telemetry_shared/models/health.py
 - `Not in this change` --references--> `LogMonitor`  [INFERRED]
   docs/plan/ubs69-85-96-notes.md → apps/agent/src/telemetry_agent/logs/log_monitor.py
 - `Going deeper, if asked` --references--> `FixParser`  [INFERRED]
   docs/plan/rule-engine-demo.md → apps/agent/src/telemetry_agent/parser/fix/parser.py
 - `UBS-5 coverage` --references--> `BackendPublisher`  [INFERRED]
   docs/plan/rule-engine-demo.md → apps/agent/src/telemetry_agent/publishing/publisher.py
-- `4.2 Configuration — `health/config.py`` --references--> `HealthConfigError`  [INFERRED]
-  docs/plan/health-reporter-overview.md → apps/agent/src/telemetry_agent/health/config.py
-- `Module map (`apps/agent/src/telemetry_agent/health/`)` --references--> `HealthConfigError`  [INFERRED]
-  docs/plan/ubs58-60-notes.md → apps/agent/src/telemetry_agent/health/config.py
+- `If someone asks` --references--> `LineJoiner`  [INFERRED]
+  docs/plan/rule-engine-demo.md → apps/agent/src/telemetry_agent/parser/fix/frame.py
 
 ## Import Cycles
 - None detected.
@@ -302,11 +308,11 @@
 - **Agent Telemetry Pipeline (Log Monitor → Pipeline Bridge → Parser Engine → Metrics Aggregator → Rule Engine → Callback Dispatcher → Backend Publisher)** — docs_specs_001_architecture_log_monitor, docs_specs_001_architecture_pipeline_bridge, docs_specs_001_architecture_parser_engine, docs_specs_001_architecture_metrics_aggregator, docs_specs_001_architecture_rule_engine, docs_specs_001_architecture_callback_dispatcher, docs_specs_001_architecture_backend_publisher [INFERRED 0.85]
 - **Parsed event to fired alert: the agent metrics-to-rules path** — docs_plan_ma_epic_implementation_summary_derive_counters, docs_plan_ma_epic_implementation_summary_latencycorrelator, docs_plan_ma_epic_implementation_summary_metricsaggregator, docs_plan_ma_epic_implementation_summary_aggregator_snapshot, tests_unit_agent_metrics_test_ma_04_snapshot_rationale_1, docs_plan_re_epic_implementation_summary_rule_engine, docs_plan_re_epic_implementation_summary_alert_lifecycle_fsm [INFERRED 0.95]
 
-## Communities (253 total, 119 thin omitted)
+## Communities (259 total, 107 thin omitted)
 
 ### Community 0 - "telemetry_backend/main.py"
 Cohesion: 0.08
-Nodes (36): HTTP routers, one file per concern (spec 007). `health.py` (UBS-69) serves the…, _build_parser(), _counts(), enqueue_or_full(), get_alert(), ingest_batch(), ingest_events(), ingest_heartbeat() (+28 more)
+Nodes (38): HTTP routers, one file per concern (spec 007). `health.py` (UBS-69) serves the…, AlertsQueryParams, _counts(), enqueue_or_full(), get_alert(), ingest_batch(), ingest_events(), ingest_heartbeat() (+30 more)
 
 ### Community 1 - "frame.py"
 Cohesion: 0.08
@@ -316,21 +322,21 @@ Nodes (42): _check_body_length(), _check_checksum(), _contains_tag(), _delimiter
 Cohesion: 0.14
 Nodes (29): _counters(), _fire(), _ingest(), _ingest_tick(), _ingest_timeouts(), Decimal, UBS-73 integration: raw FIX log bytes -> FixParser -> metrics_event bridge ->…, A tracker that has watched `lines` go past, so it knows which sessions exist… (+21 more)
 
-### Community 3 - "RuleConfig"
-Cohesion: 0.11
-Nodes (32): _AlertState, AlwaysActive, _decimal_or_none(), _matched_condition(), _metric_context(), datetime, Decimal, Protocol (+24 more)
+### Community 3 - "Decimal"
+Cohesion: 0.10
+Nodes (37): AlertStatus, _AlertState, AlwaysActive, _decimal_or_none(), _matched_condition(), _matched_tier(), _metric_context(), AlertEvent (+29 more)
 
 ### Community 4 - "make_snapshot"
-Cohesion: 0.18
-Nodes (33): make_gauges(), make_indicator(), make_indicators(), make_snapshot(), datetime, Decimal, Shared test support for the rules package: builds `MetricsSnapshot` fixtures…, `empty=True` builds a snapshot with zero groups (nothing ingested this window… (+25 more)
+Cohesion: 0.11
+Nodes (52): make_gauges(), make_indicator(), make_indicators(), make_latency(), make_snapshot(), datetime, Decimal, Shared test support for the rules package: builds `MetricsSnapshot` fixtures… (+44 more)
 
 ### Community 5 - "config_loader.py"
 Cohesion: 0.08
-Nodes (37): load_rules(), load_rules_from_yaml(), _parse_duration_seconds(), Any, BaseModel, datetime, Exception, field_validator (+29 more)
+Nodes (38): load_rules(), load_rules_from_yaml(), _parse_duration_seconds(), Any, Logger, Path, RuleConfig, RE-05: `config/rules.yaml` loading and SIGHUP reload (`FR-RUL-008`/`009`).… (+30 more)
 
 ### Community 6 - "HealthReporter"
 Cohesion: 0.07
-Nodes (34): AgentStatus, HealthReporter, HealthSignals, is_parse_error(), datetime, Health Reporter: per-file read lag (UBS-30), status rollup and heartbeat…, Per-file read health, keyed by the same name `monitors` was built with., Worst-case lag across files (heartbeat gauge). None if none have read yet. (+26 more)
+Nodes (37): heartbeat_json(), Wire encoding, camelCase per spec 004 §6. `wire="ingestion"` flattens to…, HealthReporter, datetime, Per-file read health, keyed by the same name `monitors` was built with., Worst-case lag across files (heartbeat gauge). None if none have read yet., Files whose lag exceeds the threshold. Unread files are never flagged., Count one parsed line, and a parse error if `is_parse_error(result)`. (+29 more)
 
 ### Community 7 - ".validate_and_reserve"
 Cohesion: 0.18
@@ -341,56 +347,56 @@ Cohesion: 0.13
 Nodes (17): FR-CBK-004: exponential backoff with jitter for callback retries. Moved to…, UBS-104: exponential backoff with jitter, shared between the Callback…, Exponential backoff with jitter. Defaults match spec 010's example: base 1s,…, Delay before `attempt` (1-indexed: the Nth retry), in seconds. `retry_after`…, RetryPolicy, random, FR-CBK-004 exponential backoff with jitter tests., test_FR_CBK_004_delay_doubles_per_attempt_with_factor_2() (+9 more)
 
 ### Community 9 - "LatencyCorrelator"
-Cohesion: 0.13
-Nodes (22): LatencyCorrelator, OrderContext, datetime, Timer-callable expiry sweep, independent of ingest — mirrors…, Tracked orders whose first relevant response hasn't arrived yet: an ack for a…, Age of the longest-pending tracked order (see `pending_order_count`'s caveats),…, One tracked order, keyed by (session_id, cl_ord_id_hash). orig_cl_ord_id_hash…, order -> ack, order -> first-fill, and cancel -> outcome latency, fed into a… (+14 more)
+Cohesion: 0.11
+Nodes (17): CorrelatorStats, LatencyCorrelator, OrderContext, datetime, Decimal, timedelta, MA-03: order correlation and latency. Standalone producer into the shared…, Recorded so consumers of a snapshot know what a latency number means (MA-03 AC)… (+9 more)
 
 ### Community 10 - "derive_counters"
-Cohesion: 0.11
-Nodes (32): derive_counters(), _derive_execution_report_counters(), _derive_fill_split(), Decimal, MA-02: order / execution / reject counters and reject-reason normalisation.…, All four counter families in one event walk., fills_full / fills_partial split on LeavesQty (spec 004 §4.1), not OrdStatus —…, Config-driven raw-reason -> canonical-label mapping. Backs MetricsAggregator's… (+24 more)
+Cohesion: 0.09
+Nodes (42): derive_counters(), _derive_execution_report_counters(), _derive_fill_split(), Decimal, MA-02: order / execution / reject counters and reject-reason normalisation.…, All four counter families in one event walk., fills_full / fills_partial split on LeavesQty (spec 004 §4.1), not OrdStatus —…, Config-driven raw-reason -> canonical-label mapping. Backs MetricsAggregator's… (+34 more)
 
 ### Community 11 - "test_RE_integration.py"
-Cohesion: 0.10
-Nodes (19): CorrelatorStats, Decimal, timedelta, MA-03: order correlation and latency. Standalone producer into the shared…, Recorded so consumers of a snapshot know what a latency number means (MA-03 AC)…, Exact, never float: build the millisecond value from integer microseconds…, _timedelta_to_ms(), telemetry_agent_metrics_counters (+11 more)
+Cohesion: 0.17
+Nodes (10): _ack(), _Clock, _ingest(), _new_order(), RE-05: Metrics Aggregator -> snapshot() -> Rule Engine, using real…, Mutable clock shared by the aggregator and correlator, same pattern as…, _rejected(), _session_reject() (+2 more)
 
 ### Community 12 - "test_heartbeat.py"
 Cohesion: 0.10
-Nodes (22): Collect, FakeClock, datetime, LogCaptureFixture, Path, UBS-58 / FR-HLT-001: heartbeat emitter and wire format., AC: an idle agent still heartbeats; N ticks in ~N intervals., A sink stuck in blocking I/O must not starve other coroutines. (+14 more)
+Nodes (23): HeartbeatEmitter, Event, Tick every `interval_seconds` until `stop` is set. First tick is immediate so a…, Collect, FakeClock, datetime, LogCaptureFixture, UBS-58 / FR-HLT-001: heartbeat emitter and wire format. (+15 more)
 
 ### Community 13 - "LogMonitor"
 Cohesion: 0.07
-Nodes (24): Harvester, LogMonitor, datetime, Path, Spawns a new Harvester bound to the active inode., Open a rotated sibling from before this monitor started. The registry is keyed…, Find retained rotations that were created while the agent was down. This…, Keep a rotated descriptor alive to collect its final writes. (+16 more)
+Nodes (25): Harvester, LogMonitor, Path, Spawns a new Harvester bound to the active inode., Open a rotated sibling from before this monitor started. The registry is keyed…, One complete log line with stable byte identity for idempotent ingest., Find retained rotations that were created while the agent was down. This…, Keep a rotated descriptor alive to collect its final writes. (+17 more)
 
 ### Community 14 - "PublishBuffer"
 Cohesion: 0.10
-Nodes (24): PublishBuffer, datetime, Put previously-`take`n items back at the front, in original order -- they are…, Bounded FIFO of `PendingItem`s, drop-oldest on overflow, bounded by both…, Drop items older than `max_age_seconds`. The deque is strictly insertion-…, _item(), FR-PUB-004: the byte-and-age-bounded `PublishBuffer` (UBS-104's replacement for…, Drop-oldest still holds after a requeue: the items just put back are the oldest… (+16 more)
+Nodes (25): PublishBuffer, datetime, Put previously-`take`n items back at the front, in original order -- they are…, Bounded FIFO of `PendingItem`s, drop-oldest on overflow, bounded by both…, Drop items older than `max_age_seconds`. The deque is strictly insertion-…, Remove and return up to `max_items` from the front., _item(), FR-PUB-004: the byte-and-age-bounded `PublishBuffer` (UBS-104's replacement for… (+17 more)
 
 ### Community 15 - "Registry"
-Cohesion: 0.06
-Nodes (37): Confidence, Parser, Enum, Protocol, str, How strongly a parser claims an input line., FR-PRS-030: pluggable parser interface., Configuration name, e.g. 'fix' or 'applog'. (+29 more)
+Cohesion: 0.08
+Nodes (21): Parser, Protocol, FR-PRS-030: pluggable parser interface., Configuration name, e.g. 'fix' or 'applog'., Report whether this parser claims the input., Parse one line; must not raise and must not return raw input in fields., get_parser(), Register a parser at import time (+13 more)
 
 ### Community 16 - "telemetry_agent_metrics_aggregator"
-Cohesion: 0.14
-Nodes (17): UBS-74: bridges the agent's own since-startup counters into the windowed…, main(), ingest(), Minimal walkthrough of the Metrics Aggregator (MA-01–04). uv run python -m…, _step(), _build_gauges(), datetime, MA-04: calculated indicators and snapshot output. Wraps the already-tested… (+9 more)
+Cohesion: 0.10
+Nodes (31): UBS-74: bridges the agent's own since-startup counters into the windowed…, main(), ingest(), Minimal walkthrough of the Metrics Aggregator (MA-01–04). uv run python -m…, _step(), _build_gauges(), datetime, MA-04: calculated indicators and snapshot output. Wraps the already-tested… (+23 more)
 
 ### Community 17 - "PublishResult"
 Cohesion: 0.12
-Nodes (36): classify_publish_response(), PublishAction, PublishOutcome, StrEnum, UBS-103: HTTP response -> publish action classification (spec 007 §2.1's…, PublishResult, Outcome of one publish attempt. `status_code` is `None` on a transport error…, make_snapshot() (+28 more)
+Nodes (37): classify_publish_response(), PublishAction, PublishOutcome, StrEnum, UBS-103: HTTP response -> publish action classification (spec 007 §2.1's…, PublishResult, Outcome of one publish attempt. `status_code` is `None` on a transport error…, pytest (+29 more)
 
-### Community 18 - "MetricsAggregator"
+### Community 18 - "aggregator.py"
 Cohesion: 0.13
-Nodes (17): _Bucket, default_resolve_reject_reason(), _dimension_value(), MetricRow, MetricsAggregator, datetime, Decimal, Shared metrics store (spec 004 §3): a time-bucketed ring buffer holding both… (+9 more)
+Nodes (14): _Bucket, default_resolve_reject_reason(), _dimension_value(), MetricRow, datetime, Decimal, Shared metrics store (spec 004 §3): a time-bucketed ring buffer holding both…, One time slot in the ring. `start` is None when the slot is empty. Storage is… (+6 more)
 
-### Community 19 - "HealthThresholds"
-Cohesion: 0.18
-Nodes (13): HealthThresholds, FR-HLT-002 thresholds. Only the read-lag one has a producer on UBS-58; the rest…, Register (or remove) the Publisher's buffer-bytes callback…, BufferBytesProvider, QueueDepthProvider, _file(), FR-HLT-002/003: status rollup and reasons, using the signals UBS-58 has. Builds…, FR-HLT-004: a file with no reads yet is a gap, not a zero and not a fault. (+5 more)
+### Community 19 - "reporter.py"
+Cohesion: 0.10
+Nodes (26): AgentStatus, HealthThresholds, FR-HLT-002 thresholds. Only the read-lag one has a producer on UBS-58; the rest…, HealthSignals, Health Reporter: per-file read lag (UBS-30), status rollup and heartbeat…, FR-HLT-002 rollup for the signals that exist; FR-HLT-003 reasons. Each rule…, spec 011 s1.1: publish queue depth >= critical watermark unhealthy, >= high…, spec 011 s2: parse error rate > 25% unhealthy, > 1% degraded. (+18 more)
 
-### Community 20 - "classify_http_status"
-Cohesion: 0.25
-Nodes (13): classify_http_status(), StrEnum, FR-CBK-006: HTTP outcome -> retry decision classification., `FR-CBK-006`: 2xx=success; 408/429/5xx=retry; other 4xx=permanent failure., RetryDecision, enum, parametrize, FR-CBK-006 HTTP status -> retry decision classification tests. (+5 more)
+### Community 20 - "SourceMeta"
+Cohesion: 0.06
+Nodes (25): Metadata attached to each log line by the monitor., SourceMeta, PipelineCommitter, Consumes ParsedEvent objects and commits file offsets after ingest., ProcessedLineDeduper, Bounded LRU cache suppressing double-count on re-read., EventQueue, Handoff from parser workers to downstream stages. (+17 more)
 
 ### Community 21 - "MetricStore"
-Cohesion: 0.13
-Nodes (16): _CanonicalBucket, MetricStore, datetime, Lock, In-memory, per-instance ring buffer of canonical buckets (`FR-QRY-001`, scoped…, `None` if the instance has never been touched — but also, safely, if a…, Evict buckets that have aged out of retention within *one* instance's ring —…, Evict stale buckets across every instance's ring and check memory pressure. For… (+8 more)
+Cohesion: 0.11
+Nodes (20): _CanonicalBucket, _dim_key(), MetricStore, datetime, Lock, Cross-agent Metric Store (spec 006 §4; FR-STM-002/003/004/006). A per-instance…, In-memory, per-instance ring buffer of canonical buckets (`FR-QRY-001`, scoped…, `None` if the instance has never been touched — but also, safely, if a… (+12 more)
 
 ### Community 22 - "Scaffold and Build Plan"
 Cohesion: 0.07
@@ -401,88 +407,88 @@ Cohesion: 0.16
 Nodes (31): _key(), _keys(), _observe(), UBS-106: SessionHeartbeatTracker — the `heartbeat_timeouts` producer. A…, A logged-out session is silent forever. Counting that as a timeout would…, SeqTracker accepts both normalized names and raw tag values ("Logon"/"A");…, FIX only requires a Heartbeat when the session is otherwise idle, so a session…, Session keys from a timed_out() result, for terse assertions. (+23 more)
 
 ### Community 24 - "AgentHeartbeat wire contract"
-Cohesion: 0.09
-Nodes (33): health: threshold config block, heartbeat: interval config, AgentHeartbeat wire contract, AgentStatus literal vocabulary, BufferingHeartbeatSink, HealthReporter.build_heartbeat(), derive_status() status rollup, FileReadHealth per-file entry (+25 more)
+Cohesion: 0.11
+Nodes (27): health: threshold config block, AgentHeartbeat wire contract, AgentStatus literal vocabulary, BufferingHeartbeatSink, HealthReporter.build_heartbeat(), derive_status() status rollup, FileReadHealth per-file entry, HealthSignals sampled instant (+19 more)
 
 ### Community 25 - "Telemetry Backend Service"
 Cohesion: 0.10
 Nodes (34): Key Flow 2: Alert & Callback Flow, Alert & Event Store (Alerts, Rule Matches, Delivery Status), Callback Dispatcher (Send Callbacks to Magic, Retry/Backoff, Delivery Tracking), Copilot, Dashboards / Operational Tools, Alert Example: Execution Failures, Health Reporter (Agent Heartbeat, Parse Errors, Queue Depth, Connectivity Status), Alert Example: High Reject Rate (+26 more)
 
-### Community 26 - "to_ingestion_heartbeat"
-Cohesion: 0.20
-Nodes (16): Flatten our heartbeat into UBS-66's ingestion contract. `default_instance_id`…, to_ingestion_heartbeat(), make(), UBS-58/66 wire compatibility: our heartbeat flattened to the Ingestion…, The whole point: the Ingestion Service must accept what we send., The ingestion contract has no null for these; the cost is recorded in the notes…, Never claim a second of uptime the agent has not had., The ingestion model is extra='forbid' and has no statusReasons field. Losing… (+8 more)
+### Community 26 - "heartbeat.py"
+Cohesion: 0.11
+Nodes (23): datetime, Heartbeat emitter (UBS-58, FR-HLT-001). Ticks on a fixed interval regardless of…, Build and send one heartbeat. Sink failures are counted, not raised: a dead…, Flatten our heartbeat into UBS-66's ingestion contract. `default_instance_id`…, to_ingestion_heartbeat(), telemetry_agent_health_heartbeat, telemetry_agent_health_wire, make() (+15 more)
 
-### Community 27 - "HeartbeatMonitor"
-Cohesion: 0.15
-Nodes (13): AlertingConfig, Backend-owned alerting rules (spec 005 `FR-RUL-030`)., backend_alert_id(), HeartbeatMonitor, datetime, Backend-owned `AgentHeartbeatMissing` rule (`FR-QRY-018`, `FR-RUL-030`)., Resolve a backend alert immediately when a fresh heartbeat arrives., Periodically evaluates agent heartbeat staleness. (+5 more)
+### Community 27 - "collections_abc"
+Cohesion: 0.12
+Nodes (16): AlertingConfig, Backend-owned alerting rules (spec 005 `FR-RUL-030`)., Agent Registry (spec 006 FR-ING-010; UBS-69 read side, UBS-87 write side). One…, _utc_now(), backend_alert_id(), HeartbeatMonitor, datetime, Backend-owned `AgentHeartbeatMissing` rule (`FR-QRY-018`, `FR-RUL-030`). (+8 more)
 
 ### Community 28 - "parse_publish_config"
 Cohesion: 0.12
 Nodes (31): load_publish_config(), load_publish_token(), parse_publish_config(), PublishConfig, PublishConfigError, _PublishYaml, Any, BaseModel (+23 more)
 
-### Community 29 - "publish_fixtures.py"
-Cohesion: 0.22
-Nodes (11): inspect, NoReturn, make_alert(), make_event(), datetime, Shared test support for the publishing package: builds `Snapshot`,…, _NeverCalledSink, _publisher() (+3 more)
+### Community 29 - "test_RE_publish_integration.py"
+Cohesion: 0.17
+Nodes (24): 2. `make rules-quickstart`, If someone asks, _aggregator(), _engine(), _fail_n_times(), _publisher(), UBS-75 integration: BackendPublisher -> consecutive_publish_failures gauge ->…, The whole reason this is a gauge: recovery is observable. A windowed failure… (+16 more)
 
-### Community 30 - "dispatcher.py"
-Cohesion: 0.11
-Nodes (27): UBS-32/33/34: dispatches Rule Engine alerts to Magic's callback endpoint,…, DeliveryRecord, DeliveryStatus, DeliveryTracker, datetime, StrEnum, UBS-34: per-alert-occurrence callback delivery status, timestamped at each…, UBS-34 AC: every dispatched callback has exactly one of these five states at… (+19 more)
+### Community 30 - "DeliveryTracker"
+Cohesion: 0.10
+Nodes (27): DeliveryRecord, DeliveryStatus, DeliveryTracker, datetime, StrEnum, UBS-34: per-alert-occurrence callback delivery status, timestamped at each…, UBS-34 AC: every dispatched callback has exactly one of these five states at…, One alert's current delivery state. `attempt_count` and `last_error` are… (+19 more)
 
 ### Community 31 - "load_health_config"
 Cohesion: 0.10
-Nodes (34): _AgentConfigYaml, _AgentYaml, _drop_none(), HealthConfigError, _HealthYaml, HeartbeatConfig, _HeartbeatYaml, load_health_config() (+26 more)
+Nodes (32): _AgentConfigYaml, _AgentYaml, _drop_none(), HealthConfigError, _HealthYaml, HeartbeatConfig, _HeartbeatYaml, load_health_config() (+24 more)
 
-### Community 32 - "test_RE_publish_integration.py"
-Cohesion: 0.06
-Nodes (62): AgentCounterSampler, datetime, Turns monotonic since-startup counters into per-bucket deltas. Stateful across…, Ingest the increase in each tracked counter since the last call. The first call…, telemetry_agent_metrics_agent_counters, _aggregator(), _alert(), _dispatch() (+54 more)
+### Community 32 - "test_MA_05_agent_counters.py"
+Cohesion: 0.14
+Nodes (24): AgentCounterSampler, datetime, Turns monotonic since-startup counters into per-bucket deltas. Stateful across…, Ingest the increase in each tracked counter since the last call. The first call…, _aggregator(), Decimal, UBS-74: `MetricsAggregator.ingest_agent_counters` and the `AgentCounterSampler`…, A restarted dispatcher's registry drops back to 0. That is a new baseline, not… (+16 more)
 
-### Community 33 - "AggregatorConfig"
+### Community 33 - "MetricsAggregator"
+Cohesion: 0.12
+Nodes (39): AggregatorConfig, MetricsAggregator, Time-bucketed ring buffer backing both counters and histograms. Three write…, None if nothing has ever been ingested., Bucket granularity, retained windows, and the per-metric dimension table (FR-…, Path, FakeClock, hand_labelled_events() (+31 more)
+
+### Community 34 - "fix/parser.py"
+Cohesion: 0.13
+Nodes (26): _explain_classification(), Pattern, classify_line(), compile_app_log_patterns(), _looks_like_fix(), Pattern, Line classification (FR-PRS-010, FR-PRS-011)., Classify a log line before parsing (FR-PRS-010). Order: fix → app_log →… (+18 more)
+
+### Community 35 - "test_UBS_113_evaluator.py"
 Cohesion: 0.19
-Nodes (22): AggregatorConfig, Bucket granularity, retained windows, and the per-metric dimension table (FR-…, FakeClock, A `Clock` (`() -> float`) that only advances when told to — lets a test assert…, make_event(), minimal_aggregator(), Decimal, test_10k_events_in_60s_window_returns_correct_count() (+14 more)
-
-### Community 34 - "LineClassification"
-Cohesion: 0.09
-Nodes (30): AppLogParser, Parser plugin for configured application log patterns (Magic format)., AppLogTelemetry, Structured fields extracted from Magic-style application log lines., classify_line(), compile_app_log_patterns(), _looks_like_fix(), Pattern (+22 more)
-
-### Community 35 - "test_UBS_103_publisher_backend.py"
-Cohesion: 0.48
-Nodes (6): ASGITransport, _publisher(), UBS-103 integration test: the Backend Publisher against the *real* Telemetry…, _snapshot(), test_503_when_the_backend_queue_is_full(), test_happy_path_against_the_real_backend_app()
+Nodes (21): _names(), Path, UBS-113: RuleEvaluator — the periodic loop between the metrics store and…, RejectSpike reads 1m, HighRejectRate reads 5m: one tick, both., The tracker latches each silence: many ticks after the timeout still put…, A rules file the loader accepts, from the shipped config's own entries, so the…, _rule(), _Stack (+13 more)
 
 ### Community 36 - "test_MA_03_correlation.py"
 Cohesion: 0.25
 Nodes (23): ack(), build(), cancel_confirmed(), cancel_rejected(), cancel_replace_request(), cancel_request(), new_order(), datetime (+15 more)
 
 ### Community 37 - "OffsetTracker"
-Cohesion: 0.11
-Nodes (21): OffsetTracker, Path, Registrar subsystem for tracking offsets of log files. Stores file offsets…, Generates internal state ID format (e.g., 'native::16777232-1048201')., Loads state registry into memory Supports Filebeat's native JSON list array…, Retrieves the last known offset for a given (device, inode) pair., Persist committed offset after parse+ingest (FR-PIP-006)., Deprecated alias for commit_offset. (+13 more)
+Cohesion: 0.09
+Nodes (24): Path, OffsetTracker, Path, Registrar subsystem for tracking offsets of log files. Stores file offsets…, Generates internal state ID format (e.g., 'native::16777232-1048201')., Loads state registry into memory Supports Filebeat's native JSON list array…, Retrieves the last known offset for a given (device, inode) pair., Persist committed offset after parse+ingest (FR-PIP-006). (+16 more)
 
 ### Community 38 - "config/rules.yaml live rule set"
-Cohesion: 0.11
-Nodes (25): Agent processing pipeline (monitor to health reporter), publish: Backend Publisher config block, BackendUnreachable rule, CallbackFailing rule, CancelRejectSpike rule, ClockSkew rule, FixSessionDown rule, HighRejectRate rule (+17 more)
+Cohesion: 0.10
+Nodes (31): Agent processing pipeline (monitor to health reporter), publish: Backend Publisher config block, BackendUnreachable rule, CallbackFailing rule, CancelRejectSpike rule, ClockSkew rule, FixSessionDown rule, HighRejectRate rule (+23 more)
 
 ### Community 39 - "test_health_monitor_e2e.py"
-Cohesion: 0.09
-Nodes (21): monitors_by_resolved_path(), fastapi_testclient, MonkeyPatch, committed_offsets(), FakeClock, fix_lines(), datetime, FastAPI (+13 more)
+Cohesion: 0.10
+Nodes (19): MonkeyPatch, committed_offsets(), FakeClock, fix_lines(), datetime, FastAPI, fixture, Path (+11 more)
 
 ### Community 40 - "protocol.py"
-Cohesion: 0.05
-Nodes (41): DemoMetricsSink, Demo metrics sink for parser CLI (mirrors spec 004 counter names)., QueueSnapshot, PipelineCommitter, Drain parsed events, dedupe, ingest, and commit offsets (FR-PIP-006/007)., Consumes ParsedEvent objects and commits file offsets after ingest., PipelineConfig, Pipeline bridge sizing (spec 010 §pipeline, FR-PIP-002–004). (+33 more)
+Cohesion: 0.06
+Nodes (40): Demo metrics sink for parser CLI (mirrors spec 004 counter names)., AppLogTelemetry, Structured fields extracted from Magic-style application log lines., QueueSnapshot, Drain parsed events, dedupe, ingest, and commit offsets (FR-PIP-006/007)., PipelineConfig, Pipeline bridge sizing (spec 010 §pipeline, FR-PIP-002–004)., LinePosition (+32 more)
 
 ### Community 41 - "MetricsAggregator ring buffer"
-Cohesion: 0.14
-Nodes (19): AckLatencyBreach rule, MetricsAggregator.snapshot(window, group_by), Cardinality caps and __other__ folding, derive_counters() message separation, BASE_DIMS / REJECT_DIMS declared dimension sets, Instance-wide gauges (pendingOrders, secondsSinceLastEvent), Histogram (fixed buckets, merge, percentile), MA-epic known gaps (ExecID dedup, timestamp_source) (+11 more)
+Cohesion: 0.12
+Nodes (23): AckLatencyBreach rule, ParseErrorRate rule, is_parse_error() definition, MetricsAggregator.snapshot(window, group_by), Cardinality caps and __other__ folding, derive_counters() message separation, BASE_DIMS / REJECT_DIMS declared dimension sets, Instance-wide gauges (pendingOrders, secondsSinceLastEvent) (+15 more)
 
 ### Community 42 - "services/self_metrics.py"
-Cohesion: 0.10
-Nodes (17): _BoundSourcesCollector, _counter(), _gauge(), datetime, Backend self-metrics (UBS-96; FR-HLT-010, spec 006 s7). `SelfMetrics` owns a…, Recompute per-agent gauges from the registry. Called per scrape so the exporter…, (body, content-type) for `GET /metrics`., Reads ingestion / stream processor / store state at scrape time. (+9 more)
+Cohesion: 0.13
+Nodes (15): _BoundSourcesCollector, _counter(), _gauge(), datetime, Backend self-metrics (UBS-96; FR-HLT-010, spec 006 s7). `SelfMetrics` owns a…, Reads ingestion / stream processor / store state at scrape time., _utc_now(), Collector (+7 more)
 
-### Community 43 - "SourceMeta"
+### Community 43 - "FixParser"
 Cohesion: 0.07
-Nodes (30): demo_log_lines(), Path, Return parsed corpus lines, optionally filtered to one source file label., FixParser, ParseError, Metadata attached to each log line by the monitor., Closed-set parse failure (FR-PRS-018 subset for framing stage)., Parse one line; must not raise and must not return raw input in fields. (+22 more)
+Nodes (27): is_parse_error(), What the heartbeat counts as a parse error (UBS-59). Same definition as the…, FixParser, Confidence, ParseError, Enum, str, How strongly a parser claims an input line. (+19 more)
 
 ### Community 44 - "test_parse_errors.py"
-Cohesion: 0.17
-Nodes (17): FakeClock, make(), ok(), datetime, UBS-59: parse-error rolling count and rate in the Health Reporter., test_clean_lines_give_zero_errors_and_zero_rate(), test_count_decays_as_window_slides(), test_errors_counted_and_reported_in_heartbeat() (+9 more)
+Cohesion: 0.16
+Nodes (18): bad(), FakeClock, make(), ok(), datetime, UBS-59: parse-error rolling count and rate in the Health Reporter., test_clean_lines_give_zero_errors_and_zero_rate(), test_count_decays_as_window_slides() (+10 more)
 
 ### Community 45 - "SlidingWindowCounter"
 Cohesion: 0.13
@@ -493,44 +499,44 @@ Cohesion: 0.19
 Nodes (13): Backend Publisher (component), Callback Dispatcher (component), Consistent-Hash Routing on instanceId, 001 — Architecture, Failure Degradation Order (queries → freshness → callbacks → alerting), Log Monitor (component), Metrics Aggregator (component), Pipeline Bridge (component) (+5 more)
 
 ### Community 47 - "CamelModel"
-Cohesion: 0.08
-Nodes (37): Wire compatibility with the Ingestion Service's heartbeat contract (UBS-66).…, AlertsQueryParams, Strict query model for `GET /telemetry/alerts` (`FR-QRY-032`)., RejectedItem, field_serializer, AlertCounts, AlertDetailResponse, AlertsListResponse (+29 more)
+Cohesion: 0.06
+Nodes (53): Wire compatibility with the Ingestion Service's heartbeat contract (UBS-66).…, field_serializer, build_latency_summary(), Histogram-to-API summary (spec 004 §4.4, FR-QRY-012, FR-STM-004). Shared by the…, compute_indicators(), compute_ratio(), Decimal, RatioDef (+45 more)
 
 ### Community 48 - "test_metrics_event.py"
-Cohesion: 0.09
-Nodes (40): build_parsed_message_event(), Construct the Metrics Aggregator's event from one framed FIX line. Returns None…, _meta(), _parse(), _parser_counters(), datetime, Decimal, parametrize (+32 more)
+Cohesion: 0.13
+Nodes (26): _meta(), _parser_counters(), datetime, Decimal, parametrize, Tests for parser/metrics_event.py — the ParseResult -> ParsedMessageEvent…, A backwards sequence carries gap_size=0, so counting it as seq_gaps would fire…, A counter the aggregator has no dimension set for raises KeyError at ingest… (+18 more)
 
 ### Community 49 - "callbacks/config.py"
 Cohesion: 0.15
 Nodes (22): CallbackConfigError, CallbacksConfig, _CallbacksYaml, load_callbacks_config(), parse_callbacks_config(), Any, BaseModel, Exception (+14 more)
 
-### Community 50 - "typing"
-Cohesion: 0.09
-Nodes (23): main(), _make_alert(), _print_counters(), Minimal walkthrough of the Callback Dispatcher (UBS-32/33). uv run python -m…, Stands in for Magic: keys its canned response off the alert ID inside the…, _run_one(), _ScriptedSink, _step() (+15 more)
+### Community 50 - "logging"
+Cohesion: 0.10
+Nodes (18): Stands in for Magic: keys its canned response off the alert ID inside the…, _ScriptedSink, CallbackResult, CallbackSink, DryRunCallbackSink, Logger, Protocol, FR-CBK-001/011: the swappable Callback transport boundary (spec 005 §3).… (+10 more)
 
 ### Community 52 - "ParseResult"
-Cohesion: 0.08
-Nodes (53): main(), Telemetry Agent entrypoint., compile_signature_rules(), extract_log_level(), First-match-wins signature rules with dynamic label templates., Extract [N/E/W/F/I] level from Magic-style log lines., resolve_label_template(), _sanitize_capture() (+45 more)
+Cohesion: 0.11
+Nodes (40): main(), Telemetry Agent entrypoint., DemoMetricsSink, extract_log_level(), Extract [N/E/W/F/I] level from Magic-style log lines., _corpus_files(), _fields_dict(), _format_line_result() (+32 more)
 
-### Community 53 - "SeverityTier"
-Cohesion: 0.12
-Nodes (25): RE-03: the 14 default rules (spec 005 §1.2). Concrete `RuleConfig` values, used…, _tier(), _matched_tier(), Highest tier whose condition holds — not the first configured. Correct for the…, StrEnum, RE-01: rule and alert lifecycle types (spec 005 §1-2). Agent-internal…, FR-RUL-001: Day-1 supports exactly these five., Where a rule's observed value is read from in a MetricsSnapshot. (+17 more)
+### Community 53 - "RuleConfig"
+Cohesion: 0.13
+Nodes (26): RE-03: the 14 default rules (spec 005 §1.2). Concrete `RuleConfig` values, used…, _tier(), StrEnum, RE-01: rule and alert lifecycle types (spec 005 §1-2). Agent-internal…, FR-RUL-001: Day-1 supports exactly these five., Where a rule's observed value is read from in a MetricsSnapshot., One (severity, threshold) rung. `FR-RUL-022`: the matched tier is whichever,…, One named rule (spec 005 §1.1). `tiers` MUST be non-empty and ordered… (+18 more)
 
-### Community 54 - "Snapshot"
-Cohesion: 0.07
-Nodes (31): align_to_canonical(), datetime, FR-STM-001: floor `bucket_start_utc` onto the canonical grid., Aligns, age-checks, and merges snapshots into a `MetricStore`. Non-blocking and…, Read-only configuration shared with the ingestion boundary., FR-QRY-005: `False` ("warming") until `warmupWindow` has elapsed since this…, SnapshotOutcome, StreamProcessor (+23 more)
+### Community 54 - "StreamProcessor"
+Cohesion: 0.10
+Nodes (23): align_to_canonical(), datetime, Stream Processor (spec 006 §3): window alignment and the ingest-side half of…, FR-STM-001: floor `bucket_start_utc` onto the canonical grid., Aligns, age-checks, and merges snapshots into a `MetricStore`. Non-blocking and…, Read-only configuration shared with the ingestion boundary., FR-QRY-005: `False` ("warming") until `warmupWindow` has elapsed since this…, SnapshotOutcome (+15 more)
 
 ### Community 55 - "datetime"
-Cohesion: 0.10
-Nodes (28): Live heartbeat demo (UBS-58): tail files, emit heartbeats on an interval. uv…, Log monitoring, rotation and truncation handling., One complete log line with stable byte identity for idempotent ingest., ReadLine, datetime, Multi-file polling and lifecycle management for the Log Monitor., Return offset and read-lag state for every configured file., FileReadStatus (+20 more)
+Cohesion: 0.15
+Nodes (14): main(), Log monitoring, rotation and truncation handling., datetime, Offset + read lag for this file (UBS-30). See docs/plan/ubs30-notes.md., datetime, Multi-file polling and lifecycle management for the Log Monitor., Return offset and read-lag state for every configured file., FileReadStatus (+6 more)
 
 ### Community 56 - "test_degraded_status_flows_into_heartbeat_payload"
 Cohesion: 0.15
 Nodes (13): Path, Offset survives a clean shutdown + fresh process, but read-lag knowledge does…, FR-HLT-001: degraded read lag has to survive the actual heartbeat wire format., One file being deleted out from under the agent must not crash the health…, HealthReporter wired to a real MultiLogMonitor, not a hand-built dict., Simulates logrotate: old file renamed away, new file created at the same path., Same inode, smaller size in place - e.g. a logger truncates instead of rotating., test_degraded_status_flows_into_heartbeat_payload() (+5 more)
 
 ### Community 57 - "SessionHeartbeatTracker"
-Cohesion: 0.10
-Nodes (20): _build_parser(), _detect_session_timeouts(), main(), _main_async(), _make_sink(), _poll_forever(), ArgumentParser, Event (+12 more)
+Cohesion: 0.11
+Nodes (15): UBS-106: per-session heartbeat-timeout detection. A heartbeat timeout is the…, Sessions that have *just* crossed the threshold, each latched so one silence is…, Stop tracking a session. Called on `Logout`, and the reason this exists: a…, Introspection for demos/debug; not used by the detection path., One session that has just gone quiet for too long. Carries both identifiers on…, Flags FIX sessions quiet for longer than `timeout_seconds`. Stateful across…, Internal tracking key, identical in format to `SeqTracker.session_key`.…, Record that a session was heard from at `at`. Any message counts, not just… (+7 more)
 
 ### Community 58 - "test_FR_CBK_001_002_003_payload.py"
 Cohesion: 0.20
@@ -540,29 +546,29 @@ Nodes (15): CallbackAlertPayload, from_alert_event(), datetime, FR-CBK-002/003: 
 Cohesion: 0.20
 Nodes (13): HttpsCallbackSink, AsyncBaseTransport, `FR-CBK-001`: HTTPS POST to the configured Magic endpoint. Rejects plain HTTP…, _make_alert(), UBS-32/33 integration test: dispatch and retry against a mock Magic endpoint.…, _run_one(), test_FR_CBK_001_success_marks_delivered(), handler() (+5 more)
 
-### Community 60 - "metrics/demo.py"
-Cohesion: 0.36
-Nodes (10): _banner(), _implementation(), _line(), main(), Runnable, narrated demo of the Metrics Aggregator epic (MA-01/02/03). uv run…, _result(), _story(), _watch() (+2 more)
+### Community 60 - "CounterRegistry"
+Cohesion: 0.11
+Nodes (12): Logger, Lightweight in-process counters for callback self-observability (`FR-CBK-009`):…, CounterRegistry, UBS-104: lightweight in-process counters, shared between the Callback…, Plain dict of named counters behind a lock -- increments happen from both async…, datetime, UBS-109/110: routes Rule Engine alerts to the Backend Publisher and the…, UBS-104: `CounterRegistry` at its canonical `common/` location (moved from… (+4 more)
 
-### Community 61 - "metrics/__init__.py"
-Cohesion: 0.18
-Nodes (15): build_latency_summary(), Histogram-to-API summary (spec 004 §4.4, FR-QRY-012, FR-STM-004). Shared by the…, compute_indicators(), compute_ratio(), Decimal, RatioDef, Derived-ratio computation (spec 004 §4.5, FR-QRY-010, FR-STM-003). Shared by…, `value` is None when `denominator` is 0 (never fabricate a rate from no data).… (+7 more)
+### Community 61 - "SignatureMatcher"
+Cohesion: 0.19
+Nodes (12): compile_signature_rules(), First-match-wins signature rules with dynamic label templates., resolve_label_template(), _sanitize_capture(), SignatureMatcher, SignatureRule, Applog signature template tests., test_cardinality_overflow_to_other() (+4 more)
 
 ### Community 62 - "test_queue_depth.py"
-Cohesion: 0.12
-Nodes (22): HeartbeatEmitter, Event, HeartbeatSink, Tick every `interval_seconds` until `stop` is set. First tick is immediate so a…, FakeQueue, Flaky, make(), UBS-60: publish queue depth in the heartbeat, watermark rules, trend. (+14 more)
+Cohesion: 0.17
+Nodes (18): FakeQueue, Flaky, make(), UBS-60: publish queue depth in the heartbeat, watermark rules, trend., test_at_critical_watermark_is_unhealthy(), test_at_high_watermark_is_degraded_with_reason_and_trend(), test_below_high_watermark_is_healthy(), test_buffer_drops_oldest_when_full() (+10 more)
 
 ### Community 63 - "AgentRegistry"
-Cohesion: 0.07
-Nodes (34): AgentRecord, AgentRegistry, datetime, Agent Registry (spec 006 FR-ING-010; UBS-69 read side, UBS-87 write side). One…, `missing` if stale, otherwise whatever the agent last reported., Agent IDs past the threshold - the `dataCompleteness.staleAgents` input (FR-…, Thread-safe map of known agents. Memory-only by design (FR-QRY-005)., Store the latest heartbeat. Returns True on first contact so the caller can… (+26 more)
+Cohesion: 0.06
+Nodes (35): AgentRecord, AgentRegistry, datetime, `missing` if stale, otherwise whatever the agent last reported., Agent IDs past the threshold - the `dataCompleteness.staleAgents` input (FR-…, Thread-safe map of known agents. Memory-only by design (FR-QRY-005)., Store the latest heartbeat. Returns True on first contact so the caller can…, Decommission (spec 011 runbook) so `missing` does not fire forever. (+27 more)
 
-### Community 64 - "DropOldestQueue"
-Cohesion: 0.16
-Nodes (9): DropOldestQueue, T, FR-CBK-007: bounded pending queue, drop-oldest on overflow., Wraps `asyncio.Queue` with a bounded size and drop-oldest overflow policy (`FR-…, Enqueue `item`, non-blocking. Returns True if an existing item was dropped to…, FR-CBK-007 bounded queue, drop-oldest overflow tests., test_FR_CBK_007_enqueue_under_capacity_never_drops(), test_FR_CBK_007_oldest_item_is_the_one_dropped() (+1 more)
+### Community 64 - "dispatcher.py"
+Cohesion: 0.10
+Nodes (24): UBS-32/33/34: dispatches Rule Engine alerts to Magic's callback endpoint,…, DropOldestQueue, T, FR-CBK-007: bounded pending queue, drop-oldest on overflow., Wraps `asyncio.Queue` with a bounded size and drop-oldest overflow policy (`FR-…, Enqueue `item`, non-blocking. Returns True if an existing item was dropped to…, classify_http_status(), StrEnum (+16 more)
 
 ### Community 65 - "SeqTracker"
-Cohesion: 0.22
-Nodes (9): Per-session MsgSeqNum tracking., SeqTracker, SeqGapEvent, FR-PRS-027 sequence gap tests., test_FR_PRS_027_detects_gap(), test_FR_PRS_027_detects_regression(), test_FR_PRS_027_logon_resets_without_gap(), `logouts`, `seq_gaps` and `clock_skew_events` all label their `session_id` with… (+1 more)
+Cohesion: 0.27
+Nodes (7): Per-session MsgSeqNum tracking., SeqTracker, SeqGapEvent, FR-PRS-027 sequence gap tests., test_FR_PRS_027_detects_gap(), test_FR_PRS_027_detects_regression(), test_FR_PRS_027_logon_resets_without_gap()
 
 ### Community 66 - "enrich.py"
 Cohesion: 0.27
@@ -585,20 +591,20 @@ Cohesion: 0.21
 Nodes (23): AppDeps, env(), FakeClock, heartbeat(), post(), datetime, fixture, TestClient (+15 more)
 
 ### Community 71 - "BoundedQueue"
-Cohesion: 0.09
-Nodes (13): BoundedQueue, OverflowPolicy, T, Bounded queue with configurable overflow: block (default) or drop_oldest., Enqueue. Blocks when full if policy is block; returns False on timeout., Non-blocking put; drop_oldest only. Use put() for block mode., Block until an item is available or timeout elapses., OverflowPolicy (+5 more)
+Cohesion: 0.10
+Nodes (12): BoundedQueue, OverflowPolicy, T, Bounded queue with configurable overflow: block (default) or drop_oldest., Enqueue. Blocks when full if policy is block; returns False on timeout., Non-blocking put; drop_oldest only. Use put() for block mode., Block until an item is available or timeout elapses., OverflowPolicy (+4 more)
 
 ### Community 72 - "test_internal_api.py"
-Cohesion: 0.13
-Nodes (25): create_internal_app(), FastAPI, UBS-96, FR-HLT-012: `/healthz`, `/readyz` and `/metrics` for the internal…, env(), FakeClock, heartbeat(), merge_snapshot(), post_heartbeat() (+17 more)
+Cohesion: 0.16
+Nodes (21): env(), FakeClock, heartbeat(), merge_snapshot(), post_heartbeat(), datetime, fixture, TestClient (+13 more)
 
 ### Community 73 - "parse_fix_timestamp"
 Cohesion: 0.27
 Nodes (9): parse_fix_timestamp(), datetime, timedelta, Parse FIX SendingTime/TransactTime as UTC., TimestampResult, FR-PRS-025/026 timestamp tests., test_FR_PRS_025_bad_timestamp_falls_back_to_log(), test_FR_PRS_025_parses_fix_timestamp_utc() (+1 more)
 
-### Community 74 - "test_agent_heartbeat_reaches_the_health_endpoint"
-Cohesion: 0.22
-Nodes (7): FakeClock, datetime, Path, Agents publish a heartbeat inside the 10s batch (FR-PUB-001), not only through…, test_agent_heartbeat_reaches_the_health_endpoint(), test_heartbeat_embedded_in_a_batch_is_registered_too(), test_unknown_agent_is_404()
+### Community 74 - "test_heartbeat_roundtrip.py"
+Cohesion: 0.28
+Nodes (5): telemetry_agent_health_reporter, FakeClock, datetime, Agent Health Reporter (UBS-58/59/60) -> Ingestion (UBS-66) -> health read side…, test_unknown_agent_is_404()
 
 ### Community 75 - "heartbeat_receiver_stub.py"
 Cohesion: 0.15
@@ -609,12 +615,12 @@ Cohesion: 0.14
 Nodes (15): Resource Discipline (§9), Backend Configuration and Secrets (§9), Compliance and Operability Constraints (§7), 009 — Non-Functional Requirements and Security, NFR-PERF-003: Agent RSS < 150MB, shed load rather than exceed, NFR-SCA-001: Agent Independence/Statelessness, NFR-SEC-004: Secrets from Environment Only, Observability of the Telemetry System (§6) (+7 more)
 
 ### Community 77 - "Histogram"
-Cohesion: 0.10
-Nodes (29): Histogram, Decimal, Fixed-boundary latency histogram (spec 004 FR-MET-025/026, FR-QRY-012). Shared…, Constant memory per series regardless of sample count (MA-03 AC)., Bucket-wise addition (FR-ING-005, FR-STM-004) — used both when an agent's…, Interpolated, approximate (FR-QRY-012). None below min_sample_size (FR-QRY-007)…, HistogramPayload, Wire shape of one histogram (`FR-MET-025`/`FR-MET-026`): fixed boundaries… (+21 more)
+Cohesion: 0.11
+Nodes (27): Histogram, Decimal, Fixed-boundary latency histogram (spec 004 FR-MET-025/026, FR-QRY-012). Shared…, Constant memory per series regardless of sample count (MA-03 AC)., Bucket-wise addition (FR-ING-005, FR-STM-004) — used both when an agent's…, Interpolated, approximate (FR-QRY-012). None below min_sample_size (FR-QRY-007)…, HistogramPayload, Wire shape of one histogram (`FR-MET-025`/`FR-MET-026`): fixed boundaries… (+19 more)
 
 ### Community 78 - "test_RE_06_reload.py"
-Cohesion: 0.27
-Nodes (17): AlertStatus, _engine(), _fire(), datetime, LogCaptureFixture, Path, skipif, RE-05: `RuleEngine.apply_rules` and `SighupRuleReloader` (`FR-RUL-008`). (+9 more)
+Cohesion: 0.16
+Nodes (23): AlertEvent, datetime, Wires `config/rules.yaml` reloading to SIGHUP for a live `RuleEngine`.…, Returns the `resolved` events `apply_rules()` emits for alerts whose rule was…, Standalone use only: this reloads inside the signal handler and drops the…, SighupRuleReloader, AlertStatus, _engine() (+15 more)
 
 ### Community 79 - "ADR 0001: Telemetry Agent written in Go (Superseded)"
 Cohesion: 0.16
@@ -628,25 +634,29 @@ Nodes (18): architecture.md, assets/architecture-overview.png diagram, Telemetry
 Cohesion: 0.12
 Nodes (18): ADR 0004: No-Raw-Persistence Design, Problem P-2: Rejects/failures/latency spikes slow to identify, Problem P-5: Raw trading logs are sensitive, cannot be centralised, Parser Engine (component), Log Ingestion and Metric Publication Sequence (§8.1), Parser Engine Agent-Level Contract (FR-PRS-001–003), Pipeline Bridge Requirements (FR-PIP-001–007, asymmetric queue sizing), Scaffold Document (plan/scaffold.md) (+10 more)
 
-### Community 82 - "test_RE_parse_error_integration.py"
-Cohesion: 0.31
-Nodes (12): _fire(), _ingest(), _rate(), UBS-18 integration: raw log bytes -> FixParser -> derive_parser_counters ->…, Needs a failure mode that errors once per line — see `_NO_MSG_TYPE`. The…, Documents the asymptote above as behaviour, not accident: three of every four…, `min_samples` is 20 for this rule. Under that, a single bad line in a handful…, test_a_clean_log_never_fires() (+4 more)
+### Community 82 - ".__init__"
+Cohesion: 0.11
+Nodes (10): Lock, PublishResult, _Clock, _NullCallbackSink, CallbackResult, datetime, RuleConfig, SessionHeartbeatTracker (+2 more)
 
 ### Community 83 - "pipeline_demo.py"
-Cohesion: 0.09
-Nodes (33): _build_bridge(), _build_registry(), _load_config(), main(), _print_stage(), OverflowPolicy, Path, End-to-end demo: LogMonitor → queue → parse → output → commit. (+25 more)
+Cohesion: 0.11
+Nodes (26): _build_bridge(), _build_registry(), _load_config(), main(), _print_stage(), OverflowPolicy, Path, End-to-end demo: LogMonitor → queue → parse → output → commit. (+18 more)
 
-### Community 84 - "collections_abc"
-Cohesion: 0.14
-Nodes (18): load_callback_secret(), FR-CBK-005: request signing so Magic can verify a callback originated from this…, `v1=<hex HMAC-SHA256(timestamp + "." + body)>` (`FR-CBK-005`)., Read the callback-signing secret from the environment (`NFR-SEC-004`). Raises…, sign(), Identifier hashing (FR-PRS-021)., collections_abc, hashlib (+10 more)
+### Community 84 - "RuleEvaluator"
+Cohesion: 0.21
+Nodes (8): AlertEvent, datetime, Signal-safe: only sets a flag. Register it with…, One tick. Returns every alert routed, in routing order., Tick every `interval_seconds` until `stop` is set; the first tick is immediate.…, Runs the Rule Engine every `interval_seconds` and routes its alerts. Shared…, RuleEvaluator, Event
 
-### Community 85 - "demo_reload.py"
-Cohesion: 0.13
-Nodes (21): _banner(), _instructions(), main(), Path, Live walkthrough of SIGHUP rule reloading (`FR-RUL-008`/`009`). uv run python…, The watched file may be mid-edit or deliberately broken; a failed read here…, _run(), _safe_rule_count() (+13 more)
+### Community 85 - "mock_logger.py"
+Cohesion: 0.24
+Nodes (10): main(), get_timestamps(), Path, Rotate with numbered retained archives, like ``logrotate``.…, rotate_if_needed(), run_harness(), Path, The newest archive is .1 and only the oldest is removed. (+2 more)
 
 ### Community 86 - "services/demo_quickstart.py"
 Cohesion: 0.27
 Nodes (15): _accept_and_fill(), _bridge_to_snapshot(), main(), _new_aggregator(), ingest(), datetime, Minimal walkthrough of the Stream Processor & Metric Store — built on the exact…, The exact 3-order story from the Metrics Aggregator quickstart: two accepted… (+7 more)
+
+### Community 87 - "evaluator.py"
+Cohesion: 0.13
+Nodes (14): UBS-113: the periodic loop that drives the Rule Engine. `RuleEngine.evaluate()`…, _utc_now(), M1.5 pipeline bridge: bounded queues between log monitor and parser., contextlib, telemetry_agent_common_self_metrics, telemetry_agent_metrics_agent_counters, telemetry_agent_parser_fix_session_tracker, telemetry_agent_pipeline_alert_router (+6 more)
 
 ### Community 88 - "Log Monitor Requirements (FR-LOG-001–024, identity/digest checkpointing)"
 Cohesion: 0.22
@@ -657,8 +667,8 @@ Cohesion: 0.11
 Nodes (24): derive_heartbeat_timeout_counters(), UBS-106: one `(dims, counters)` pair per session that just timed out. Takes…, _alert_storm_act(), _alerts_to_backend_act(), _backend_unreachable_act(), attempt(), _dedup_act(), _FlakyBackendSink (+16 more)
 
 ### Community 90 - "test_ING_004_008_routes.py"
-Cohesion: 0.29
-Nodes (9): batch(), deps(), FakeClock, metrics(), datetime, UBS-85: POST /telemetry/batch dedupe (FR-ING-004) and 429 (FR-ING-008)., test_a_batch_refused_with_queue_full_is_accepted_on_retry(), test_a_retried_batch_is_acknowledged_as_duplicate_and_enqueued_once() (+1 more)
+Cohesion: 0.16
+Nodes (16): fastapi_testclient, batch(), deps(), FakeClock, metrics(), datetime, UBS-85: POST /telemetry/batch dedupe (FR-ING-004) and 429 (FR-ING-008)., test_a_batch_refused_with_queue_full_is_accepted_on_retry() (+8 more)
 
 ### Community 91 - "End-to-End Acceptance Scenario (FR-TST-010)"
 Cohesion: 0.25
@@ -673,16 +683,16 @@ Cohesion: 0.16
 Nodes (16): FIX Field Allowlist (FR-PRS-020/021, security-critical), Known FIX Value Sets and Reject Reason Precedence (FR-PRS-023/024), Configurability NFRs (§5), NFR-CFG-004: Documented Config Defaults Must Match Code, NFR-SEC-001: No Raw Log Persistence/Transmission, NFR-SEC-002: Allowlist Enforcement (sentinel corpus test), NFR-SEC-012: Order Identifier Hashing, Rotatable Key, NFR-SEC-013: No Raw-Log Debug Mode in Release Build (+8 more)
 
 ### Community 94 - "publisher.py"
-Cohesion: 0.11
-Nodes (21): BatchSequencer, build_batch(), datetime, FR-PUB-001/003: assembles a `TelemetryBatch` from buffered items plus an…, `FR-PUB-003`: a monotonically increasing `batchSeq` per agent, and a stable…, `FR-PUB-001`: one batch containing whatever snapshots/events/alerts were pulled…, PendingItem, FR-PUB-004: a pending-item buffer bounded by both total bytes and maximum age,… (+13 more)
+Cohesion: 0.12
+Nodes (25): BatchSequencer, build_batch(), datetime, FR-PUB-001/003: assembles a `TelemetryBatch` from buffered items plus an…, `FR-PUB-003`: a monotonically increasing `batchSeq` per agent, and a stable…, `FR-PUB-001`: one batch containing whatever snapshots/events/alerts were pulled…, PendingItem, FR-PUB-004: a pending-item buffer bounded by both total bytes and maximum age,… (+17 more)
 
-### Community 95 - "heartbeat_json"
-Cohesion: 0.14
-Nodes (15): heartbeat_json(), Wire encoding, camelCase per spec 004 §6. `wire="ingestion"` flattens to…, FakeClock, datetime, UBS-104: publish buffer bytes and dropped-event rate in the heartbeat. Mirrors…, A supervisor wiring the Publisher in calls this once at startup so a healthy…, test_buffer_bytes_is_none_without_a_provider(), test_buffer_bytes_is_read_fresh_on_every_snapshot() (+7 more)
+### Community 95 - "test_RE_callback_integration.py"
+Cohesion: 0.24
+Nodes (15): _aggregator(), _alert(), _dispatch(), _drain(), _fire(), UBS-74 integration: CallbackDispatcher -> CounterRegistry ->…, The registry is monotonic, so re-ingesting its absolute value on every tick…, `secondsSinceLastEvent` must stay untouched by the agent's own counters —… (+7 more)
 
 ### Community 97 - "StreamProcessorConfig"
-Cohesion: 0.07
-Nodes (45): StreamProcessorConfig, datetime, FR-QRY-002/003: memory is bounded, estimated, exposed as a gauge, and the store…, Nothing in this repo calls `tick()` on a schedule yet — the real write path…, The write-path check must not cost an `estimated_memory_bytes()` scan on every…, `_get_or_create_instance` eagerly allocates a full-`capacity` ring of real…, At `capacity < 2`, `capacity // 2` is 0 — `_shed_oldest_tier` must still keep…, _snapshot() (+37 more)
+Cohesion: 0.11
+Nodes (30): StreamProcessorConfig, datetime, FR-STM-001, FR-ING-005, FR-STM-005: canonical window alignment, rejection of…, FR-ING-005: out-of-order snapshots for the same bucket must still merge to the…, A snapshot the StreamProcessor accepts as within maxBucketAge must still be…, A cap below 1 would drop every series as over-cap while `merge()` still marks…, FR-QRY-003: the shed threshold must be strictly above the warn threshold, or…, FR-MET-028 + FR-ING-005 together: gauges are last-write-wins, but this stage… (+22 more)
 
 ### Community 98 - "test_STM_04_efficiency.py"
 Cohesion: 0.19
@@ -692,41 +702,41 @@ Nodes (10): _CountingRing, datetime, Regression tests for two efficiency fixes: 
 Cohesion: 0.12
 Nodes (29): CancelRejectEvent, CancelReplaceEvent, CancelRequestEvent, EVENT_CLASS_BY_MSG_TYPE (dispatch table), ExecutionReportEvent, NewOrderEvent, ParsedMessageEvent, BaseModel (+21 more)
 
-### Community 101 - "fix/parser.py"
-Cohesion: 0.08
-Nodes (37): extract_allowlisted_fields(), FixFields, _hash_or_none(), Allowlisted field extraction (FR-PRS-020, NFR-SEC-002, NFR-PERF-004). The tag…, Fixed-shape allowlisted field set. No attribute here may hold a raw, non-…, FR-PRS-020: extract only the tags in the compile-time allowlist above.…, hash_identifier(), HMAC-SHA256 of `raw` keyed with `key`, truncated to 16 hex chars. (+29 more)
+### Community 101 - "test_FR_PRS_021_identifiers.py"
+Cohesion: 0.09
+Nodes (31): extract_allowlisted_fields(), FixFields, _hash_or_none(), Allowlisted field extraction (FR-PRS-020, NFR-SEC-002, NFR-PERF-004). The tag…, Fixed-shape allowlisted field set. No attribute here may hold a raw, non-…, FR-PRS-020: extract only the tags in the compile-time allowlist above.…, hash_identifier(), load_hash_key() (+23 more)
 
 ### Community 102 - "test_RE_01_fsm.py"
 Cohesion: 0.35
 Nodes (13): _engine(), datetime, RE-01/02: the generic alert lifecycle FSM (spec 005 §2), isolated from any…, _snapshot(), test_alert_id_rotates_after_a_fresh_occurrence(), test_condition_true_again_while_resolving_returns_to_firing_no_notification(), test_condition_true_enters_pending_with_no_event(), test_firing_to_resolving_to_resolved() (+5 more)
 
-### Community 103 - "decimal"
-Cohesion: 0.08
-Nodes (28): datetime, Bounded asynchronous hand-off for HTTP ingestion., _dim_key(), Cross-agent Metric Store (spec 006 §4; FR-STM-002/003/004/006). A per-instance…, _SeriesContribution, Stream Processor (spec 006 §3): window alignment and the ingest-side half of…, decimal, DimKey (+20 more)
+### Community 103 - "test_QRY_04_concurrency.py"
+Cohesion: 0.13
+Nodes (18): FR-QRY-004: the store MUST be safe under concurrent read/write via a per-…, A per-instance lock must still serialise writes *within* one instance — safety…, `dropped_after_retention_total` is a single store-wide counter incremented from…, `StreamProcessor.dropped_buckets_total` is incremented outside any per-instance…, `_get_or_create_instance` sets `_rings[instance_id]` before…, `_shed_oldest_tier` iterates `_rings.items()` and indexed `_instance_locks`…, _snapshot(), test_a_write_to_one_instance_does_not_block_a_write_to_another() (+10 more)
 
 ### Community 104 - "test_agent_registry.py"
 Cohesion: 0.20
 Nodes (16): FakeClock, hb(), make(), datetime, UBS-69 / FR-ING-010: agent registry, backend-side staleness., An agent whose clock is far ahead still goes missing when it stops sending., NTP corrects the agent host back by 5 minutes: sentAtUtc goes backwards on…, test_agent_clock_stepped_backwards_does_not_go_missing() (+8 more)
 
 ### Community 105 - "AgentHeartbeat"
-Cohesion: 0.05
-Nodes (41): BufferingHeartbeatSink, HttpHeartbeatSink, LoggingHeartbeatSink, PrintHeartbeatSink, datetime, Logger, Heartbeat emitter (UBS-58, FR-HLT-001). Ticks on a fixed interval regardless of…, Emit the wire JSON through `logging` (demo / local runs). (+33 more)
+Cohesion: 0.06
+Nodes (30): BufferingHeartbeatSink, HttpHeartbeatSink, LoggingHeartbeatSink, PrintHeartbeatSink, HeartbeatSink, Logger, Emit the wire JSON through `logging` (demo / local runs)., Write one JSON line per heartbeat to stdout (demo). (+22 more)
 
 ### Community 106 - "test_UBS_109_alert_router.py"
-Cohesion: 0.13
-Nodes (34): _alert(), _publisher(), LogCaptureFixture, Logger, parametrize, UBS-109: AlertRouter — the seam from Rule Engine output to the Backend…, Buffering is not publishing — this follows the alert all the way out through…, The containment that matters: the bad alert is dropped, the good ones are… (+26 more)
+Cohesion: 0.12
+Nodes (33): _alert(), _publisher(), LogCaptureFixture, Logger, parametrize, UBS-109: AlertRouter — the seam from Rule Engine output to the Backend…, Buffering is not publishing — this follows the alert all the way out through…, The containment that matters: the bad alert is dropped, the good ones are… (+25 more)
 
 ### Community 107 - "ADR 0005: Backend metric store is in-memory time buckets, no database on Day-1"
 Cohesion: 0.15
 Nodes (13): ADR 0003: Agent to backend transport is HTTPS/JSON batches on Day-1, gRPC (deferred, not rejected), HTTPS/1.1 JSON gzip batching (every 10s), Publisher interface (transport abstraction), ADR 0005: Backend metric store is in-memory time buckets, no database on Day-1, PostgreSQL/TimescaleDB alternative (rejected for Day-1), Prometheus/VictoriaMetrics alternative (leading Day-2 candidate), Process-local ring buffer (10s buckets, 1m/5m rollups) (+5 more)
 
 ### Community 108 - "health-reporter-overview.md"
-Cohesion: 0.18
-Nodes (10): M1 — Log Monitor and Configuration, UBS-30 Implementation Notes, Health Reporter, MultiLogMonitor (Stopgap), last_read_at Starts as None, Not Zero, to Avoid Misreporting an Unread File as Healthy, UBS-30 — Ingestion Health / Read-Lag Metrics, UBS-49 — Pipeline Bridge Integration, Not in this change (+2 more)
+Cohesion: 0.20
+Nodes (9): M1 — Log Monitor and Configuration, UBS-30 Implementation Notes, Health Reporter, MultiLogMonitor (Stopgap), last_read_at Starts as None, Not Zero, to Avoid Misreporting an Unread File as Healthy, UBS-30 — Ingestion Health / Read-Lag Metrics, UBS-49 — Pipeline Bridge Integration, Not in this change (+1 more)
 
-### Community 109 - "telemetry_backend/config.py"
-Cohesion: 0.05
-Nodes (58): _AlertingYaml, BackendConfigError, _BackendConfigYaml, BackendHealthConfig, _BackendYaml, _drop_none(), IngestGuardConfig, IngestionConfig (+50 more)
+### Community 109 - "test_ING_004_008_ingest_guard.py"
+Cohesion: 0.23
+Nodes (17): Accept, Duplicate, RateLimited, guard(), UBS-85: IngestGuard dedupe (FR-ING-004) and rate limiting (FR-ING-008)., A batch refused downstream (503 queue_full) must be accepted on retry., A retry of a batch we already hold costs no quota and gets 202., test_batch_ids_are_scoped_per_agent() (+9 more)
 
 ### Community 110 - "test_log_monitor_status.py"
 Cohesion: 0.62
@@ -736,9 +746,9 @@ Nodes (6): make_monitor(), Path, test_status_after_read_reports_elapsed_lag(), t
 Cohesion: 0.40
 Nodes (5): Problem P-4: No way to ask questions of live telemetry, NL Adapter (component), NL Endpoints (POST /telemetry/nl/query, GET /telemetry/nl/intents), NL Intent Catalogue (FR-NLQ-003/004), 008 — Natural Language Query Layer (Copilot/Teams)
 
-### Community 112 - "pytest"
-Cohesion: 0.31
-Nodes (8): pytest, _batch_with_snapshot(), datetime, TestClient, FR-QRY-005: `/readyz` probes the same StreamProcessor that ingestion feeds.…, test_readyz_turns_ready_once_ingested_data_reaches_the_shared_store(), _wait_for_status(), UUID
+### Community 112 - "test_QRY_03_memory.py"
+Cohesion: 0.17
+Nodes (15): datetime, FR-QRY-002/003: memory is bounded, estimated, exposed as a gauge, and the store…, Nothing in this repo calls `tick()` on a schedule yet — the real write path…, The write-path check must not cost an `estimated_memory_bytes()` scan on every…, `_get_or_create_instance` eagerly allocates a full-`capacity` ring of real…, At `capacity < 2`, `capacity // 2` is 0 — `_shed_oldest_tier` must still keep…, _snapshot(), test_estimated_memory_bytes_counts_an_idle_instances_allocated_ring_shell() (+7 more)
 
 ### Community 113 - "telemetry_shared shared schema package"
 Cohesion: 0.21
@@ -761,16 +771,16 @@ Cohesion: 0.61
 Nodes (7): make_monitor(), Path, test_degraded_reasons_flag_files_over_threshold(), test_degraded_threshold_is_configurable(), test_file_statuses_keys_match_monitor_names(), test_overall_read_lag_ignores_files_with_no_reads_yet(), test_overall_read_lag_is_none_when_nothing_has_been_read()
 
 ### Community 118 - "test_UBS_109_rule_engine_to_backend.py"
-Cohesion: 0.12
-Nodes (34): _aggregator_with_a_reject_burst(), _drain_backend(), _engine(), _fire_reject_spike(), _order(), _publish_and_drain(), _publisher(), UBS-109 integration: raw FIX bytes -> FixParser -> MetricsAggregator ->… (+26 more)
+Cohesion: 0.07
+Nodes (50): load_callback_secret(), FR-CBK-005: request signing so Magic can verify a callback originated from this…, `v1=<hex HMAC-SHA256(timestamp + "." + body)>` (`FR-CBK-005`)., Read the callback-signing secret from the environment (`NFR-SEC-004`). Raises…, sign(), hashlib, hmac, _aggregator_with_a_reject_burst() (+42 more)
 
-### Community 119 - "SessionTimeout"
-Cohesion: 0.50
-Nodes (3): Sessions that have *just* crossed the threshold, each latched so one silence is…, One session that has just gone quiet for too long. Carries both identifiers on…, SessionTimeout
+### Community 119 - "Snapshot"
+Cohesion: 0.16
+Nodes (14): Shared contract: one agent metric snapshot on the wire (spec 004 §3, `FR-…, One dimension-set's counters and histograms within a snapshot. All counters and…, One completed `bucketSeconds`-wide bucket from one agent (`FR-MET-024`).…, SeriesEntry, Snapshot, FR-MET-030-equivalent guard: cross-agent merge is exactly the case where per-…, test_series_over_the_cardinality_cap_are_dropped_and_counted(), Wire-format Snapshot contract (spec 004 §3, FR-MET-024..028). (+6 more)
 
-### Community 120 - "test_RE_02_evaluators.py"
-Cohesion: 0.18
-Nodes (20): make_latency(), _absence_rule(), _gauge_rule(), _latency_rule(), _rate_rule(), RE-02: the per-`RuleKind` evaluators, tested directly against hand-built…, test_absence_evaluator_fires_when_guard_satisfied_and_metric_is_zero(), test_absence_evaluator_guard_unmet_returns_none_not_zero() (+12 more)
+### Community 120 - "health/demo.py"
+Cohesion: 0.21
+Nodes (13): _build_parser(), _detect_session_timeouts(), main(), _main_async(), _make_sink(), _poll_forever(), ArgumentParser, Event (+5 more)
 
 ### Community 121 - "Stream Processor (component)"
 Cohesion: 0.50
@@ -781,8 +791,8 @@ Cohesion: 0.50
 Nodes (4): Query Engine Requirements (FR-QRY-006–014), Query Metrics Endpoint (POST /telemetry/query/metrics), NL Design Stance: No Dynamic Evaluation of Model Output (FR-NLQ-001/002), NL Interpretation Pipeline (FR-NLQ-005–009)
 
 ### Community 123 - "Implementation Status live document"
-Cohesion: 0.15
-Nodes (19): ParseErrorRate rule, is_parse_error() definition, Parse error rate signal (UBS-59), record_parse_result() intake, SlidingWindowCounter, Implementation Status live document, M1.5 Pipeline bridge (UBS-48/49), M1 Log monitor and configuration (not started) (+11 more)
+Cohesion: 0.31
+Nodes (9): Implementation Status live document, M1 Log monitor and configuration (not started), M2 FIX parser (UBS-40-47), M3 Metrics aggregation (MA-01-04), Backend Metric Store and cross-agent merge, Ratios are recomputed, never averaged, Backend Stream Processor (UBS-88), Known rough edges (+1 more)
 
 ### Community 124 - "demo_config.yaml (Magic parsing demo config)"
 Cohesion: 0.32
@@ -794,7 +804,11 @@ Nodes (7): _HangingSink, _make_alert(), _make_snapshot(), UBS-104 integration te
 
 ### Community 127 - "Rule Engine demo runbook"
 Cohesion: 0.10
-Nodes (25): NoLogActivity rule, Multi-tier severity rule shape, M5 Rules, alerts, callbacks, Alert lifecycle FSM, RuleEngine.apply_rules() hot swap, Dependent suppression (FR-RUL-021), Rule Engine, Safety and suppression (silences, grace, storm cap) (+17 more)
+Nodes (23): NoLogActivity rule, M5 Rules, alerts, callbacks, Alert lifecycle FSM, RuleEngine.apply_rules() hot swap, Dependent suppression (FR-RUL-021), Rule Engine, Safety and suppression (silences, grace, storm cap), SighupRuleReloader (+15 more)
+
+### Community 128 - "build_parsed_message_event"
+Cohesion: 0.23
+Nodes (14): build_parsed_message_event(), Construct the Metrics Aggregator's event from one framed FIX line. Returns None…, _parse(), A NewOrderSingle missing symbol/side/ord_type/order_qty fails NewOrderEvent's…, effective_reject_reason's own "unspecified" fallback must not leak into…, test_execution_report_reject_maps_reason_code(), test_malformed_message_falls_back_to_base_event_instead_of_raising(), test_missing_comp_ids_fall_back_to_unknown_session_id() (+6 more)
 
 ### Community 129 - "effective_reject_reason"
 Cohesion: 0.33
@@ -808,6 +822,14 @@ Nodes (5): Note: raw log payloads must not be persisted permanently, Blocking CI
 Cohesion: 0.40
 Nodes (5): EventQueue (bounded, default size 256), LineQueue (bounded, default size 2048), Monitor to parser bridge (bounded line queue + parser worker pool), Parser worker pool (asyncio + ThreadPoolExecutor, min(2, cpu_count)), agent pipeline/ module (bounded queues + parser worker pool - M1.5)
 
+### Community 132 - "test_UBS_113_evaluation_loop.py"
+Cohesion: 0.09
+Nodes (27): telemetry_agent_callbacks_config, telemetry_agent_callbacks_dispatcher, telemetry_agent_callbacks_sink, telemetry_agent_callbacks_status, telemetry_agent_parser_fix_parser, telemetry_agent_parser_metrics_event, telemetry_agent_parser_protocol, telemetry_agent_publishing_config (+19 more)
+
+### Community 133 - "telemetry_backend/config.py"
+Cohesion: 0.26
+Nodes (13): _AlertingYaml, _BackendConfigYaml, _BackendYaml, _drop_none(), _IngestYaml, _Lenient, load_backend_health_config(), parse_duration_seconds() (+5 more)
+
 ### Community 134 - "telemetry-shared"
 Cohesion: 0.40
 Nodes (5): telemetry-agent, telemetry-backend, telemetry-shared, telemetry-simulator, telemetry-teams
@@ -818,27 +840,83 @@ Nodes (10): hb(), FR-QRY-015: dataCompleteness derived from agent staleness (UBS
 
 ### Community 195 - "create_app"
 Cohesion: 0.11
-Nodes (35): BatchAccepted, create_app(), Build an application, allowing tests and deployment to supply a service., IngestionService, Keep store work off FastAPI's request path. A single consumer preserves the…, Owns a bounded queue and one background consumer., fastapi_routing, model_validator (+27 more)
+Nodes (34): BatchAccepted, create_app(), Build an application, allowing tests and deployment to supply a service., IngestionService, Keep store work off FastAPI's request path. A single consumer preserves the…, Owns a bounded queue and one background consumer., fastapi_routing, EventsRequest (+26 more)
 
 ### Community 201 - "AlertStore"
 Cohesion: 0.09
-Nodes (36): AlertStoreConfig, Alert store retention (spec 006 §6, spec 010 `store.recentAlertLimit`)., AlertStore, _InstanceAlerts, _is_active_status(), datetime, Lock, In-memory Alert Store (spec 006 §6; `FR-QRY-016`, `FR-QRY-017`). (+28 more)
+Nodes (37): AlertStoreConfig, Alert store retention (spec 006 §6, spec 010 `store.recentAlertLimit`)., AlertStore, _InstanceAlerts, _is_active_status(), datetime, Lock, In-memory Alert Store (spec 006 §6; `FR-QRY-016`, `FR-QRY-017`). (+29 more)
 
-### Community 214 - "MultiLogMonitor"
-Cohesion: 0.10
-Nodes (21): print_header(), run_demo(), setup_environment(), main(), main(), poll_available(), print_lines(), print_section() (+13 more)
+### Community 207 - "ingest_guard.py"
+Cohesion: 0.19
+Nodes (9): IngestGuard, datetime, Batch dedupe and per-agent rate limiting (UBS-85; FR-ING-004, FR-ING-008).…, Record a batch that is now on the ingest queue., _utc_now(), collections, deque, math (+1 more)
+
+### Community 210 - "normalize.py"
+Cohesion: 0.28
+Nodes (11): compile_reject_patterns(), match_reject_label(), normalize_reject_text(), Steps 1–2 of FR-PRS-022 (matching input only, not emitted)., Return (label, is_unclassified). On no match returns (None, True) — caller…, RejectPattern, FR-PRS-022 tag 58 normalisation tests., test_FR_PRS_022_cardinality_overflow() (+3 more)
+
+### Community 212 - "demo_reload.py"
+Cohesion: 0.23
+Nodes (12): _banner(), _instructions(), main(), Path, Live walkthrough of SIGHUP rule reloading (`FR-RUL-008`/`009`). uv run python…, The watched file may be mid-edit or deliberately broken; a failed read here…, _run(), _safe_rule_count() (+4 more)
+
+### Community 213 - ".__init__"
+Cohesion: 0.17
+Nodes (10): AbstractContextManager, AlertRouter, Any, BackendPublisher, CallbackDispatcher, LatencyCorrelator, Logger, MetricsAggregator (+2 more)
+
+### Community 214 - "json"
+Cohesion: 0.21
+Nodes (12): print_header(), run_demo(), setup_environment(), main(), poll_available(), print_lines(), print_section(), Path (+4 more)
+
+### Community 215 - "IngestGuardConfig"
+Cohesion: 0.20
+Nodes (9): BackendConfigError, IngestGuardConfig, Exception, Raised when `config/backend.yaml` exists but is invalid., UBS-85: batch dedupe (FR-ING-004) and per-agent rate limiting (FR-ING-008).…, parametrize, test_ingest_section_is_loaded_from_yaml(), test_invalid_config_is_refused() (+1 more)
 
 ### Community 216 - "publishing/sink.py"
-Cohesion: 0.10
-Nodes (20): DryRunPublishSink, HttpsPublishSink, _maybe_gzip(), _parse_retry_after(), AsyncBaseTransport, Logger, UBS-103: the swappable Publisher transport boundary (spec 002 §6). Mirrors…, Log the intended publish, never open a socket. Use this while there's no real… (+12 more)
+Cohesion: 0.11
+Nodes (23): HttpsPublishSink, _maybe_gzip(), _parse_retry_after(), AsyncBaseTransport, UBS-103: the swappable Publisher transport boundary (spec 002 §6). Mirrors…, `FR-PUB-002`: gzip above `compress_threshold`. `mtime=0` makes the compressed…, `FR-PUB-001`/`002`: HTTPS POST with a bearer token, gzip above…, ASGITransport (+15 more)
 
 ### Community 217 - "metrics_event.py"
-Cohesion: 0.14
-Nodes (23): _fixed_now(), main(), Minimal walkthrough of parser/metrics_event.py: the same three-order story as…, _step(), FixTelemetry, Sanitized telemetry derived from a framed FIX message., The canonical `session_id` *dimension* value (`FR-MET-030`). Deliberately…, session_id_for() (+15 more)
+Cohesion: 0.13
+Nodes (22): _fixed_now(), main(), _step(), FixTelemetry, Sanitized telemetry derived from a framed FIX message., The canonical `session_id` *dimension* value (`FR-MET-030`). Deliberately…, session_id_for(), derive_parser_counters() (+14 more)
+
+### Community 218 - "BackendHealthConfig"
+Cohesion: 0.29
+Nodes (7): BackendHealthConfig, Path, test_defaults_follow_spec_010(), test_invalid_values_are_refused(), test_invalid_yaml_is_refused(), test_missing_file_yields_defaults(), test_reads_backend_store_alerting_sections()
+
+### Community 219 - "AppLogParser"
+Cohesion: 0.27
+Nodes (5): AppLogParser, Parser plugin for configured application log patterns (Magic format)., _meta(), test_applog_parser_classifies_and_parses_magic_line(), test_applog_parser_returns_none_confidence_for_fix_line()
+
+### Community 223 - ".__init__"
+Cohesion: 0.20
+Nodes (7): Logger, PublishSink, Protocol, The transport boundary. `HttpsPublishSink` is the Day-1 default (ADR 0003);…, BackendUnreachableCallback, DropCallback, HeartbeatProvider
+
+### Community 226 - ".__init__"
+Cohesion: 0.22
+Nodes (6): Register (or remove) the Publisher's queue-depth callback., Register (or remove) the Publisher's buffer-bytes callback…, BufferBytesProvider, 6. UBS-60 — publish queue depth, UBS-60: publish queue depth, QueueDepthProvider
+
+### Community 227 - "test_UBS45_integration.py"
+Cohesion: 0.28
+Nodes (8): demo_log_lines(), Path, Return parsed corpus lines, optionally filtered to one source file label., test_FR_PRS_012_corpus_files_frame_without_errors(), _meta(), Integration-style parser tests for UBS-45 enrich path., test_reject_text_maps_to_label(), test_seq_gap_from_corpus()
 
 ### Community 228 - "AlertEvent"
-Cohesion: 0.07
-Nodes (24): CallbackDispatcher, Logger, Sync, non-blocking — the entry point a future wiring step calls from the same…, Spawns `maxInflight` workers pulling from the queue. Runs until cancelled by…, Signs and sends `alert`, retrying transient failures with backoff (`FR-…, Lightweight in-process counters for callback self-observability (`FR-CBK-009`):…, CounterRegistry, UBS-104: lightweight in-process counters, shared between the Callback… (+16 more)
+Cohesion: 0.11
+Nodes (19): main(), _make_alert(), _print_counters(), Minimal walkthrough of the Callback Dispatcher (UBS-32/33). uv run python -m…, _run_one(), _step(), CallbackDispatcher, Sync, non-blocking — the entry point a future wiring step calls from the same… (+11 more)
+
+### Community 229 - "HeartbeatEmitter"
+Cohesion: 0.25
+Nodes (8): heartbeat: interval config, HeartbeatEmitter, Parse error rate signal (UBS-59), record_parse_result() intake, SlidingWindowCounter, M1.5 Pipeline bridge (UBS-48/49), Heartbeat thread/async model, telemetry-agent-heartbeat demo entrypoint
+
+### Community 230 - "PipelineStats"
+Cohesion: 0.33
+Nodes (3): PipelineStats, Queue depths and drop counters for heartbeat/metrics (FR-PIP-005)., test_pipeline_stats_expose_prometheus_metric_names()
+
+### Community 234 - "DryRunPublishSink"
+Cohesion: 0.40
+Nodes (3): DryRunPublishSink, Logger, Log the intended publish, never open a socket. Use this while there's no real…
+
+### Community 237 - "main"
+Cohesion: 0.50
+Nodes (4): _build_parser(), main(), ArgumentParser, `uv run telemetry-backend [--config config/backend.yaml]`. A missing config…
 
 ## Ambiguous Edges - Review These
 - `ADR 0005: Backend metric store is in-memory time buckets, no database on Day-1` → `Redis (Day-1 shared telemetry state)`  [AMBIGUOUS]
@@ -849,9 +927,9 @@ Nodes (24): CallbackDispatcher, Logger, Sync, non-blocking — the entry point a
   apps/agent/testdata/magic/demo_config.yaml · relation: references
 
 ## Knowledge Gaps
-- **180 isolated node(s):** `telemetry-agent`, `telemetry-backend`, `telemetry-simulator`, `telemetry-teams`, `avengers-fyp-is484` (+175 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1253 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **119 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **180 isolated node(s):** `1. What the Health Reporter is for`, `2.1 One heartbeat tick, as a sequence`, `5.1 The window — `health/window.py``, `9. How to verify / demo`, `Also touched, and why` (+175 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1298 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **107 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -862,11 +940,11 @@ _Questions this graph is uniquely positioned to answer:_
   _Edge tagged AMBIGUOUS (relation: implements) - confidence is low._
 - **What is the exact relationship between `appLogPatterns regex` and `Enterprise Infrastructure Stream (Application.log)`?**
   _Edge tagged AMBIGUOUS (relation: references) - confidence is low._
-- **Why does `MA-04: calculated indicators and snapshot output.` connect `Implementation Status live document` to `AgentHeartbeat wire contract`, `MetricsAggregator ring buffer`, `LatencyCorrelator`, `Rule Engine demo runbook`?**
-  _High betweenness centrality (0.081) - this node is a cross-community bridge._
+- **Why does `MA-04: calculated indicators and snapshot output.` connect `MetricsAggregator ring buffer` to `MetricsAggregator`, `Implementation Status live document`, `config/rules.yaml live rule set`, `Rule Engine demo runbook`?**
+  _High betweenness centrality (0.079) - this node is a cross-community bridge._
+- **Why does `FixParser` connect `FixParser` to `build_parsed_message_event`, `frame.py`, `test_RE_session_integration.py`, `test_UBS_113_evaluation_loop.py`, `HealthReporter`, `telemetry_agent_metrics_aggregator`, `SourceMeta`, `test_RE_publish_integration.py`, `MetricsAggregator`, `fix/parser.py`, `test_health_monitor_e2e.py`, `protocol.py`, `test_metrics_event.py`, `ParseResult`, `SeqTracker`, `_Demo`, `normalize.py`, `pipeline_demo.py`, `rules/demo_quickstart.py`, `metrics_event.py`, `test_UBS45_integration.py`, `test_FR_PRS_021_identifiers.py`, `test_UBS_109_rule_engine_to_backend.py`, `health/demo.py`, `Rule Engine demo runbook`?**
+  _High betweenness centrality (0.055) - this node is a cross-community bridge._
 - **Why does `Telemetry System Documentation Index` connect `Telemetry System Documentation Index` to `ADR 0004: Raw log content is never persisted or transmitted`, `ADR 0005: Backend metric store is in-memory time buckets, no database on Day-1`, `Telemetry Agent (architecture constraint)`, `ADR 0001: Telemetry Agent written in Go (Superseded)`?**
-  _High betweenness centrality (0.062) - this node is a cross-community bridge._
-- **Why does `Spec 004: Telemetry data model` connect `Telemetry Agent (architecture constraint)` to `Telemetry System Documentation Index`?**
-  _High betweenness centrality (0.061) - this node is a cross-community bridge._
+  _High betweenness centrality (0.051) - this node is a cross-community bridge._
 - **Are the 59 inferred relationships involving `MetricsAggregator` (e.g. with `AgentCounterSampler` and `Histogram`) actually correct?**
   _`MetricsAggregator` has 59 INFERRED edges - model-reasoned connections that need verification._
