@@ -286,6 +286,22 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 ## 9. How to verify / demo
 
+**The real agent (UBS-114):** `config/agent.yaml` is a ready-to-run local
+dev config. Four terminals, all from the repo root:
+
+```bash
+uv run telemetry-backend
+uv run python apps/simulator/src/simulator/mock_logger.py --max-bytes 50000000
+uv run telemetry-agent --config config/agent.yaml      # --check-config to validate only
+# optional: anything listening on 127.0.0.1:9000 receives Magic callbacks
+```
+
+`telemetry-agent` runs the whole agent in one process: tail → parse →
+`MetricsIngestor` (UBS-112) → `RuleEvaluator` (UBS-113) → `AlertRouter` →
+Backend Publisher (alerts + heartbeat) and Callback Dispatcher (Magic). Secrets
+come from the environment (`.env.example`); localhost-only setups fall back to
+dev values with a warning. Automated: `tests/integration/test_UBS_114_agent_end_to_end.py`.
+
 **Current (full path, real backend):**
 
 ```bash
