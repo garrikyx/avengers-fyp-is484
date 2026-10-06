@@ -32,8 +32,12 @@ from pathlib import Path
 
 import httpx
 from telemetry_agent.health.config import HeartbeatConfig
+from telemetry_agent.health.publishing import (
+    connect_reporter_to_publisher,
+    drop_hook,
+    heartbeat_provider,
+)
 from telemetry_agent.health.reporter import HealthReporter
-from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.parser.applog.parser import AppLogParser
 from telemetry_agent.parser.fix.identifiers import load_hash_key
@@ -94,9 +98,10 @@ def main() -> None:
         parse_publish_config({"endpoint": endpoint, "allowInsecureEndpoint": True}),
         agent_id=args.agent_id,
         application="Magic",
-        heartbeat_provider=lambda: to_ingestion_heartbeat(reporter.build_heartbeat()),
+        heartbeat_provider=heartbeat_provider(reporter),
+        on_drop=drop_hook(reporter),
     )
-    reporter.set_queue_depth_provider(publisher.queue_depth)
+    connect_reporter_to_publisher(reporter, publisher)
 
     print(f"tailing {', '.join(str(p) for p in logs)} -> {endpoint}", flush=True)
     bridge.start()

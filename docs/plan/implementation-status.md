@@ -144,10 +144,10 @@ since no agent supervisor loop exists yet (M1).
 | UBS-60 | Publish queue depth in heartbeat | `FR-HLT-001`/`002` (queue slice); `FR-PIP-005` pipeline queues still pending M1.5 | Done (agent side; provider hook, Publisher itself is M4) | `tests/unit/agent/health/test_queue_depth.py` |
 
 Decisions and the missing-downstream list: `docs/plan/ubs58-60-notes.md`. Heartbeats
-currently reach a backend only through the stdlib `HttpHeartbeatSink` (no Publisher,
-spec 002 s6) and are received only by `scripts/heartbeat_receiver_stub.py` (no
-Ingestion Service, UBS-66/87; no health read side, UBS-69). The UBS-58 ticket's two
-backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
+reach the backend only through the Backend Publisher, inside `TelemetryBatch.heartbeat`
+(`health/publishing.py`; the direct `HttpHeartbeatSink` and the stub receiver were
+retired 2026-10-07). The UBS-58 ticket's two backend-side criteria
+(`lastHeartbeatUtc`, `unresponsive`) are delivered by UBS-69.
 
 ## Code locations
 
@@ -190,7 +190,7 @@ backend-side criteria (`lastHeartbeatUtc`, `unresponsive`) belong to UBS-69.
 | Cross-component integration tests | `tests/integration/agent/` |
 | Health Reporter, heartbeat emitter, health config | `apps/agent/src/telemetry_agent/health/` |
 | Shared heartbeat contract | `packages/telemetry_shared/src/telemetry_shared/models/health.py` |
-| Heartbeat demo / stub receiver | `telemetry-agent-heartbeat` (`health/demo.py`), `scripts/heartbeat_receiver_stub.py` |
+| Heartbeat demo | `telemetry-agent-heartbeat` (`health/demo.py`), `scripts/health_monitor_demo.py` |
 | Unit tests (health) | `tests/unit/agent/health/` |
 
 ## How to verify

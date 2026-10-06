@@ -6,12 +6,13 @@ every signal field required and non-negative, while ours leaves a signal
 `null` when nothing produces it (FR-HLT-004: a gap must never be reported as
 a zero).
 
-**Decision (2026-09-22): the agent adapts.** Downstream consumers are waiting
-on a working `POST /telemetry/heartbeat`, and only one of the two shapes can
-be on the wire. `AgentHeartbeat` stays the agent's internal truth - the
-reporter keeps its `None`s, so no status rule ever fires on a fabricated zero
-- and this module flattens it to the ingestion shape at the last moment,
-inside the sink.
+**Decision (2026-09-22): the agent adapts.** The heartbeat rides in the
+`heartbeat` slot of every `TelemetryBatch` the Backend Publisher sends
+(`health/publishing.py`), and only one of the two shapes can be on the wire.
+`AgentHeartbeat` stays the agent's internal truth - the reporter keeps its
+`None`s, so no status rule ever fires on a fabricated zero - and this module
+flattens it to the ingestion shape at the last moment, when the publisher
+asks for it.
 
 **What that costs, and how to reverse it** - see docs/plan/ubs58-60-notes.md
 ("Wire compatibility with UBS-66"):
@@ -24,10 +25,10 @@ inside the sink.
 3. `resourceUsage` is required there and unmeasured here, so it is sent as
    zeros rather than omitted.
 
-Reversing is a one-line change once the team settles the contract: make the
-optional fields `| None = None` in `ingestion.Heartbeat` and pass
-`wire="health"` to `HttpHeartbeatSink` (or delete this module and send
-`AgentHeartbeat` directly).
+Reversing is a small change once the team settles the contract: make the
+optional fields `| None = None` in `ingestion.Heartbeat` and have
+`health/publishing.heartbeat_provider` return the reporter's heartbeat
+without flattening it.
 """
 
 from __future__ import annotations

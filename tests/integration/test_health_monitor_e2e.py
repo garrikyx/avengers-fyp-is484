@@ -32,8 +32,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from simulator.mock_logger import rotate_if_needed
 from telemetry_agent.health.config import HeartbeatConfig
+from telemetry_agent.health.publishing import (
+    connect_reporter_to_publisher,
+    drop_hook,
+    heartbeat_provider,
+)
 from telemetry_agent.health.reporter import HealthReporter
-from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.parser.applog.parser import AppLogParser
 from telemetry_agent.parser.fix.parser import FixParser
@@ -198,9 +202,10 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
         parse_publish_config({"endpoint": ENDPOINT}),
         agent_id=AGENT_ID,
         application="Magic",
-        heartbeat_provider=lambda: to_ingestion_heartbeat(reporter.build_heartbeat()),
+        heartbeat_provider=heartbeat_provider(reporter),
+        on_drop=drop_hook(reporter),
     )
-    reporter.set_queue_depth_provider(publisher.queue_depth)  # UBS-60
+    connect_reporter_to_publisher(reporter, publisher)  # UBS-60
 
     yield Stack(
         log_dir=tmp_path,

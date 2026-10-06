@@ -25,4 +25,4 @@ Status: 2026-09-29 · Branch `UBS-69-85-96-Backend-Health-Monitor` · Map of the
 ## Open points for the team
 
 - Garrison's `UBS-93-94-95-Alert-Event-Store` branch adds its own `services/agent_registry.py` (different API, records from the ingestion worker). Whichever of the two PRs merges second resolves the overlap; `HeartbeatMonitor` would need `agents_exceeding_threshold` / `get_record` equivalents on this registry (`stale_agents()` and `get()` already exist).
-- `scripts/heartbeat_receiver_stub.py` (UBS-58) says to delete it once UBS-69 lands — keep or drop?
+- ~~`scripts/heartbeat_receiver_stub.py` — keep or drop?~~ Dropped 2026-10-07 with `HttpHeartbeatSink`; heartbeats go through the Backend Publisher only.

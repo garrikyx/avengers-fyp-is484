@@ -1,28 +1,41 @@
-"""Agent Health Reporter (UBS-58/59/60) -> Ingestion (UBS-66) -> health read
-side (UBS-69), through the real app and the real wire contract.
+"""Agent Health Reporter (UBS-58/59/60) -> Backend Publisher -> Ingestion
+(UBS-66) -> health read side (UBS-69), through the real app and the real wire
+contract.
 
-This is the one test that exercises the whole chain the way production will:
-the agent's `HealthReporter` builds a heartbeat, `health/wire.py` flattens it
-to the ingestion contract, it is POSTed to the merged `POST
-/telemetry/heartbeat` route, recorded in the Agent Registry, and read back
-from `GET /telemetry/health/agents/{agentId}`. No sockets - `TestClient`
-drives the same ASGI app `uvicorn` serves.
+This exercises the chain the way production does: the agent's
+`HealthReporter` builds a heartbeat, the Backend Publisher asks for it through
+`health/publishing.heartbeat_provider`, carries it in the `heartbeat` slot of
+a `TelemetryBatch` to `POST /telemetry/batch`, the backend records it in the
+Agent Registry, and it is read back from `GET /telemetry/health/agents/{id}`.
+No sockets - `httpx.ASGITransport` and `TestClient` drive the same ASGI app
+`uvicorn` serves.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 from telemetry_agent.health.config import HeartbeatConfig
-from telemetry_agent.health.heartbeat import heartbeat_json
+from telemetry_agent.health.publishing import (
+    connect_reporter_to_publisher,
+    drop_hook,
+    heartbeat_provider,
+)
 from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.logs.offset_tracker import OffsetTracker
+from telemetry_agent.publishing.config import parse_publish_config
+from telemetry_agent.publishing.outcome import PublishAction
+from telemetry_agent.publishing.publisher import BackendPublisher
+from telemetry_agent.publishing.sink import HttpsPublishSink
 from telemetry_backend.config import BackendHealthConfig
 from telemetry_backend.deps import AppDeps
 from telemetry_backend.main import create_app
 
 T0 = datetime(2026, 9, 22, 4, 0, 0, tzinfo=UTC)
+ENDPOINT = "https://backend.example/telemetry/batch"
 
 
 class FakeClock:
@@ -36,15 +49,33 @@ class FakeClock:
         self.now += timedelta(seconds=seconds)
 
 
+def _publisher(
+    app: object, reporter: HealthReporter, agent_id: str
+) -> BackendPublisher:
+    publisher = BackendPublisher(
+        HttpsPublishSink(
+            ENDPOINT, "test-token", transport=httpx.ASGITransport(app=app)
+        ),
+        parse_publish_config({"endpoint": ENDPOINT}),
+        agent_id=agent_id,
+        application="Magic",
+        heartbeat_provider=heartbeat_provider(reporter),
+        on_drop=drop_hook(reporter),
+    )
+    connect_reporter_to_publisher(reporter, publisher)
+    return publisher
+
+
 def test_agent_heartbeat_reaches_the_health_endpoint(tmp_path: Path) -> None:
     backend_clock = FakeClock()
     deps = AppDeps(
         config=BackendHealthConfig(missing_heartbeat_threshold_seconds=60),
         clock=backend_clock,
     )
-    client = TestClient(create_app(deps=deps))
+    app = create_app(deps=deps)
+    client = TestClient(app)
 
-    # --- agent side, wired as the demo wires it
+    # --- agent side: reporter wired to the publisher, as production wires it
     log = tmp_path / "Fix.log"
     log.write_text("35=D|11=ORD-1|\n", newline="\n")
     monitor = LogMonitor(log, offset_tracker=OffsetTracker(tmp_path / "o.json"))
@@ -54,27 +85,21 @@ def test_agent_heartbeat_reaches_the_health_endpoint(tmp_path: Path) -> None:
             agent_id="magic-agent-sg-01", instance_ids=("magic-prod-01",)
         ),
     )
-    reporter.set_queue_depth_provider(lambda: 4)
+    publisher = _publisher(app, reporter, "magic-agent-sg-01")
     reporter.record_parse_error()
     list(monitor.poll_lines())
+    assert reporter.build_heartbeat().status == "unhealthy"  # 1/1 parse errors
 
-    heartbeat = reporter.build_heartbeat()
-    assert heartbeat.status == "unhealthy"  # 1/1 parse errors
-
-    # --- the wire: exactly what HttpHeartbeatSink sends
-    resp = client.post(
-        "/telemetry/heartbeat",
-        content=heartbeat_json(heartbeat, "ingestion"),
-        headers={"Content-Type": "application/json"},
-    )
-    assert resp.status_code == 202, resp.text
+    # --- the wire: the publisher carries the heartbeat in a batch
+    assert asyncio.run(publisher.publish_once()) is PublishAction.COMMIT
 
     # --- read side
     body = client.get("/telemetry/health/agents/magic-agent-sg-01").json()
     assert body["status"] == "unhealthy"
     assert body["reportedStatus"] == "unhealthy"
     assert body["parseErrorCountLast5Min"] == 1
-    assert body["publishQueueDepth"] == 4
+    assert body["publishQueueDepth"] == 0  # read from the publisher (UBS-60)
+    assert body["droppedEventsLast5Min"] == 0  # producer wired, nothing dropped
     assert body["files"][0]["path"] == str(log)
     assert body["files"][0]["state"] == "reading"
     assert body["files"][0]["instanceId"] == "magic-prod-01"
@@ -91,17 +116,15 @@ def test_agent_heartbeat_reaches_the_health_endpoint(tmp_path: Path) -> None:
     monitor.close()
 
 
-def test_heartbeat_embedded_in_a_batch_is_registered_too(tmp_path: Path) -> None:
-    """Agents publish a heartbeat inside the 10s batch (FR-PUB-001), not only
-    through the standalone endpoint."""
+def test_heartbeat_provider_output_is_accepted_in_a_batch() -> None:
+    """The backend contract for the batch's heartbeat slot, without the
+    publisher: what `heartbeat_provider` returns is a valid batch heartbeat."""
     deps = AppDeps(clock=FakeClock())
     client = TestClient(create_app(deps=deps))
     reporter = HealthReporter(
         {}, heartbeat=HeartbeatConfig(agent_id="batched-agent", instance_ids=("i-1",))
     )
-    import json
-
-    heartbeat = json.loads(heartbeat_json(reporter.build_heartbeat(), "ingestion"))
+    heartbeat = heartbeat_provider(reporter)().model_dump(mode="json", by_alias=True)
 
     resp = client.post(
         "/telemetry/batch",

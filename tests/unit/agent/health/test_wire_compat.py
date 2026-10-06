@@ -6,7 +6,7 @@ docs/plan/ubs58-60-notes.md "Wire compatibility with UBS-66").
 import json
 from datetime import UTC, datetime
 
-from telemetry_agent.health.heartbeat import HttpHeartbeatSink, heartbeat_json
+from telemetry_agent.health.heartbeat import heartbeat_json
 from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_shared.models.health import AgentHeartbeat, FileReadHealth
 from telemetry_shared.models.health import ResourceUsage as HealthResourceUsage
@@ -110,8 +110,3 @@ def test_health_wire_still_available_for_the_reversal() -> None:
     payload = json.loads(heartbeat_json(hb, "health"))
     assert payload["statusReasons"] == ["because"]
     assert payload["parseErrorCountLast5Min"] is None  # null preserved
-
-
-def test_http_sink_defaults_to_the_ingestion_contract() -> None:
-    assert HttpHeartbeatSink("http://x/telemetry/heartbeat").wire == "ingestion"
-    assert HttpHeartbeatSink("http://x", wire="health").wire == "health"
