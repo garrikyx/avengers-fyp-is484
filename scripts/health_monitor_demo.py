@@ -44,6 +44,7 @@ from telemetry_agent.parser.fix.identifiers import load_hash_key
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.registry import Registry
 from telemetry_agent.pipeline.config import PipelineConfig
+from telemetry_agent.pipeline.ingest import MetricsIngestor
 from telemetry_agent.pipeline.monitor_adapter import (
     MonitorPipelineAdapter,
     monitors_by_resolved_path,
@@ -87,7 +88,11 @@ def main() -> None:
         }
     )
     bridge = PipelineBridge(config=PipelineConfig(parse_workers=1), registry=registry)
-    bridge.attach_committer(monitors_by_resolved_path(monitor.monitors), sink=reporter)
+    # UBS-112: committed lines feed the metrics aggregator and the reporter.
+    ingestor = MetricsIngestor.build_default(health_reporter=reporter)
+    bridge.attach_committer(
+        monitors_by_resolved_path(monitor.monitors), on_event=ingestor.on_event
+    )
     adapter = MonitorPipelineAdapter(
         monitor, bridge, parser_chain=["fix", "applog"], instance_id="magic-demo"
     )
@@ -131,6 +136,23 @@ def main() -> None:
                 f"lagMs={agent.get('logReadLagMs')} "
                 f"parseErrors5m={agent.get('parseErrorCountLast5Min')} "
                 f"queueDepth={agent.get('publishQueueDepth')}",
+                flush=True,
+            )
+            # UBS-112: what the metrics aggregator now holds (last minute).
+            rows = ingestor.aggregator.snapshot("1m", group_by=())
+            counters = rows[()].counters if () in rows else {}
+            print(
+                "  metrics 1m: "
+                + " ".join(
+                    f"{name}={counters.get(name, 0)}"
+                    for name in (
+                        "log_lines_read",
+                        "orders_submitted",
+                        "orders_acked",
+                        "orders_rejected",
+                        "parse_errors",
+                    )
+                ),
                 flush=True,
             )
     except KeyboardInterrupt:
