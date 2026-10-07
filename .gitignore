@@ -53,6 +53,7 @@ claude.*
 *.log
 *.log.*
 offsets.json
+/.agent-state/
 
 #graphify
 graphify-out/cost.json

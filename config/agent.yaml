@@ -1,68 +1,85 @@
-# agent:
-#   id: magic-agent-a
-#   instance_id: magic-a
+# Telemetry Agent config (UBS-114) - LOCAL DEV ONLY.
+#
+#   uv run telemetry-agent --config config/agent.yaml      (from the repo root)
+#
+# Ready to run against a local stack: `uv run telemetry-backend` on :8080, the
+# simulator writing ./logs/*.log, and a Magic callback receiver on :9000.
+# For production: https endpoints, no allowInsecure* flags, real tokens in the
+# environment (never in this file), and dryRun as the deployment needs.
+# Secrets come from the environment - see .env.example:
+#   MAGIC_TELEMETRY_ID_HASH_KEY, MAGIC_TELEMETRY_PUBLISH_TOKEN,
+#   MAGIC_TELEMETRY_CALLBACK_SECRET (localhost runs fall back to dev values).
 
-# log:
-#   path: /logs/magic.log
-#   poll_interval_ms: 250
+# --- Identity + Health Reporter (UBS-58; spec 010 `heartbeat:`, spec 011 s1.1/s2) ---
+agent:
+  id: magic-agent-sg-01
+  instanceIds: [magic-prod-01]
+  version: 0.1.0
 
-# backend:
-#   url: http://backend:8000
+heartbeat:
+  interval: 10s              # FR-HLT-001; rides in every publisher batch
+
+health:
+  readLagDegraded: 5s        # spec 011 s1.1
+  parseErrorRateDegraded: 0.01
+  parseErrorRateUnhealthy: 0.25
+  rollingWindow: 5m          # `...Last5Min` heartbeat fields
+  publishQueueHighWatermark: 10
+  publishQueueCriticalWatermark: 100
+  callbackFailuresDegraded: 1
+  # UBS-106: FIX session silence counted as a heartbeat_timeouts event,
+  # feeding FixSessionDown (spec 005 §1.2). Mirrors the backend's own
+  # missingHeartbeatThreshold (FR-RUL-030) so both ends agree on
+  # "missing heartbeat"; spec 004 §4.2 supplies no interval of its own.
+  sessionHeartbeatTimeout: 60s
+
+# --- Log files to tail (UBS-22/23/24); relative to where the agent starts ---
+logs:
+  paths:
+    - ./logs/Application.log
+    - ./logs/Fix.log
+  stateDir: ./.agent-state   # offsets.json lives here (UBS-23)
+  appLogPatterns:            # the simulator's Application.log line shape
+    - '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \[[A-Z]+\]'
+
+# --- Parser pipeline + rule evaluation (UBS-48/49, UBS-112, UBS-113) ---
+pipeline:
+  parseWorkers: 1            # FixParser keeps per-session state: one worker
+  evaluationInterval: 10s    # RuleEvaluator tick
+
+rules:
+  path: rules.yaml           # next to this file
 
 # --- Backend Publisher (UBS-103/104; spec 010 `publish:`, spec 007 s2.1) ---
-# publish:
-#   enabled: true
-#   endpoint: https://telemetry.internal.example/telemetry/batch
-#   # ^ Rule Engine alerts ride this same batch endpoint in TelemetryBatch.alerts
-#   #   (UBS-109, via pipeline.AlertRouter) — there is no alerts-specific route.
-#   allowInsecureEndpoint: false
-#   dryRun: true
-#   interval: 10s
-#   connectTimeout: 3s
-#   timeout: 10s
-#   maxBatchItems: 500
-#   compressThreshold: 4096
-#   bufferBytes: 67108864              # 64 MiB, memory only (FR-PUB-008)
-#   bufferMaxAge: 15m
-#   haltProbeInterval: 5m
-#   retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
-#   # token comes from MAGIC_TELEMETRY_PUBLISH_TOKEN, never here
+publish:
+  enabled: true
+  endpoint: http://127.0.0.1:8080/telemetry/batch
+  # ^ Rule Engine alerts and the heartbeat ride this same batch endpoint
+  #   (UBS-109 via pipeline.AlertRouter; UBS-114 heartbeat slot).
+  allowInsecureEndpoint: true          # LOCAL DEV ONLY (plain http)
+  dryRun: false
+  interval: 10s
+  connectTimeout: 3s
+  timeout: 10s
+  maxBatchItems: 500
+  compressThreshold: 8388608           # the backend cannot gunzip yet; spec default 4096
+  bufferBytes: 67108864                # 64 MiB, memory only (FR-PUB-008)
+  bufferMaxAge: 15m
+  haltProbeInterval: 5m
+  retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
+  # token comes from MAGIC_TELEMETRY_PUBLISH_TOKEN, never here
 
-# --- Callback Dispatcher (UBS-32/33/34; Rule Engine alerts arrive via
-#     pipeline.AlertRouter, UBS-110) ---
-# callbacks:
-#   enabled: true
-#   endpoint: https://magic-host.internal.example/magic/callbacks/telemetry-alerts
-#   allowInsecureCallback: false
-#   dryRun: true
-#   connectTimeout: 3s
-#   timeout: 10s
-#   maxAttempts: 5
-#   retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
-#   maxInflight: 4
-#   queueSize: 256
-#   maxBytes: 16384
-#   # HMAC secret from MAGIC_TELEMETRY_CALLBACK_SECRET, never here
-
-# --- Health Reporter / heartbeat (UBS-58; spec 010 `heartbeat:`, spec 011 s1.1/s2) ---
-# agent:
-#   id: magic-agent-sg-01
-#   instanceIds: [magic-prod-01]
-#   version: 0.1.0
-#
-# heartbeat:
-#   interval: 10s              # FR-HLT-001 default; emitted even when idle
-#
-# health:
-#   readLagDegraded: 5s        # spec 011 s1.1
-#   parseErrorRateDegraded: 0.01
-#   parseErrorRateUnhealthy: 0.25
-#   rollingWindow: 5m          # `...Last5Min` heartbeat fields
-#   publishQueueHighWatermark: 10
-#   publishQueueCriticalWatermark: 100
-#   callbackFailuresDegraded: 1
-#   # UBS-106: FIX session silence counted as a heartbeat_timeouts event,
-#   # feeding FixSessionDown (spec 005 §1.2). Mirrors the backend's own
-#   # missingHeartbeatThreshold (FR-RUL-030) so both ends agree on
-#   # "missing heartbeat"; spec 004 §4.2 supplies no interval of its own.
-#   sessionHeartbeatTimeout: 60s
+# --- Callback Dispatcher (UBS-32/33/34; alerts arrive via pipeline.AlertRouter, UBS-110) ---
+callbacks:
+  enabled: true
+  endpoint: http://127.0.0.1:9000/magic/callbacks/telemetry-alerts
+  allowInsecureCallback: true          # LOCAL DEV ONLY (plain http)
+  dryRun: false
+  connectTimeout: 3s
+  timeout: 10s
+  maxAttempts: 5
+  retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
+  maxInflight: 4
+  queueSize: 256
+  maxBytes: 16384
+  # HMAC secret from MAGIC_TELEMETRY_CALLBACK_SECRET, never here

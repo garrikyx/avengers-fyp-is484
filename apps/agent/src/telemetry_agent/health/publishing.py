@@ -23,8 +23,10 @@ Two directions, both set up here so every caller wires them the same way:
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, Any
 
 from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.health.wire import to_ingestion_heartbeat
@@ -35,25 +37,40 @@ if TYPE_CHECKING:
 
 
 def heartbeat_provider(
-    reporter: HealthReporter, *, default_instance_id: str | None = None
+    reporter: HealthReporter,
+    *,
+    default_instance_id: str | None = None,
+    lock: AbstractContextManager[Any] | None = None,
 ) -> Callable[[], Heartbeat]:
     """The publisher's `heartbeat_provider`: a fresh, wire-shaped heartbeat on
-    every call, so each batch carries the reporter's state at send time."""
+    every call, so each batch carries the reporter's state at send time.
+
+    Pass `lock` when the reporter is also written from another thread (the
+    agent's pipeline thread feeds it through `MetricsIngestor`): use
+    `ingestor.lock`, the one lock that guards it.
+    """
+    guard = lock or contextlib.nullcontext()
 
     def provide() -> Heartbeat:
+        with guard:
+            heartbeat = reporter.build_heartbeat()
         return to_ingestion_heartbeat(
-            reporter.build_heartbeat(), default_instance_id=default_instance_id
+            heartbeat, default_instance_id=default_instance_id
         )
 
     return provide
 
 
-def drop_hook(reporter: HealthReporter) -> Callable[[], None]:
+def drop_hook(
+    reporter: HealthReporter, *, lock: AbstractContextManager[Any] | None = None
+) -> Callable[[], None]:
     """The publisher's `on_drop`: one item evicted from a full outbox counts
-    towards `droppedEventsLast5Min`."""
+    towards `droppedEventsLast5Min`. `lock` as for `heartbeat_provider`."""
+    guard = lock or contextlib.nullcontext()
 
     def on_drop() -> None:
-        reporter.record_dropped_events(1)
+        with guard:
+            reporter.record_dropped_events(1)
 
     return on_drop
 
