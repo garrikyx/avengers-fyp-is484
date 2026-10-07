@@ -32,14 +32,19 @@ from pathlib import Path
 
 import httpx
 from telemetry_agent.health.config import HeartbeatConfig
+from telemetry_agent.health.publishing import (
+    connect_reporter_to_publisher,
+    drop_hook,
+    heartbeat_provider,
+)
 from telemetry_agent.health.reporter import HealthReporter
-from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.parser.applog.parser import AppLogParser
 from telemetry_agent.parser.fix.identifiers import load_hash_key
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.registry import Registry
 from telemetry_agent.pipeline.config import PipelineConfig
+from telemetry_agent.pipeline.ingest import MetricsIngestor
 from telemetry_agent.pipeline.monitor_adapter import (
     MonitorPipelineAdapter,
     monitors_by_resolved_path,
@@ -83,7 +88,11 @@ def main() -> None:
         }
     )
     bridge = PipelineBridge(config=PipelineConfig(parse_workers=1), registry=registry)
-    bridge.attach_committer(monitors_by_resolved_path(monitor.monitors), sink=reporter)
+    # UBS-112: committed lines feed the metrics aggregator and the reporter.
+    ingestor = MetricsIngestor.build_default(health_reporter=reporter)
+    bridge.attach_committer(
+        monitors_by_resolved_path(monitor.monitors), on_event=ingestor.on_event
+    )
     adapter = MonitorPipelineAdapter(
         monitor, bridge, parser_chain=["fix", "applog"], instance_id="magic-demo"
     )
@@ -94,9 +103,10 @@ def main() -> None:
         parse_publish_config({"endpoint": endpoint, "allowInsecureEndpoint": True}),
         agent_id=args.agent_id,
         application="Magic",
-        heartbeat_provider=lambda: to_ingestion_heartbeat(reporter.build_heartbeat()),
+        heartbeat_provider=heartbeat_provider(reporter),
+        on_drop=drop_hook(reporter),
     )
-    reporter.set_queue_depth_provider(publisher.queue_depth)
+    connect_reporter_to_publisher(reporter, publisher)
 
     print(f"tailing {', '.join(str(p) for p in logs)} -> {endpoint}", flush=True)
     bridge.start()
@@ -126,6 +136,23 @@ def main() -> None:
                 f"lagMs={agent.get('logReadLagMs')} "
                 f"parseErrors5m={agent.get('parseErrorCountLast5Min')} "
                 f"queueDepth={agent.get('publishQueueDepth')}",
+                flush=True,
+            )
+            # UBS-112: what the metrics aggregator now holds (last minute).
+            rows = ingestor.aggregator.snapshot("1m", group_by=())
+            counters = rows[()].counters if () in rows else {}
+            print(
+                "  metrics 1m: "
+                + " ".join(
+                    f"{name}={counters.get(name, 0)}"
+                    for name in (
+                        "log_lines_read",
+                        "orders_submitted",
+                        "orders_acked",
+                        "orders_rejected",
+                        "parse_errors",
+                    )
+                ),
                 flush=True,
             )
     except KeyboardInterrupt:

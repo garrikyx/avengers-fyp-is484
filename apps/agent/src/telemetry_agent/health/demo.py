@@ -1,18 +1,22 @@
-"""Live heartbeat demo (UBS-58): tail files, emit heartbeats on an interval.
+"""Live heartbeat demo (UBS-58): tail files, report health on an interval.
 
     uv run telemetry-agent-heartbeat --interval 2 --log demo_logs/Fix.log
-    uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8000/telemetry/heartbeat
+    uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8080/telemetry/batch
 
 Heartbeats keep coming with zero log activity (FR-HLT-001). Append lines to a
 tailed file and the next heartbeat's `files[]` / `readLagMs` move; stop
 appending for > readLagDegraded and `status` flips to `degraded` with a
 reason. Every tailed line is also run through the FIX parser (UBS-59): append
 garbage and `parseErrorCountLast5Min` / the parse-error-rate reasons follow.
-Pair it with `scripts/heartbeat_receiver_stub.py` to see the wire format
-validated on the receiving side. With an http sink the heartbeats that fail to
-send are queued (UBS-60): stop the receiver and `publishQueueDepth` rises until
-the watermark reasons appear; start it again and the queue drains. Not the
-production entrypoint — pipeline wiring is M1.5.
+
+`--sink stdout` prints each heartbeat locally. With an http(s) URL the
+heartbeat goes the production way: the Backend Publisher carries it in the
+`heartbeat` slot of a `TelemetryBatch` to `POST /telemetry/batch`
+(`health/publishing.py`), never straight to the backend. Stop the backend and
+the publisher's outbox fills, so `publishQueueDepth` rises (UBS-60); start it
+again and the queue drains. Set MAGIC_TELEMETRY_PUBLISH_TOKEN for an https
+backend; a plain-http local backend gets a dev token. Not the production
+entrypoint (that is the agent composition root, UBS-114).
 """
 
 from __future__ import annotations
@@ -20,18 +24,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
+import os
 import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 
 from telemetry_agent.health.config import HeartbeatConfig, load_health_config
-from telemetry_agent.health.heartbeat import (
-    BufferingHeartbeatSink,
-    HeartbeatEmitter,
-    HeartbeatSink,
-    HttpHeartbeatSink,
-    PrintHeartbeatSink,
+from telemetry_agent.health.heartbeat import HeartbeatEmitter, PrintHeartbeatSink
+from telemetry_agent.health.publishing import (
+    connect_reporter_to_publisher,
+    drop_hook,
+    heartbeat_provider,
 )
 from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.logs.log_monitor import LogMonitor
@@ -39,6 +44,11 @@ from telemetry_agent.logs.offset_tracker import OffsetTracker
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.protocol import SourceMeta
+from telemetry_agent.publishing.config import load_publish_token, parse_publish_config
+from telemetry_agent.publishing.publisher import BackendPublisher
+from telemetry_agent.publishing.sink import HttpsPublishSink
+
+_DEV_TOKEN = "dev-local-token"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -63,24 +73,41 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sink",
         default="stdout",
-        help="'stdout' or an http(s) URL to POST each heartbeat to",
+        help="'stdout', or the backend batch URL "
+        "(e.g. http://127.0.0.1:8080/telemetry/batch) to publish through",
     )
     parser.add_argument("--state-dir", type=Path, default=Path("demo_logs/.state"))
-    parser.add_argument(
-        "--buffer",
-        type=int,
-        default=500,
-        help="max heartbeats queued while the sink is failing (0 = no queue)",
-    )
     return parser
 
 
-def _make_sink(spec: str) -> HeartbeatSink:
-    if spec == "stdout":
-        return PrintHeartbeatSink()
-    if spec.startswith(("http://", "https://")):
-        return HttpHeartbeatSink(spec)
-    raise SystemExit(f"--sink must be 'stdout' or an http(s) URL, got {spec!r}")
+def _make_publisher(
+    endpoint: str, reporter: HealthReporter, cfg: HeartbeatConfig
+) -> BackendPublisher:
+    """The production route: reporter -> Backend Publisher -> backend."""
+    insecure = endpoint.startswith("http://")
+    if insecure:
+        token = os.environ.get("MAGIC_TELEMETRY_PUBLISH_TOKEN") or _DEV_TOKEN
+    else:
+        token = load_publish_token()
+    # The publisher ticks on whole seconds; the heartbeat rides on each tick.
+    interval = max(1, math.ceil(cfg.interval_seconds))
+    publish_cfg = parse_publish_config(
+        {
+            "endpoint": endpoint,
+            "allowInsecureEndpoint": insecure,
+            "interval": f"{interval}s",
+        }
+    )
+    publisher = BackendPublisher(
+        HttpsPublishSink(endpoint, token, allow_insecure_endpoint=insecure),
+        publish_cfg,
+        agent_id=cfg.agent_id,
+        application="Magic",
+        heartbeat_provider=heartbeat_provider(reporter),
+        on_drop=drop_hook(reporter),
+    )
+    connect_reporter_to_publisher(reporter, publisher)
+    return publisher
 
 
 async def _poll_forever(
@@ -181,12 +208,16 @@ async def _main_async(args: argparse.Namespace) -> None:
         monitors[key] = LogMonitor(path, offset_tracker=tracker)
 
     reporter = HealthReporter(monitors, thresholds=thresholds, heartbeat=heartbeat_cfg)
-    sink = _make_sink(args.sink)
-    if args.buffer > 0:
-        buffered = BufferingHeartbeatSink(sink, max_items=args.buffer)
-        reporter.set_queue_depth_provider(lambda: len(buffered))
-        sink = buffered
-    emitter = HeartbeatEmitter(reporter, sink)
+    publisher: BackendPublisher | None = None
+    emitter: HeartbeatEmitter | None = None
+    if args.sink == "stdout":
+        emitter = HeartbeatEmitter(reporter, PrintHeartbeatSink())
+    elif args.sink.startswith(("http://", "https://")):
+        publisher = _make_publisher(args.sink, reporter, heartbeat_cfg)
+    else:
+        raise SystemExit(
+            f"--sink must be 'stdout' or an http(s) URL, got {args.sink!r}"
+        )
     # UBS-106: one tracker for the process, driven by the two loops below.
     sessions = SessionHeartbeatTracker(
         timeout_seconds=thresholds.session_heartbeat_timeout_seconds
@@ -200,25 +231,34 @@ async def _main_async(args: argparse.Namespace) -> None:
         except NotImplementedError:  # Windows event loop
             signal.signal(sig, lambda *_: stop.set())
 
+    interval = heartbeat_cfg.interval_seconds
     logging.info(
         "heartbeat every %.1fs as %s -> %s; tailing %s",
-        emitter.interval_seconds,
+        interval,
         heartbeat_cfg.agent_id,
         args.sink,
         ", ".join(str(p) for p in paths),
     )
+    reporting = publisher.run(stop) if publisher is not None else None
+    if emitter is not None:
+        reporting = emitter.run(stop)
+    if reporting is None:
+        raise SystemExit("no heartbeat route configured")
     try:
         await asyncio.gather(
-            emitter.run(stop),
+            reporting,
             _poll_forever(monitors, reporter, stop, sessions),
-            _detect_session_timeouts(sessions, stop, emitter.interval_seconds),
+            _detect_session_timeouts(sessions, stop, interval),
         )
     finally:
         for monitor in monitors.values():
             monitor.close()
-        logging.info(
-            "stopped: sent=%d failed=%d", emitter.sent_count, emitter.failed_count
-        )
+        if emitter is not None:
+            logging.info(
+                "stopped: sent=%d failed=%d", emitter.sent_count, emitter.failed_count
+            )
+        if publisher is not None:
+            logging.info("stopped: publisher %s", publisher.counters.snapshot())
 
 
 def main() -> None:

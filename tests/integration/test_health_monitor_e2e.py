@@ -32,13 +32,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from simulator.mock_logger import rotate_if_needed
 from telemetry_agent.health.config import HeartbeatConfig
+from telemetry_agent.health.publishing import (
+    connect_reporter_to_publisher,
+    drop_hook,
+    heartbeat_provider,
+)
 from telemetry_agent.health.reporter import HealthReporter
-from telemetry_agent.health.wire import to_ingestion_heartbeat
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.parser.applog.parser import AppLogParser
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.registry import Registry
 from telemetry_agent.pipeline.config import PipelineConfig
+from telemetry_agent.pipeline.ingest import MetricsIngestor
 from telemetry_agent.pipeline.monitor_adapter import (
     MonitorPipelineAdapter,
     monitors_by_resolved_path,
@@ -182,10 +187,13 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
         }
     )
     bridge = PipelineBridge(config=PipelineConfig(parse_workers=1), registry=registry)
-    # The committer only calls `sink.record_parse_result`, which
-    # HealthReporter implements (the parameter is typed as the demo metrics
-    # sink), so every committed line feeds parseErrorCountLast5Min (UBS-59).
-    bridge.attach_committer(monitors_by_resolved_path(monitor.monitors), sink=reporter)
+    # UBS-112: every committed line goes through the production ingestor,
+    # which feeds the metrics aggregator and the reporter's
+    # parseErrorCountLast5Min (UBS-59) - once each.
+    ingestor = MetricsIngestor.build_default(health_reporter=reporter)
+    bridge.attach_committer(
+        monitors_by_resolved_path(monitor.monitors), on_event=ingestor.on_event
+    )
     bridge.start()
     adapter = MonitorPipelineAdapter(
         monitor, bridge, parser_chain=["fix", "applog"], instance_id=INSTANCE_ID
@@ -198,9 +206,10 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
         parse_publish_config({"endpoint": ENDPOINT}),
         agent_id=AGENT_ID,
         application="Magic",
-        heartbeat_provider=lambda: to_ingestion_heartbeat(reporter.build_heartbeat()),
+        heartbeat_provider=heartbeat_provider(reporter),
+        on_drop=drop_hook(reporter),
     )
-    reporter.set_queue_depth_provider(publisher.queue_depth)  # UBS-60
+    connect_reporter_to_publisher(reporter, publisher)  # UBS-60
 
     yield Stack(
         log_dir=tmp_path,

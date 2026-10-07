@@ -1,5 +1,12 @@
 # UBS-58 / 59 / 60 implementation notes — heartbeat emitter, parse-error window, publish queue depth
 
+> **Update 2026-10-07:** `HttpHeartbeatSink` and `scripts/heartbeat_receiver_stub.py`
+> are retired. The heartbeat now reaches the backend only through the Backend
+> Publisher (`health/publishing.py`: `heartbeat_provider`,
+> `connect_reporter_to_publisher`, `drop_hook`), inside `TelemetryBatch.heartbeat`.
+> `telemetry-agent-heartbeat --sink http://127.0.0.1:8080/telemetry/batch` runs it
+> against the real backend. Mentions below are kept as the historical record.
+
 Working notes for the stacked `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate`
 → `UBS-60-Publish-Queue-Depth` branches, in the same spirit as `ubs30-notes.md`: the
 code says *what*, this says *why*.
