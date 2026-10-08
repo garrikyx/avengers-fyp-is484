@@ -9,6 +9,7 @@ the two sections nothing else reads yet (`logs:`, `pipeline:`):
     callbacks:                      -> callbacks.config.parse_callbacks_config
     rules: {path: rules.yaml}       -> rules.config_loader.load_rules
     logs: {paths, stateDir, appLogPatterns}
+    parsing: {errorSignatures, maxDynamicSignatureLabels}
     pipeline: {parseWorkers, evaluationInterval}
 
 Log paths and the state dir resolve against the directory the agent is
@@ -21,6 +22,7 @@ hash key come from the environment (see `.env.example`).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,6 +61,21 @@ class _LogsYaml(_Section):
     app_log_patterns: list[str] = []
 
 
+class _SignatureYaml(_Section):
+    label: str
+    match: str
+
+
+class _ParsingYaml(_Section):
+    # spec 010 `parsing:` — only the app-log signature keys are read here;
+    # the FIX parser's own keys aren't wired into the agent yet.
+    model_config = ConfigDict(
+        alias_generator=to_camel, populate_by_name=True, extra="ignore"
+    )
+    error_signatures: list[_SignatureYaml] = []
+    max_dynamic_signature_labels: int = 50
+
+
 class _PipelineYaml(_Section):
     parse_workers: int = 1
     evaluation_interval: str | float = "10s"
@@ -76,6 +93,12 @@ class LogsConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ParsingConfig:
+    error_signatures: tuple[tuple[str, str], ...]  # (label, match) pairs
+    max_dynamic_signature_labels: int
+
+
+@dataclass(frozen=True, slots=True)
 class AgentConfig:
     source: Path
     heartbeat: HeartbeatConfig
@@ -85,6 +108,7 @@ class AgentConfig:
     rules: tuple[RuleConfig, ...]
     rules_path: Path
     logs: LogsConfig
+    parsing: ParsingConfig
     parse_workers: int
     evaluation_interval_seconds: float
 
@@ -148,6 +172,17 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     if not logs_section.paths:
         raise AgentConfigError("logs: paths must list at least one file")
 
+    parsing: _ParsingYaml = _section(raw, "parsing", _ParsingYaml)
+    for signature in parsing.error_signatures:
+        try:
+            re.compile(signature.match)
+        except re.error as exc:
+            raise AgentConfigError(
+                f"parsing: errorSignatures {signature.label!r}: invalid match: {exc}"
+            ) from exc
+    if parsing.max_dynamic_signature_labels < 1:
+        raise AgentConfigError("parsing: maxDynamicSignatureLabels must be >= 1")
+
     pipeline: _PipelineYaml = _section(raw, "pipeline", _PipelineYaml)
     if pipeline.parse_workers < 1:
         raise AgentConfigError("pipeline: parseWorkers must be >= 1")
@@ -170,6 +205,12 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
             paths=tuple(Path(p) for p in logs_section.paths),
             state_dir=Path(logs_section.state_dir),
             app_log_patterns=tuple(logs_section.app_log_patterns),
+        ),
+        parsing=ParsingConfig(
+            error_signatures=tuple(
+                (sig.label, sig.match) for sig in parsing.error_signatures
+            ),
+            max_dynamic_signature_labels=parsing.max_dynamic_signature_labels,
         ),
         parse_workers=pipeline.parse_workers,
         evaluation_interval_seconds=interval,

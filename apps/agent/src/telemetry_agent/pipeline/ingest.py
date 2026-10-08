@@ -9,8 +9,10 @@ turns that into everything downstream reads, in this order:
 2. `build_parsed_message_event` - only framed FIX lines become events;
 3. `LatencyCorrelator.ingest` - order -> ack/exec/cancel latency;
 4. order and session counters (`derive_counters | derive_session_counters`);
-5. `SessionHeartbeatTracker.observe` - "this FIX session is alive" (UBS-106);
-6. `HealthReporter.record_parse_result` - the heartbeat's parse-error count
+5. Application.log counters (`derive_app_log_counters`, UBS-116) - only
+   lines the app-log parser extracted fields from;
+6. `SessionHeartbeatTracker.observe` - "this FIX session is alive" (UBS-106);
+7. `HealthReporter.record_parse_result` - the heartbeat's parse-error count
    (UBS-59).
 
 Wire it into the committer, which calls it after the line's offset is acked:
@@ -23,8 +25,9 @@ Production rules, which the demo copies of this sequence did not need:
 - **Never raises.** The committer acks a line's offset before calling
   `on_event`, so an exception here would lose the rest of the drained batch.
   Failures are logged once and counted in `stats()["ingest_errors"]`.
-- **Real time.** Parser counters are bucketed at `meta.read_at`; order
-  counters by the message's SendingTime (falling back to `read_at`).
+- **Real time.** Parser and app-log counters are bucketed at `meta.read_at`
+  (an Application.log timestamp carries no date); order counters by the
+  message's SendingTime (falling back to `read_at`).
 - **One lock.** The aggregator, correlator, tracker and reporter are not
   thread-safe. `ingest` runs on the thread that drives
   `PipelineBridge.process_commits` (the monitor adapter loop); anything that
@@ -44,7 +47,13 @@ from typing import TYPE_CHECKING
 
 from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregator
 from telemetry_agent.metrics.correlation import LATENCY_DIMENSIONS, LatencyCorrelator
-from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS, derive_counters
+from telemetry_agent.metrics.counters import (
+    COUNTER_DIMENSIONS,
+    ComponentLimiter,
+    app_log_counter_dims,
+    derive_app_log_counters,
+    derive_counters,
+)
 from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.metrics_event import (
     build_parsed_message_event,
@@ -72,6 +81,7 @@ class MetricsIngestor:
         correlator: LatencyCorrelator | None = None,
         session_tracker: SessionHeartbeatTracker | None = None,
         health_reporter: HealthReporter | None = None,
+        component_limiter: ComponentLimiter | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         log: logging.Logger | None = None,
     ) -> None:
@@ -79,6 +89,7 @@ class MetricsIngestor:
         self.correlator = correlator
         self.session_tracker = session_tracker
         self.health_reporter = health_reporter
+        self.component_limiter = component_limiter or ComponentLimiter()
         self.monotonic = monotonic
         self.lock = threading.RLock()
         self._log = log or logger
@@ -151,7 +162,19 @@ class MetricsIngestor:
                 event,
                 derive_counters(event) | derive_session_counters(result.telemetry),
             )
-        # 5. Any line with FIX header fields is evidence its session is alive.
+        # 5. Application.log lines the app-log parser extracted fields from.
+        app = result.app_log_telemetry
+        if app is not None:
+            self.aggregator.ingest_agent_counters(
+                dims=app_log_counter_dims(
+                    app,
+                    instance_id=meta.instance_id,
+                    component=self.component_limiter.admit(app.component),
+                ),
+                counters=derive_app_log_counters(app),
+                at=meta.read_at,
+            )
+        # 6. Any line with FIX header fields is evidence its session is alive.
         if self.session_tracker is not None and result.fields is not None:
             self.session_tracker.observe(
                 msg_type=(
@@ -161,7 +184,7 @@ class MetricsIngestor:
                 target=result.fields.target_comp_id,
                 at=self.monotonic(),
             )
-        # 6. The heartbeat's parse-error count (UBS-59).
+        # 7. The heartbeat's parse-error count (UBS-59).
         if self.health_reporter is not None:
             self.health_reporter.record_parse_result(result, now=meta.read_at)
 

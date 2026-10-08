@@ -14,7 +14,9 @@ Each tick, in order:
    line can report because the signal *is* the missing line;
 4. the agent's own since-startup counters, sampled into the windowed store so
    `CallbackFailing` can see them (UBS-74/75);
-5. one snapshot per rule window in use, each evaluated;
+5. one snapshot per rule window in use, each evaluated — plus, for windows
+   with `signature` rules, one grouped by error signature, so each rule
+   counts only its own pattern (UBS-122);
 6. routing everything that changed (UBS-109/110).
 
 Only reads the aggregator, correlator and session tracker it is given — who
@@ -51,6 +53,7 @@ from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.rules.config_loader import SighupRuleReloader
 from telemetry_agent.rules.engine import RuleEngine
+from telemetry_agent.rules.types import SIGNATURE_DIMENSION, RuleKind
 
 DEFAULT_EVALUATION_INTERVAL_SECONDS = 10.0
 
@@ -209,15 +212,22 @@ class RuleEvaluator:
             if self._publisher is not None
             else None
         )
+        signature_windows = {
+            r.window for r in self._engine.rules if r.kind is RuleKind.SIGNATURE
+        }
         changed: list[AlertEvent] = []
         for window in windows:
-            snap = snapshot(
-                self._aggregator,
-                window,
-                group_by=(),
-                correlator=self._correlator,
-                now=now,
-                consecutive_publish_failures=failures,
-            )
-            changed.extend(self._engine.evaluate(snap, now))
+            group_bys: list[tuple[str, ...]] = [()]
+            if window in signature_windows:
+                group_bys.append((SIGNATURE_DIMENSION,))
+            for group_by in group_bys:
+                snap = snapshot(
+                    self._aggregator,
+                    window,
+                    group_by=group_by,
+                    correlator=self._correlator,
+                    now=now,
+                    consecutive_publish_failures=failures,
+                )
+                changed.extend(self._engine.evaluate(snap, now))
         return changed
