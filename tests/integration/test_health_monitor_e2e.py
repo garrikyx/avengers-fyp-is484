@@ -64,7 +64,7 @@ T0 = datetime(2026, 9, 29, 4, 0, 0, tzinfo=UTC)
 
 # The exact line shapes `apps/simulator/src/simulator/mock_logger.py` writes.
 _APP_LINE = (
-    "2026-09-29 12:00:00.{ms:03d} [INFO] [CoreEngine] Heartbeat active. "
+    "12:00:00.{micros:06d} <413013> [N] MAIN: Heartbeat active. "
     "Connected session count: 3"
 )
 _FIX_LINE = (
@@ -76,8 +76,8 @@ _BAD_FIX_LINE = (
     "2026-09-29 12:00:00.999 : 8=FIX.4.2|9=140|35=8|49=MAGIC|56=CLIENT"
     "|52=notatime|11=ORD0|55=AMD|54=1|38=100|44=150.50|10=112|"
 )
-# The simulator's own "Heartbeat active" format, so AppLogParser claims it.
-_APP_LOG_PATTERN = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \[[A-Z]+\]"
+# The sponsor/Magic format emitted by the simulator, so AppLogParser claims it.
+_APP_LOG_PATTERN = r"^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]+\]"
 
 
 class FakeClock:
@@ -239,7 +239,7 @@ def committed_offsets(stack: Stack) -> dict[str, int]:
 
 def test_simulator_logs_reach_the_backend_health_api(stack: Stack) -> None:
     # --- simulator writes both files; one FIX line is bad ---------------------------
-    write_lines(stack.app_log, [_APP_LINE.format(ms=i) for i in range(20)])
+    write_lines(stack.app_log, [_APP_LINE.format(micros=i) for i in range(20)])
     write_lines(stack.fix_log, fix_lines(1001, 130) + [_BAD_FIX_LINE])
 
     # --- agent tails, parses and commits every line -------------------------------
