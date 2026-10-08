@@ -1,3 +1,7 @@
+from telemetry_shared.metrics.dimensions import (
+    ALLOWED_DIMENSION_KEYS,
+    DIMENSION_KEY_ALIASES,
+)
 from telemetry_shared.metrics.histogram import (
     BOUNDARIES_MS,
     DEFAULT_MIN_SAMPLE_SIZE,
@@ -13,9 +17,11 @@ from telemetry_shared.metrics.ratios import (
 )
 
 __all__ = [
+    "ALLOWED_DIMENSION_KEYS",
     "BOUNDARIES_MS",
     "DEFAULT_MIN_SAMPLE_SIZE",
     "DEFAULT_PERCENTILES",
+    "DIMENSION_KEY_ALIASES",
     "OVERFLOW_BUCKET",
     "STANDARD_RATIOS",
     "Histogram",

@@ -341,6 +341,40 @@ class MetricsAggregator:
             self._merge_histograms(bucket, group_by, result)
         return result
 
+    def bucket_delta(
+        self, bucket_start: int, bucket_seconds: int, group_by: Sequence[str] = ()
+    ) -> dict[tuple[str, ...], MetricRow]:
+        """UBS-115: exact, non-overlapping delta for the closed interval
+        `[bucket_start, bucket_start + bucket_seconds)` in epoch seconds —
+        unlike `snapshot()`, not relative to `now` and not a rolling window.
+        This is what lets a caller publish "one snapshot per completed
+        bucket" (`FR-MET-024`) instead of a trailing sum that double-counts
+        across overlapping reads. Caller guarantees `bucket_start` is
+        already fully elapsed and aligned (`bucket_start % bucket_seconds
+        == 0`) — this is a pure read, no eviction, no `now`.
+        """
+        if bucket_seconds % self.config.bucket_seconds != 0:
+            raise ValueError(
+                f"bucket_seconds={bucket_seconds} must be a multiple of "
+                f"config.bucket_seconds={self.config.bucket_seconds}"
+            )
+        group_by = tuple(group_by)
+        if not set(group_by) <= self.config.known_dimensions:
+            raise ValueError(
+                f"group_by must be a subset of {sorted(self.config.known_dimensions)}"
+            )
+
+        start_idx = bucket_start // self.config.bucket_seconds
+        end_idx = (bucket_start + bucket_seconds) // self.config.bucket_seconds
+
+        result: dict[tuple[str, ...], MetricRow] = {}
+        for bucket in self._buckets:
+            if bucket.start is None or not (start_idx <= bucket.start < end_idx):
+                continue
+            self._merge_counters(bucket, group_by, result)
+            self._merge_histograms(bucket, group_by, result)
+        return result
+
     def _row_key(
         self, dims: tuple[str, ...], group_by: tuple[str, ...], label: tuple[str, ...]
     ) -> tuple[str, ...]:
