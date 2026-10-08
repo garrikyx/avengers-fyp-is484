@@ -51,6 +51,7 @@ from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.metrics_event import derive_heartbeat_timeout_counters
 from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.publishing.publisher import BackendPublisher
+from telemetry_agent.publishing.snapshot_bridge import SnapshotCursor, build_snapshot
 from telemetry_agent.rules.config_loader import SighupRuleReloader
 from telemetry_agent.rules.engine import RuleEngine
 from telemetry_agent.rules.types import SIGNATURE_DIMENSION, RuleKind
@@ -94,6 +95,9 @@ class RuleEvaluator:
         lock: AbstractContextManager[Any] | None = None,
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
+        agent_id: str | None = None,
+        application: str | None = None,
+        snapshot_cursor: SnapshotCursor | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be > 0")
@@ -113,6 +117,13 @@ class RuleEvaluator:
         self._counters = counters or CounterRegistry()
         self._logger = logger or logging.getLogger(__name__)
         self._reload_requested = False
+        # UBS-115: publishes one wire Snapshot per completed metrics bucket.
+        # agent_id/application are required together with snapshot_cursor —
+        # a publisher with no way to attribute or de-duplicate a bucket must
+        # not silently skip publishing it.
+        self._agent_id = agent_id
+        self._application = application
+        self._snapshot_cursor = snapshot_cursor
         # One sampler per registry: `AgentCounterSampler` keeps a baseline,
         # and sharing one would diff each registry against the other's.
         self._callback_sampler = AgentCounterSampler(
@@ -151,6 +162,7 @@ class RuleEvaluator:
         with self._lock:
             changed = self._reload(now)
             self._age(now)
+            self._publish_metrics_snapshot(now)
             self._ingest_session_timeouts(now, monotonic_now)
             self._sample_agent_counters(now)
             changed.extend(self._evaluate(now))
@@ -186,6 +198,43 @@ class RuleEvaluator:
         self._aggregator.tick(now.timestamp())
         if self._correlator is not None:
             self._correlator.tick()
+
+    def _publish_metrics_snapshot(self, now: datetime) -> None:
+        """UBS-115: build and enqueue one wire `Snapshot` per completed
+        metrics bucket. A no-op until wired with a publisher, identity, and
+        a `SnapshotCursor` — all three together, or not at all, since a
+        cursor with nowhere to publish would just accumulate unpublished
+        "already emitted" state for nothing.
+        """
+        if (
+            self._publisher is None
+            or self._snapshot_cursor is None
+            or self._agent_id is None
+            or self._application is None
+        ):
+            return
+        bucket_start = self._snapshot_cursor.next_bucket(now)
+        if bucket_start is None:
+            return
+
+        gauges: dict[str, float] = {
+            "consecutive_publish_failures": float(self._publisher.consecutive_failures),
+            "publish_queue_depth": float(self._publisher.queue_depth()),
+        }
+        if self._correlator is not None:
+            gauges["pending_orders"] = float(self._correlator.pending_order_count())
+
+        snap = build_snapshot(
+            self._aggregator,
+            bucket_start,
+            self._snapshot_cursor.bucket_seconds,
+            agent_id=self._agent_id,
+            application=self._application,
+            instance_id=self._instance_id,
+            gauges=gauges,
+        )
+        self._publisher.enqueue_snapshot(snap, now=now)
+        self._snapshot_cursor.mark_emitted(bucket_start)
 
     def _ingest_session_timeouts(self, now: datetime, monotonic_now: float) -> None:
         if self._session_tracker is None:
