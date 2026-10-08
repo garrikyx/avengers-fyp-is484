@@ -78,13 +78,15 @@ provisional pending [Q-5](../plan/open-questions.md).
 | `PendingOrderTimeout` | threshold (gauge) | warning @ `oldestPendingAgeSeconds` > 30s | — |
 | `AckLatencyBreach` | latency | warning @ p95 > 500ms, critical @ p95 > 1000ms | 5m, ≥ 50 samples |
 | `ParseErrorRate` | rate | warning @ `parse_errors`/`log_lines_read` > 1%, critical @ > 25% | 5m, ≥ 20 samples |
-| `NoLogActivity` | absence | critical @ `messages_total` == 0 | 1m (60s) within trading hours |
+| `NoLogActivity` | absence | critical @ `messages_total` + `app_log_lines` == 0 | 1m (60s) within trading hours |
 | `NoExecutions` | absence | warning @ `executions` == 0 while `orders_submitted` > 0 | 15m |
 | `FixSessionDown` | threshold | critical @ `logouts` ≥ 1 or `heartbeat_timeouts` ≥ 1 | 1m |
 | `SeqGapDetected` | threshold | warning @ `seq_gaps` > 0 | 1m |
 | `ClockSkew` | threshold | warning @ `clock_skew_events` > 10 | 5m |
 | `CallbackFailing` | threshold | warning @ `callback_failures` > 3 | 5m |
 | `BackendUnreachable` | threshold | warning @ `consecutive_publish_failures` >= 5 | n/a — reads a gauge, not a window |
+| `AppOutOfMemory` | signature | warning @ ≥ 1 `out_of_memory` match, critical @ ≥ 3 | 1m, for 0s |
+| `AppDbConnectionLost` | signature | warning @ ≥ 1 `db_connection_lost` match, critical @ ≥ 5 | 5m, for 0s |
 
 `BackendUnreachable` reads the `consecutive_publish_failures` gauge (spec 004
 `FR-MET-031`), restoring this rule's original "5 consecutive failures"
@@ -106,7 +108,26 @@ order is never penalized), added for connectivity-issue detection alongside
 `SessionRejects`. `NoLogActivity` uses `messages_total` (every classified
 log line, admin messages included) rather than a dedicated
 `log_lines_read` counter, and a 60s/1m window rather than 5m, to catch a
-dead pipeline faster.
+dead pipeline faster. It also sums `app_log_lines`: Application.log lines
+are log-activity evidence too (spec 003 `FR-PRS-010`), so a quiet FIX
+session alongside a busy application log does not read as a dead pipeline.
+
+A `signature` rule names one label from `parsing.errorSignatures`
+(spec 010) and counts only matches of that pattern:
+
+```yaml
+  - name: AppOutOfMemory
+    kind: signature
+    metric: app_error_signatures
+    signature: out_of_memory    # required on, and only on, kind: signature
+```
+
+The agent evaluates it against a snapshot grouped by `error_signature`, so
+other signatures in the same window never trip it, and the alert carries
+`groupBy: {errorSignature: out_of_memory}` (`FR-RUL-015`). The two shipped
+signature rules cover the two shipped signatures. Both warn on the first
+match, because one out-of-memory error or lost database connection is
+already an incident. `AppOutOfMemory`'s critical tier is §1's own example.
 
 `FR-RUL-030` (backend-side): The backend MUST additionally raise `AgentHeartbeatMissing` when
 no heartbeat has arrived from a known agent for `missingHeartbeatThreshold` (default `60s`).

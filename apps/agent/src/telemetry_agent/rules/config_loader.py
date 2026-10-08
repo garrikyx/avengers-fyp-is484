@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic.alias_generators import to_camel
 from telemetry_agent.rules.defaults import DEFAULT_RULES
 from telemetry_agent.rules.engine import _OPERATORS, RuleEngine
@@ -70,6 +77,7 @@ class _RuleYaml(BaseModel):
     min_samples: int | None = None
     guard_metric: str | None = None
     extra_counters: tuple[str, ...] = ()
+    signature: str | None = None
     for_: str = Field(default="60s", alias="for")
     resolve_after: str = Field(default="300s")
     group_by: tuple[str, ...] = ()
@@ -83,6 +91,14 @@ class _RuleYaml(BaseModel):
             known = sorted(_OPERATORS)
             raise ValueError(f"unknown operator {v!r}, expected one of {known}")
         return v
+
+    @model_validator(mode="after")
+    def _signature_matches_kind(self) -> _RuleYaml:
+        # A signature rule with no label would silently read nothing; a
+        # label on any other kind would be ignored. Both are config mistakes.
+        if (self.kind is RuleKind.SIGNATURE) != (self.signature is not None):
+            raise ValueError("`signature` is required on, and only on, kind: signature")
+        return self
 
 
 def _to_rule_config(parsed: _RuleYaml) -> RuleConfig:
@@ -100,6 +116,7 @@ def _to_rule_config(parsed: _RuleYaml) -> RuleConfig:
         min_samples=parsed.min_samples,
         guard_metric=parsed.guard_metric,
         extra_counters=parsed.extra_counters,
+        signature=parsed.signature,
         for_seconds=_parse_duration_seconds(parsed.for_),
         resolve_after_seconds=_parse_duration_seconds(parsed.resolve_after),
         group_by=parsed.group_by,
