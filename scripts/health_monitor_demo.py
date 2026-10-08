@@ -1,7 +1,6 @@
 """Live health-monitor demo: simulator logs -> agent health path -> backend.
 
-Runs just the health half of an agent (not the full agent runtime, which is
-still to be built): tail the simulator's logs, parse them through the
+Runs just the health half of an agent: tail the simulator's logs, parse them through the
 pipeline, feed the Health Reporter, and publish a heartbeat-carrying batch
 to a real backend every `--interval` seconds. After each publish it prints
 what the backend now says about this agent.
@@ -31,6 +30,7 @@ import time
 from pathlib import Path
 
 import httpx
+from telemetry_agent.config import load_agent_config
 from telemetry_agent.health.config import HeartbeatConfig
 from telemetry_agent.health.publishing import (
     connect_reporter_to_publisher,
@@ -54,8 +54,7 @@ from telemetry_agent.publishing.config import parse_publish_config
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import HttpsPublishSink
 
-# Matches the simulator's "Heartbeat active" Application.log lines.
-_APP_LOG_PATTERN = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \[[A-Z]+\]"
+_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "agent.yaml"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -69,6 +68,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    cfg = load_agent_config(_CONFIG_PATH)
     os.environ.setdefault("MAGIC_TELEMETRY_ID_HASH_KEY", "dev-only")
     logs = [args.log_dir / "Application.log", args.log_dir / "Fix.log"]
     for log in logs:
@@ -84,7 +84,11 @@ def main() -> None:
     registry = Registry(
         parsers={
             "fix": FixParser(hash_key=load_hash_key()),
-            "applog": AppLogParser(app_log_patterns=[_APP_LOG_PATTERN]),
+            "applog": AppLogParser(
+                app_log_patterns=list(cfg.logs.app_log_patterns),
+                error_signatures=list(cfg.parsing.error_signatures),
+                max_dynamic_signature_labels=cfg.parsing.max_dynamic_signature_labels,
+            ),
         }
     )
     bridge = PipelineBridge(config=PipelineConfig(parse_workers=1), registry=registry)
@@ -151,10 +155,23 @@ def main() -> None:
                         "orders_acked",
                         "orders_rejected",
                         "parse_errors",
+                        "app_log_lines",
+                        "app_log_errors",
+                        "app_error_signatures",
                     )
                 ),
                 flush=True,
             )
+            signatures = ingestor.aggregator.snapshot(
+                "1m", group_by=("error_signature",)
+            )
+            for (label,), row in sorted(signatures.items()):
+                count = row.counters.get("app_error_signatures", 0)
+                if count:
+                    print(
+                        f"  app_error_signatures{{error_signature={label}}}={count}",
+                        flush=True,
+                    )
     except KeyboardInterrupt:
         print("\nstopped; the backend will mark this agent missing in ~60s")
     finally:
