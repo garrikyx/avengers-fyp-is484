@@ -120,3 +120,22 @@ def test_insecure_publish_endpoint_needs_the_explicit_flag(tmp_path: Path) -> No
 def test_missing_file_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(AgentConfigError, match="not found"):
         load_agent_config(tmp_path / "nope.yaml")
+
+
+def test_error_signatures_are_read_from_parsing(tmp_path: Path) -> None:
+    """UBS-116: `parsing.errorSignatures` reaches the app-log parser."""
+    shipped = load_agent_config(REPO_ROOT / "config" / "agent.yaml")
+    assert ("out_of_memory", "OutOfMemoryError|std::bad_alloc") in (
+        shipped.parsing.error_signatures
+    )
+
+    minimal = load_agent_config(_write(tmp_path, _MINIMAL))
+    assert minimal.parsing.error_signatures == ()
+    assert minimal.parsing.max_dynamic_signature_labels == 50
+
+
+def test_invalid_error_signature_regex_is_rejected(tmp_path: Path) -> None:
+    text = _MINIMAL + "parsing:\n  errorSignatures:\n    - {label: bad, match: '('}\n"
+
+    with pytest.raises(AgentConfigError, match="errorSignatures 'bad'"):
+        load_agent_config(_write(tmp_path, text))

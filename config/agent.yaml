@@ -42,6 +42,15 @@ logs:
   appLogPatterns:            # the simulator's Application.log line shape
     - '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \[[A-Z]+\]'
 
+# --- Application.log error signatures (UBS-116; spec 010 `parsing:`) ---
+parsing:
+  errorSignatures:           # counted as app_error_signatures{error_signature}
+    - label: out_of_memory
+      match: "OutOfMemoryError|std::bad_alloc"
+    - label: db_connection_lost
+      match: "connection (lost|refused).*(db|database)"
+  maxDynamicSignatureLabels: 50   # cap on `%`-templated labels -> __other__
+
 # --- Parser pipeline + rule evaluation (UBS-48/49, UBS-112, UBS-113) ---
 pipeline:
   parseWorkers: 1            # FixParser keeps per-session state: one worker
