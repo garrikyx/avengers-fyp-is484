@@ -1,7 +1,8 @@
 """FastAPI entry point for the Telemetry Backend (spec 006 §1, §7).
 
 Serves ingestion (`/telemetry/batch`, `/telemetry/events`,
-`/telemetry/heartbeat`), alert queries (`/telemetry/alerts`), agent health
+`/telemetry/heartbeat`), event queries (`GET /telemetry/events`), alert
+queries (`/telemetry/alerts`), agent health
 (`/telemetry/health`), and probe endpoints `/healthz` and `/readyz`
 (`FR-HLT-010`, `FR-QRY-005`).
 
@@ -30,7 +31,13 @@ from pydantic import Field, ValidationError
 from starlette.middleware.base import RequestResponseEndpoint
 from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.alerts_query import AlertDetailResponse, AlertsListResponse
-from telemetry_shared.models.ingestion import EventsRequest, Heartbeat, TelemetryBatch
+from telemetry_shared.models.events_query import EventsListResponse
+from telemetry_shared.models.ingestion import (
+    EventsRequest,
+    Heartbeat,
+    TelemetryBatch,
+    TelemetryEvent,
+)
 
 from telemetry_backend.api import health as health_api
 from telemetry_backend.api import internal as internal_api
@@ -102,6 +109,21 @@ _ALERTS_QUERY_KEYS = frozenset(
     {"status", "application", "instanceId", "ruleName", "severity", "since", "limit"}
 )
 
+_EVENTS_QUERY_KEYS = frozenset(
+    {"application", "instanceId", "eventType", "severity", "since", "limit"}
+)
+
+
+class EventsQueryParams(CamelModel):
+    """Strict query model for `GET /telemetry/events` (`FR-QRY-032`)."""
+
+    application: str | None = None
+    instance_id: str | None = Field(default=None, validation_alias="instanceId")
+    event_type: str | None = Field(default=None, validation_alias="eventType")
+    severity: str | None = None
+    since: datetime | None = None
+    limit: int = Field(default=100, ge=1, le=500)
+
 
 def _received_at_utc() -> datetime:
     return datetime.now(UTC)
@@ -167,10 +189,12 @@ def create_app(
                 )
             ),
             alert_store=app_deps.alert_store,
+            event_store=app_deps.event_store,
             heartbeat_monitor=monitor,
         )
     stream = ingestion.stream_processor
     store = ingestion.alert_store
+    event_store = ingestion.event_store
     app_deps.ingestion = ingestion
     self_metrics = app_deps.self_metrics
     monitor = ingestion.heartbeat_monitor
@@ -409,6 +433,71 @@ def create_app(
             received_at_utc=_received_at_utc(),
             accepted=_counts(),
         )
+
+    @app.get(
+        "/telemetry/events",
+        response_model=EventsListResponse,
+        responses={400: {"model": ErrorEnvelope}},
+    )
+    async def list_events(
+        request: Request,
+    ) -> EventsListResponse | JSONResponse:
+        unknown = set(request.query_params.keys()) - _EVENTS_QUERY_KEYS
+        if unknown:
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_field",
+                message="Unknown query parameter.",
+                details=[
+                    ErrorDetail(field=name, issue="Unknown query parameter.")
+                    for name in sorted(unknown)
+                ],
+            )
+        try:
+            params = EventsQueryParams.model_validate(dict(request.query_params))
+        except ValidationError as exc:
+            details = [
+                ErrorDetail(
+                    field=".".join(str(part) for part in error["loc"]),
+                    issue=error["msg"],
+                )
+                for error in exc.errors()
+            ]
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_field",
+                message="Query parameter validation failed.",
+                details=details,
+            )
+        return event_store.list_events(
+            application=params.application,
+            instance_id=params.instance_id,
+            event_type=params.event_type,
+            severity=params.severity,
+            since=params.since,
+            limit=params.limit,
+        )
+
+    @app.get(
+        "/telemetry/events/{event_id}",
+        response_model=TelemetryEvent,
+        responses={404: {"model": ErrorEnvelope}},
+    )
+    async def get_event(
+        request: Request, event_id: str
+    ) -> TelemetryEvent | JSONResponse:
+        event = event_store.get_event(event_id)
+        if event is None:
+            return _error_response(
+                request,
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="not_found",
+                message="Event not found.",
+                details=[],
+            )
+        return event
 
     @app.get(
         "/telemetry/alerts",
