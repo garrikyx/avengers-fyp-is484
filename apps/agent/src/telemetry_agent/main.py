@@ -153,7 +153,9 @@ def build_agent(
     chain = ["fix"]
     if cfg.logs.app_log_patterns:
         parsers["applog"] = AppLogParser(
-            app_log_patterns=list(cfg.logs.app_log_patterns)
+            app_log_patterns=list(cfg.logs.app_log_patterns),
+            error_signatures=list(cfg.parsing.error_signatures),
+            max_dynamic_signature_labels=cfg.parsing.max_dynamic_signature_labels,
         )
         chain.append("applog")
     bridge = PipelineBridge(
