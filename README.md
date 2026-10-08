@@ -274,3 +274,57 @@ uv run python -m telemetry_agent.parser.cli \
   --corpus apps/agent/testdata/magic/ \
   --config apps/agent/testdata/magic/demo_config.yaml
 ```
+
+---
+
+# Run the full stack locally (agent + backend + health monitor)
+
+> **Tentative** — local development only. `config/agent.yaml` points at
+> localhost over plain http; the production deployment of the agent is
+> not set up yet.
+
+`telemetry-agent` is the real agent (UBS-114): one process that tails the
+logs, parses them, updates metrics and agent health, evaluates the rules and
+publishes alerts + heartbeats to the backend (and signed callbacks to Magic).
+It replaces the old `telemetry-agent-heartbeat` and
+`scripts/health_monitor_demo.py` demos.
+
+Four terminals, all from the repo root:
+
+```bash
+uv sync --all-packages                                     # once
+
+uv run telemetry-backend                                   # 1. backend: :8080 public, :8081 internal
+uv run python apps/simulator/src/simulator/mock_logger.py  # 2. writes ./logs/Application.log + Fix.log
+uv run telemetry-agent --config config/agent.yaml          # 3. the agent
+# 4. optional: anything listening on 127.0.0.1:9000 receives the Magic callbacks
+```
+
+Check config only: `uv run telemetry-agent --check-config`.
+Secrets come from the environment (see `.env.example`); on localhost the
+agent falls back to dev values with a warning.
+
+What to look at:
+
+```bash
+curl http://127.0.0.1:8080/telemetry/health/agents                    # agent healthy / degraded / missing
+curl http://127.0.0.1:8080/telemetry/health/agents/magic-agent-sg-01  # full heartbeat detail
+curl http://127.0.0.1:8080/telemetry/alerts                           # alerts the rules fired
+curl http://127.0.0.1:8081/metrics                                    # backend self-metrics
+curl -i http://127.0.0.1:8081/readyz                                  # backend readiness
+```
+
+Ctrl-C stops the agent cleanly (offsets saved, final batch sent); about 60s
+later the backend reports it `missing`.
+
+The same path is covered automatically, no processes needed:
+
+```bash
+uv run pytest tests/integration/test_UBS_114_agent_end_to_end.py \
+              tests/integration/test_UBS_112_113_logs_to_alerts.py \
+              tests/integration/test_health_monitor_e2e.py -q
+```
+
+Known (Windows only): while the agent runs, the simulator's log rotation can
+fail with `WinError 32` because the agent holds the log open. Run the
+simulator with `--max-bytes 50000000` to avoid rotating during a demo.
