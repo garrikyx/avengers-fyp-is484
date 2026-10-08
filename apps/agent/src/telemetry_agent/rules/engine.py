@@ -6,6 +6,9 @@ so it is testable purely from hand-built snapshot fixtures. Assumes the
 snapshot was built with `group_by=()` (single-instance semantics — CLAUDE.md:
 "One Magic instance has one Telemetry Agent deployed alongside it"), so
 `snapshot.groups[0]` (if present) is the whole instance's data for this tick.
+The one exception is `signature` rules (spec 005 §1), which read a snapshot
+grouped by `error_signature` and pick the group for their own label; every
+other rule skips that snapshot, and signature rules skip the ungrouped one.
 
 Callback dispatch (spec 005 §3) is out of scope — `evaluate()` returns the
 `AlertEvent`s that changed or were re-notified this tick; wiring those to a
@@ -22,6 +25,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from telemetry_agent.rules.types import (
+    SIGNATURE_DIMENSION,
     AlertStatus,
     RuleConfig,
     RuleKind,
@@ -134,8 +138,33 @@ def _read_absence(rule: RuleConfig, group: MetricsGroup | None) -> Decimal | Non
     return _read_counter_sum(rule, group)
 
 
+def _rule_group(rule: RuleConfig, snapshot: MetricsSnapshot) -> MetricsGroup | None:
+    """The group a rule reads. Instance-level snapshots (`group_by=()`) have
+    one group; a signature rule reads the per-signature snapshot's group for
+    its own label, so other signatures can't trip it. No group means no
+    matches in the window, which a counter reads as 0."""
+    if rule.kind is RuleKind.SIGNATURE:
+        return next(
+            (
+                g
+                for g in snapshot.groups
+                if g.dimensions.get(SIGNATURE_DIMENSION) == rule.signature
+            ),
+            None,
+        )
+    return snapshot.groups[0] if snapshot.groups else None
+
+
+def _evaluates_on(rule: RuleConfig, snapshot: MetricsSnapshot) -> bool:
+    """Signature rules need the per-signature snapshot; every other rule the
+    instance-level one (see the module docstring)."""
+    if rule.kind is RuleKind.SIGNATURE:
+        return tuple(snapshot.group_by) == (SIGNATURE_DIMENSION,)
+    return not snapshot.group_by
+
+
 def _read_observed(rule: RuleConfig, snapshot: MetricsSnapshot) -> Decimal | None:
-    group = snapshot.groups[0] if snapshot.groups else None
+    group = _rule_group(rule, snapshot)
     if rule.kind is RuleKind.RATE:
         return _read_indicator(rule, group)
     if rule.kind is RuleKind.LATENCY:
@@ -183,7 +212,7 @@ def _metric_context(
     rule: RuleConfig, snapshot: MetricsSnapshot
 ) -> dict[str, float | int | str]:
     """`FR-RUL-016`: allowlisted snapshot fields only, capped at 10 entries."""
-    group = snapshot.groups[0] if snapshot.groups else None
+    group = _rule_group(rule, snapshot)
     context: dict[str, float | int | str] = {}
     if group is None:
         return context
@@ -340,6 +369,8 @@ class RuleEngine:
         for rule in self._rules:
             if rule.window is not None and rule.window != snapshot.window:
                 continue
+            if not _evaluates_on(rule, snapshot):
+                continue
             if rule.schedule_ref is not None and not self._schedule_checker.is_active(
                 rule.schedule_ref, self._instance_id, now
             ):
@@ -489,7 +520,7 @@ class RuleEngine:
         status: AlertStatus | None = None,
     ) -> AlertEvent | None:
         effective_status = status or state.status
-        group = snapshot.groups[0] if snapshot.groups else None
+        group = _rule_group(rule, snapshot)
         event = AlertEvent(
             alert_id=state.alert_id,
             rule_name=rule.name,

@@ -52,6 +52,11 @@ class SeverityTier:
     threshold: Decimal
 
 
+# The snapshot dimension a `signature` rule is read from (spec 005 §1): the
+# label `parsing.errorSignatures` assigned, carried by `app_error_signatures`.
+SIGNATURE_DIMENSION = "error_signature"
+
+
 @dataclass(frozen=True, slots=True)
 class RuleConfig:
     """One named rule (spec 005 §1.1). `tiers` MUST be non-empty and
@@ -71,6 +76,7 @@ class RuleConfig:
     min_samples: int | None = None  # rate/latency only (FR-RUL-006)
     guard_metric: str | None = None  # absence only: guard_metric > 0 required
     extra_counters: tuple[str, ...] = ()  # threshold: OR'd via sum, e.g. FixSessionDown
+    signature: str | None = None  # signature only: the errorSignatures label
 
     for_seconds: int = 60  # FR-RUL-004 default
     resolve_after_seconds: int = 300  # FR-RUL-004 default

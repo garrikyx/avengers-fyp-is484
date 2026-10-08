@@ -92,10 +92,12 @@ rules:
     minSamples: 20
     dependsOnLogActivity: false
 
+  # App-log lines count as activity too (spec 003 FR-PRS-010, UBS-122).
   - name: NoLogActivity
     kind: absence
     source: counter
     metric: messages_total
+    extraCounters: [app_log_lines]
     operator: "=="
     tiers:
       - severity: critical
@@ -171,4 +173,39 @@ rules:
     tiers:
       - severity: warning
         threshold: 5
+    dependsOnLogActivity: false
+
+  # Signature rules (spec 005 §1, UBS-122): `signature` is a label from
+  # agent.yaml `parsing.errorSignatures`; each rule counts only its own
+  # pattern. Warn on the first match — one OOM or lost DB connection is
+  # already an incident — and escalate on repeats (AppOutOfMemory's
+  # critical tier is spec 005's own "3+ in 1m" example).
+  - name: AppOutOfMemory
+    kind: signature
+    source: counter
+    metric: app_error_signatures
+    signature: out_of_memory
+    operator: ">="
+    tiers:
+      - severity: warning
+        threshold: 1
+      - severity: critical
+        threshold: 3
+    window: 1m
+    for: 0s
+    dependsOnLogActivity: false
+
+  - name: AppDbConnectionLost
+    kind: signature
+    source: counter
+    metric: app_error_signatures
+    signature: db_connection_lost
+    operator: ">="
+    tiers:
+      - severity: warning
+        threshold: 1
+      - severity: critical
+        threshold: 5
+    window: 5m
+    for: 0s
     dependsOnLogActivity: false
