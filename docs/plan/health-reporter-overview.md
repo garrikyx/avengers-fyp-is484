@@ -193,7 +193,7 @@ agent looked identical to the backend.
 | `HeartbeatEmitter.tick(now) -> AgentHeartbeat` | Build one heartbeat, hand it to the sink, count success/failure. **Never raises** on sink failure — logs a warning, increments `failed_count`. | `tick()` is synchronous and pure so it can be unit-tested one call at a time. Swallowing sink errors is the spec's own rule (002 §8.3: a backend outage must not affect the agent). |
 | `HeartbeatEmitter.run(stop: asyncio.Event)` | `tick()` immediately, then every `interval_seconds` until `stop` is set. | First tick immediate so a restarted agent appears at once. `asyncio.wait_for(stop.wait(), timeout=interval)` gives an interruptible sleep without a busy loop. Interval is **independent of log volume** — this is the acceptance criterion that an idle log still heartbeats. |
 | `HeartbeatSink = Callable[[AgentHeartbeat], None]` | Local viewing seam for the emitter. | The transport to the backend is the Backend Publisher, not a sink (see `health/publishing.py` below). |
-| `PrintHeartbeatSink`, `LoggingHeartbeatSink` | JSON to stdout / `logging`. | Demo and local runs (`telemetry-agent-heartbeat --sink stdout`). |
+| `PrintHeartbeatSink`, `LoggingHeartbeatSink` | JSON to stdout / `logging`. | Local viewing and tests; the production agent sends heartbeats through the publisher instead. |
 | `health/publishing.py`: `heartbeat_provider(reporter)`, `connect_reporter_to_publisher(reporter, publisher)`, `drop_hook(reporter)` | The one supported way to send the heartbeat: the Backend Publisher calls the provider every tick and carries the result in `TelemetryBatch.heartbeat`; the reporter reads the publisher's outbox depth, bytes and drops. | 2026-10-07: the old `HttpHeartbeatSink` (direct `POST /telemetry/heartbeat`) was retired so the heartbeat has one route, with the publisher's retry, backoff, dedupe and buffering. |
 | `heartbeat_json(hb, wire)` | `model_dump_json(by_alias=True)`, optionally flattened to UBS-66's ingestion contract first. | One function so every sink and test serialise identically. **Since 2026-09-22 the backend receives the `wire="ingestion"` shape** (`to_ingestion_heartbeat`, applied by `heartbeat_provider`); that drops `statusReasons` and turns unmeasured signals into `0`. Decision record and reversal: [`ubs58-60-notes.md`](./ubs58-60-notes.md#wire-compatibility-with-ubs-66). |
 
@@ -277,7 +277,7 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 | ~~Backend ingestion~~ | Done: `POST /telemetry/batch` (UBS-66, on `main`) | — |
 | ~~Backend health read side~~ | Done: registry + `/telemetry/health/agents` (UBS-69, §10) | — |
 | ~~Backend Publisher~~ | Done: heartbeat rides inside `TelemetryBatch` via `heartbeat_provider` (UBS-103) | — |
-| Agent runtime (one process wiring monitor → pipeline → reporter → publisher) | The pieces connect (see `tests/integration/test_health_monitor_e2e.py` and `scripts/health_monitor_demo.py`), but `telemetry_agent/main.py` still only runs the parser CLI | unassigned |
+| ~~Agent runtime~~ | Done: `telemetry-agent` (`main.py`, UBS-114) | — |
 | Callback Dispatcher wired | `callbackFailuresLast5Min` `null` | UBS-32–34 |
 | Resource sampling (`psutil`?) | `resourceUsage` `null` | team decision |
 | `LogMonitor` rotation count / error state | `rotationsDetected` 0, `state` never `error` | UBS-22/24 owner |
@@ -302,43 +302,22 @@ Backend Publisher (alerts + heartbeat) and Callback Dispatcher (Magic). Secrets
 come from the environment (`.env.example`); localhost-only setups fall back to
 dev values with a warning. Automated: `tests/integration/test_UBS_114_agent_end_to_end.py`.
 
-**Current (full path, real backend):**
+**Tests for the health path:**
 
 ```bash
+uv run pytest tests/unit/agent/health tests/integration/agent/test_ubs30_health_integration.py -q
 uv run pytest tests/integration/test_health_monitor_e2e.py -q   # simulator lines -> health API
-
-# three terminals, repo root
-uv run telemetry-backend
-uv run python apps/simulator/src/simulator/mock_logger.py --max-bytes 50000000
-uv run python scripts/health_monitor_demo.py
 ```
 
-The demo prints `status=healthy lagMs=… parseErrors5m=… queueDepth=0` after each
-publish; `curl 127.0.0.1:8081/metrics` shows the backend's counters; Ctrl-C the
-demo and the agent reads `missing` 60s later.
+**What to look at while the real agent runs** (terminals above):
 
-**Agent-only heartbeat demo (`telemetry-agent-heartbeat`):**
+1. `GET :8080/telemetry/health/agents` shows the agent `healthy` within one publish interval, with no log activity needed (**UBS-58**).
+2. `GET :8080/telemetry/health/agents/<id>` shows `logReadLagMs` per file; stop the simulator for > 5s and the reported status turns `degraded` (**UBS-30**).
+3. `parseErrorCountLast5Min` counts unparseable lines in the simulator output (**UBS-59**).
+4. Stop and restart the backend: the publisher backs off, then catches up; `publishQueueDepth` reflects its outbox (**UBS-60**).
+5. Ctrl-C the agent: after 60s the backend shows it `missing` (**UBS-69**); `curl 127.0.0.1:8081/metrics` shows the backend's counters (**UBS-96**).
 
-```bash
-uv run pytest tests/unit/agent/health -q            # 71 tests across the four tickets
-uv run pytest tests/integration/agent/test_ubs30_health_integration.py -q
-
-# terminal 1 — the real backend
-uv run telemetry-backend
-# terminal 2 — agent demo, 2s heartbeats, published in batches
-uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8080/telemetry/batch
-```
-
-Then, in order:
-
-1. Terminal 2 logs `POST …/telemetry/batch "202 Accepted"` every 2s with no log activity; `GET :8080/telemetry/health/agents` shows the agent `healthy` (**UBS-58**).
-2. `echo '8=FIX.4.2|9=61|35=D|49=C|56=B|11=ORD-1|55=ABC|54=1|38=100|44=50.00|10=072|' >> demo_logs/Fix.log` → next heartbeat shows `readLag=<ms>`; wait > 5s → `status=degraded reasons=['Fix.log: read lag …']` (**UBS-30**).
-3. `echo '8=FIX.4.2|9=61|35=ZZ|11=ORD-9|10=072|' >> demo_logs/Fix.log` → `parseErrorCountLast5Min` becomes 1 and a `parse error rate …` reason appears (**UBS-59**).
-4. Ctrl-C terminal 1, wait, restart it → the publisher backs off while the backend is down, then catches up; `publishQueueDepth` reflects its outbox (**UBS-60**).
-5. Ctrl-C terminal 2 → after 60s the backend shows the agent `missing` (**UBS-69**).
-
-Every number you see in step 1–4 is produced by the code paths in sections 3–6; nothing
-is mocked in the demo.
+(2026-10-08: the earlier `scripts/health_monitor_demo.py` and `telemetry-agent-heartbeat` demos were retired; `telemetry-agent` replaces both.)
 
 ---
 

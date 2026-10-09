@@ -190,7 +190,7 @@ retired 2026-10-07). The UBS-58 ticket's two backend-side criteria
 | Cross-component integration tests | `tests/integration/agent/` |
 | Health Reporter, heartbeat emitter, health config | `apps/agent/src/telemetry_agent/health/` |
 | Shared heartbeat contract | `packages/telemetry_shared/src/telemetry_shared/models/health.py` |
-| Heartbeat demo | `telemetry-agent-heartbeat` (`health/demo.py`), `scripts/health_monitor_demo.py` |
+| Agent entrypoint | `telemetry-agent` (`apps/agent/src/telemetry_agent/main.py`, config `config/agent.yaml`) |
 | Unit tests (health) | `tests/unit/agent/health/` |
 
 ## How to verify

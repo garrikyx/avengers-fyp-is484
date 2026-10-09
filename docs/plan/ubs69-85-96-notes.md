@@ -19,7 +19,7 @@ Status: 2026-09-29 · Branch `UBS-69-85-96-Backend-Health-Monitor` · Map of the
 
 - `maxBodyBytes` / 413 (the other half of FR-ING-008).
 - `rotationsDetected` is always 0 on the wire: `LogMonitor` exposes no rotation count yet.
-- The agent runtime process: the e2e test and `scripts/health_monitor_demo.py` wire the health path by hand.
+- ~~The agent runtime process~~: done in UBS-114 (`telemetry-agent`); the hand-wired `scripts/health_monitor_demo.py` was retired 2026-10-08.
 - Backend gzip decoding: the agent compresses bodies over 4 KiB; heartbeat-only batches stay under that.
 
 ## Open points for the team

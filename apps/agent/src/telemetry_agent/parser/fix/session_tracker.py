@@ -6,10 +6,9 @@ derivation can observe it — which is why `heartbeat_timeouts` (spec 004
 things a single parse call cannot provide: a memory of when each session was
 last heard from, and a periodic tick to notice the silence has run too long.
 
-This holds the memory; the caller provides the tick. `health/demo.py`'s loop
-already has both halves — it feeds every tailed line through `FixParser`
-(that's `observe`) and runs `HeartbeatEmitter.run()` every
-`interval_seconds` (that's `timed_out`).
+This holds the memory; the caller provides the tick. In the agent,
+`MetricsIngestor` (UBS-112) calls `observe` for every ingested line, and
+`RuleEvaluator` (UBS-113) calls `timed_out` on each evaluation tick.
 
 Deliberately mirrors `seq_tracker.SeqTracker`: same `@dataclass(slots=True)`
 shape, same per-session dict, same caller-driven style.
