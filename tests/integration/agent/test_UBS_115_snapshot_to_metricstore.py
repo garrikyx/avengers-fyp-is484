@@ -190,9 +190,7 @@ def test_second_tick_before_the_bucket_closes_does_not_republish() -> None:
 
 
 def test_late_tick_publishes_every_missed_bucket_to_the_store() -> None:
-    """UBS-123: a tick that arrives two buckets late (a stalled loop, a
-    long GC) must still land both buckets' counters in the store, each in
-    its own bucket -- not just the most recent one."""
+    """UBS-123: a tick two buckets late still stores both missed buckets."""
     aggregator = _aggregator()
     early = _BUCKET_START - timedelta(seconds=10)  # [_T0-20s, _T0-10s)
 
@@ -218,8 +216,7 @@ def test_late_tick_publishes_every_missed_bucket_to_the_store() -> None:
     evaluator.evaluate_once(now=_T0)  # skipped the tick at _BUCKET_START
     assert publisher.queue_depth() == 3  # both missed buckets, not just one
 
-    # One publish for all three: the in-process backend's queue is bound to
-    # the first event loop that drains it.
+    # One publish: the in-process backend queue binds to the first event loop.
     assert asyncio.run(_publish_and_drain(app, publisher)) is PublishAction.COMMIT
     store = app.state.processor.store
 

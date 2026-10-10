@@ -45,6 +45,7 @@ import httpx
 
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import DryRunCallbackSink, HttpsCallbackSink
+from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.config import (
     DEFAULT_CONFIG_PATH,
     AgentConfig,
@@ -230,6 +231,7 @@ def build_agent(
         agent_id=cfg.agent_id,
         started_at=started_at or datetime.now(UTC),
     )
+    evaluator_counters = CounterRegistry()  # shared so shutdown logs emitter skips
     evaluator = RuleEvaluator(
         engine,
         ingestor.aggregator,
@@ -243,6 +245,7 @@ def build_agent(
         interval_seconds=cfg.evaluation_interval_seconds,
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
+        counters=evaluator_counters,
         snapshot_emitter=SnapshotEmitter(
             ingestor.aggregator,
             publisher,
@@ -251,6 +254,7 @@ def build_agent(
             application=APPLICATION,
             instance_id=cfg.instance_id,
             correlator=ingestor.correlator,
+            counters=evaluator_counters,
         ),
     )
     return Agent(

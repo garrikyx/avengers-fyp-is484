@@ -128,11 +128,7 @@ def build_snapshot(
 
 
 class SnapshotEmitter:
-    """UBS-123: the one module that decides which completed wire buckets to
-    publish and publishes them. Never builds a second `Snapshot` for a
-    bucket it already enqueued (in addition to the publisher's transport
-    retries and the backend `MetricStore`'s merge idempotency), and never
-    drops a missed bucket the aggregator can still answer for."""
+    """UBS-123: publishes every completed wire bucket once, oldest first."""
 
     def __init__(
         self,
@@ -144,6 +140,7 @@ class SnapshotEmitter:
         application: str,
         instance_id: str,
         correlator: LatencyCorrelator | None = None,
+        counters: CounterRegistry | None = None,
     ) -> None:
         if bucket_seconds <= 0:
             raise ValueError("bucket_seconds must be > 0")
@@ -153,6 +150,12 @@ class SnapshotEmitter:
                 f"bucket_seconds={bucket_seconds} must be a whole multiple of "
                 f"the aggregator's bucket_seconds={native}"
             )
+        retention = aggregator.config.capacity * native
+        if retention < 2 * bucket_seconds:
+            raise ValueError(
+                f"aggregator retention {retention}s must cover at least two "
+                f"bucket_seconds={bucket_seconds} buckets"
+            )
         self._aggregator = aggregator
         self._publisher = publisher
         self._bucket_seconds = bucket_seconds
@@ -161,20 +164,11 @@ class SnapshotEmitter:
         self._instance_id = instance_id
         self._correlator = correlator
         self._last_emitted: int | None = None
-        self._counters = CounterRegistry()
+        self._counters = CounterRegistry() if counters is None else counters
 
     @property
     def counters(self) -> CounterRegistry:
         return self._counters
-
-    def _earliest_retained(self, now: datetime) -> int:
-        """Start of the oldest wire bucket the aggregator still holds in
-        full — mirrors the eviction bound in `MetricsAggregator.tick`."""
-        config = self._aggregator.config
-        oldest_second = (
-            int(now.timestamp() // config.bucket_seconds) - config.capacity + 1
-        ) * config.bucket_seconds
-        return -(-oldest_second // self._bucket_seconds) * self._bucket_seconds
 
     def _read_gauges(self) -> dict[str, float]:
         gauges = {
@@ -186,19 +180,14 @@ class SnapshotEmitter:
         return gauges
 
     def emit(self, now: datetime) -> int:
-        """Enqueue every completed, not-yet-emitted wire bucket, oldest
-        first. The first call ever emits only the latest completed bucket.
-        Missed buckets the aggregator no longer fully retains are skipped
-        and counted as `snapshot_buckets_skipped`, never published as
-        partial data. Gauges are read once and attached only to the newest
-        snapshot of this call. Returns how many snapshots were enqueued.
-        """
-        bs = self._bucket_seconds
-        latest = int(now.timestamp() // bs) * bs - bs
-        first = latest if self._last_emitted is None else self._last_emitted + bs
-        earliest = self._earliest_retained(now)
+        """Enqueue missed and latest buckets; returns how many were enqueued."""
+        width = self._bucket_seconds
+        latest = int(now.timestamp() // width) * width - width
+        first = latest if self._last_emitted is None else self._last_emitted + width
+        oldest_second = self._aggregator.oldest_retained_start(now.timestamp())
+        earliest = -(-oldest_second // width) * width
         if first < earliest:
-            skipped = (min(earliest, latest + bs) - first) // bs
+            skipped = (min(earliest, latest + width) - first) // width
             self._counters.increment("snapshot_buckets_skipped", skipped)
             first = earliest
             if first > latest:
@@ -209,11 +198,11 @@ class SnapshotEmitter:
 
         gauges = self._read_gauges()
         emitted = 0
-        for start in range(first, latest + 1, bs):
+        for start in range(first, latest + 1, width):
             snap = build_snapshot(
                 self._aggregator,
                 start,
-                bs,
+                width,
                 agent_id=self._agent_id,
                 application=self._application,
                 instance_id=self._instance_id,

@@ -164,6 +164,11 @@ class MetricsAggregator:
     def _bucket_start(self, ts: float) -> int:
         return int(ts // self.config.bucket_seconds)
 
+    def oldest_retained_start(self, now: float) -> int:
+        """Epoch start of the oldest internal bucket fully retained at `now`."""
+        bucket_seconds = self.config.bucket_seconds
+        return (self._bucket_start(now) - self.config.capacity + 1) * bucket_seconds
+
     def tick(self, now: float | None = None) -> None:
         """Evict any bucket that has fallen outside the retained capacity.
 
@@ -173,14 +178,14 @@ class MetricsAggregator:
         or queries arriving.
         """
         now = self._clock() if now is None else now
-        oldest_valid = self._bucket_start(now) - self.config.capacity + 1
+        oldest_valid = self.oldest_retained_start(now) // self.config.bucket_seconds
         for bucket in self._buckets:
             if bucket.start is not None and bucket.start < oldest_valid:
                 bucket.clear()
 
     def _get_bucket(self, ts: float, *, now: float) -> _Bucket | None:
         start = self._bucket_start(ts)
-        oldest_valid = self._bucket_start(now) - self.config.capacity + 1
+        oldest_valid = self.oldest_retained_start(now) // self.config.bucket_seconds
         if start < oldest_valid:
             return (
                 None  # older than the retained window; drop, don't corrupt a live slot

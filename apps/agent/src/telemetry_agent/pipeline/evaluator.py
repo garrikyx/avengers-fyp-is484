@@ -192,9 +192,7 @@ class RuleEvaluator:
             self._correlator.tick()
 
     def _publish_metrics_snapshot(self, now: datetime) -> None:
-        """UBS-115/UBS-123: publish every completed metrics bucket. Runs
-        after aging, so the emitter's retention bound matches what the
-        aggregator actually still holds."""
+        """UBS-123: runs after aging so retention matches the aggregator."""
         if self._snapshot_emitter is not None:
             self._snapshot_emitter.emit(now)
 
