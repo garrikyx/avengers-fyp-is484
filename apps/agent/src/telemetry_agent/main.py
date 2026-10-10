@@ -10,9 +10,10 @@ What runs, and on which thread:
                       correlator, session tracker, Health Reporter
     event loop        RuleEvaluator (UBS-113) every pipeline.evaluationInterval
                       -> AlertRouter -> BackendPublisher + CallbackDispatcher
-                      Same tick, once per completed publish.metricsBucketSeconds
-                      bucket: RuleEvaluator -> snapshot_bridge.build_snapshot
-                      -> BackendPublisher.enqueue_snapshot (UBS-115)
+                      Same tick, every completed publish.metricsBucketSeconds
+                      bucket not yet sent: RuleEvaluator ->
+                      SnapshotEmitter.emit -> BackendPublisher.enqueue_snapshot
+                      (UBS-115/UBS-123)
                       BackendPublisher every publish.interval -> backend,
                       carrying the heartbeat (health/publishing.py)
                       CallbackDispatcher -> Magic callback endpoint
@@ -71,7 +72,7 @@ from telemetry_agent.pipeline.monitor_adapter import (
 from telemetry_agent.pipeline.supervisor import PipelineBridge
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import DryRunPublishSink, HttpsPublishSink
-from telemetry_agent.publishing.snapshot_bridge import SnapshotCursor
+from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
 from telemetry_agent.rules.config_loader import SighupRuleReloader
 from telemetry_agent.rules.engine import RuleEngine
 
@@ -242,9 +243,15 @@ def build_agent(
         interval_seconds=cfg.evaluation_interval_seconds,
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
-        agent_id=cfg.agent_id,
-        application=APPLICATION,
-        snapshot_cursor=SnapshotCursor(cfg.publish.metrics_bucket_seconds),
+        snapshot_emitter=SnapshotEmitter(
+            ingestor.aggregator,
+            publisher,
+            bucket_seconds=cfg.publish.metrics_bucket_seconds,
+            agent_id=cfg.agent_id,
+            application=APPLICATION,
+            instance_id=cfg.instance_id,
+            correlator=ingestor.correlator,
+        ),
     )
     return Agent(
         config=cfg,

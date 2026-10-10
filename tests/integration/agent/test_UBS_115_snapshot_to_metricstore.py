@@ -32,7 +32,7 @@ from telemetry_agent.publishing.config import parse_publish_config
 from telemetry_agent.publishing.outcome import PublishAction
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import HttpsPublishSink
-from telemetry_agent.publishing.snapshot_bridge import SnapshotCursor
+from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
 from telemetry_agent.rules.engine import RuleEngine
 from telemetry_backend.main import create_app
 from telemetry_backend.services.stream_processor import StreamProcessor
@@ -90,16 +90,23 @@ def _evaluator(
         started_at=_T0,
     )
     router = AlertRouter(publisher, agent_id=_AGENT_ID, application=_APPLICATION)
+    correlator = LatencyCorrelator(aggregator)
     return RuleEvaluator(
         engine,
         aggregator,
         router,
         instance_id=_INSTANCE,
-        correlator=LatencyCorrelator(aggregator),
+        correlator=correlator,
         publisher=publisher,
-        agent_id=_AGENT_ID,
-        application=_APPLICATION,
-        snapshot_cursor=SnapshotCursor(bucket_seconds=10),
+        snapshot_emitter=SnapshotEmitter(
+            aggregator,
+            publisher,
+            bucket_seconds=10,
+            agent_id=_AGENT_ID,
+            application=_APPLICATION,
+            instance_id=_INSTANCE,
+            correlator=correlator,
+        ),
     )
 
 
@@ -161,7 +168,7 @@ def test_real_aggregator_counters_reach_the_metric_store() -> None:
 
 
 def test_second_tick_before_the_bucket_closes_does_not_republish() -> None:
-    """The SnapshotCursor half of "no duplicate bucket after a publish
+    """The SnapshotEmitter half of "no duplicate bucket after a publish
     retry": two evaluator ticks inside the same not-yet-elapsed bucket must
     not enqueue a second Snapshot for the bucket already published."""
     aggregator = _aggregator()
@@ -180,6 +187,53 @@ def test_second_tick_before_the_bucket_closes_does_not_republish() -> None:
     # closed (the *next* bucket, [_T0, _T0+10), hasn't completed yet).
     evaluator.evaluate_once(now=_T0 + timedelta(seconds=1))
     assert publisher.queue_depth() == 0  # nothing new enqueued
+
+
+def test_late_tick_publishes_every_missed_bucket_to_the_store() -> None:
+    """UBS-123: a tick that arrives two buckets late (a stalled loop, a
+    long GC) must still land both buckets' counters in the store, each in
+    its own bucket -- not just the most recent one."""
+    aggregator = _aggregator()
+    early = _BUCKET_START - timedelta(seconds=10)  # [_T0-20s, _T0-10s)
+
+    app = create_app()
+    publisher = _publisher(app)
+    evaluator = _evaluator(aggregator, publisher)
+    evaluator.evaluate_once(now=early)  # first ever tick: emits [_T0-30s, early)
+    assert publisher.queue_depth() == 1
+
+    event = NewOrderEvent(
+        event_time_utc=early + timedelta(seconds=2),
+        instance_id=_INSTANCE,
+        session_id="MAGIC->EXCH1",
+        cl_ord_id_hash="order-early",
+        symbol="AAPL",
+        side="buy",
+        ord_type="limit",
+        order_qty=Decimal(100),
+    )
+    aggregator.ingest_counters(event, derive_counters(event))
+    _ingest_three_orders(aggregator)
+
+    evaluator.evaluate_once(now=_T0)  # skipped the tick at _BUCKET_START
+    assert publisher.queue_depth() == 3  # both missed buckets, not just one
+
+    # One publish for all three: the in-process backend's queue is bound to
+    # the first event loop that drains it.
+    assert asyncio.run(_publish_and_drain(app, publisher)) is PublishAction.COMMIT
+    store = app.state.processor.store
+
+    def orders(from_utc: datetime, to_utc: datetime) -> Decimal:
+        # `read` is end-inclusive, so stop at the bucket's last second.
+        last = to_utc - timedelta(seconds=1)
+        rows = store.read(_INSTANCE, from_utc=from_utc, to_utc=last)
+        return sum(
+            (row.counters.get("orders_submitted", Decimal(0)) for row in rows),
+            Decimal(0),
+        )
+
+    assert orders(early, _BUCKET_START) == Decimal(1)
+    assert orders(_BUCKET_START, _T0) == Decimal(3)
 
 
 def test_merging_the_same_snapshot_twice_does_not_double_the_counters() -> None:
