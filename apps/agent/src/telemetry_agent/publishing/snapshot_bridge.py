@@ -27,7 +27,10 @@ from telemetry_shared.metrics.dimensions import (
 from telemetry_shared.metrics.histogram import Histogram
 from telemetry_shared.models.snapshot import HistogramPayload, SeriesEntry, Snapshot
 
+from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.metrics.aggregator import MetricsAggregator
+from telemetry_agent.metrics.correlation import LatencyCorrelator
+from telemetry_agent.publishing.publisher import BackendPublisher
 
 
 def _to_wire_dimensions(
@@ -124,36 +127,88 @@ def build_snapshot(
     )
 
 
-class SnapshotCursor:
-    """Tracks which completed bucket was last emitted, so a caller ticking
-    faster than `bucket_seconds` never builds a second `Snapshot` for the
-    same completed bucket. Independent of (and in addition to)
-    `BackendPublisher`'s own transport-retry safety and the backend
-    `MetricStore`'s merge idempotency — this guards the step upstream of
-    both: the evaluator never *constructing* a duplicate in the first
-    place.
-    """
+class SnapshotEmitter:
+    """UBS-123: publishes every completed wire bucket once, oldest first."""
 
-    def __init__(self, bucket_seconds: int) -> None:
+    def __init__(
+        self,
+        aggregator: MetricsAggregator,
+        publisher: BackendPublisher,
+        *,
+        bucket_seconds: int,
+        agent_id: str,
+        application: str,
+        instance_id: str,
+        correlator: LatencyCorrelator | None = None,
+        counters: CounterRegistry | None = None,
+    ) -> None:
         if bucket_seconds <= 0:
             raise ValueError("bucket_seconds must be > 0")
+        native = aggregator.config.bucket_seconds
+        if bucket_seconds % native != 0:
+            raise ValueError(
+                f"bucket_seconds={bucket_seconds} must be a whole multiple of "
+                f"the aggregator's bucket_seconds={native}"
+            )
+        retention = aggregator.config.capacity * native
+        if retention < 2 * bucket_seconds:
+            raise ValueError(
+                f"aggregator retention {retention}s must cover at least two "
+                f"bucket_seconds={bucket_seconds} buckets"
+            )
+        self._aggregator = aggregator
+        self._publisher = publisher
         self._bucket_seconds = bucket_seconds
+        self._agent_id = agent_id
+        self._application = application
+        self._instance_id = instance_id
+        self._correlator = correlator
         self._last_emitted: int | None = None
+        self._counters = CounterRegistry() if counters is None else counters
 
     @property
-    def bucket_seconds(self) -> int:
-        return self._bucket_seconds
+    def counters(self) -> CounterRegistry:
+        return self._counters
 
-    def next_bucket(self, now: datetime) -> int | None:
-        """The epoch start of the next not-yet-emitted completed bucket, or
-        `None` if the most recently completed bucket was already emitted."""
-        current_start = (
-            int(now.timestamp() // self._bucket_seconds) * self._bucket_seconds
-        )
-        completed_start = current_start - self._bucket_seconds
-        if self._last_emitted is not None and completed_start <= self._last_emitted:
-            return None
-        return completed_start
+    def _read_gauges(self) -> dict[str, float]:
+        gauges = {
+            "consecutive_publish_failures": float(self._publisher.consecutive_failures),
+            "publish_queue_depth": float(self._publisher.queue_depth()),
+        }
+        if self._correlator is not None:
+            gauges["pending_orders"] = float(self._correlator.pending_order_count())
+        return gauges
 
-    def mark_emitted(self, bucket_start: int) -> None:
-        self._last_emitted = bucket_start
+    def emit(self, now: datetime) -> int:
+        """Enqueue missed and latest buckets; returns how many were enqueued."""
+        width = self._bucket_seconds
+        latest = int(now.timestamp() // width) * width - width
+        first = latest if self._last_emitted is None else self._last_emitted + width
+        oldest_second = self._aggregator.oldest_retained_start(now.timestamp())
+        earliest = -(-oldest_second // width) * width
+        if first < earliest:
+            skipped = (min(earliest, latest + width) - first) // width
+            self._counters.increment("snapshot_buckets_skipped", skipped)
+            first = earliest
+            if first > latest:
+                # The whole gap is gone; don't count it again next call.
+                self._last_emitted = latest
+        if first > latest:
+            return 0
+
+        gauges = self._read_gauges()
+        emitted = 0
+        for start in range(first, latest + 1, width):
+            snap = build_snapshot(
+                self._aggregator,
+                start,
+                width,
+                agent_id=self._agent_id,
+                application=self._application,
+                instance_id=self._instance_id,
+                gauges=gauges if start == latest else None,
+            )
+            self._publisher.enqueue_snapshot(snap, now=now)
+            self._last_emitted = start
+            emitted += 1
+        return emitted

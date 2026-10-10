@@ -1,4 +1,4 @@
-"""UBS-115: `snapshot_bridge.build_snapshot`/`SnapshotCursor` unit tests.
+"""UBS-115: `snapshot_bridge.build_snapshot` unit tests.
 
 `build_snapshot` is the converter the ticket asked for: aggregator buckets
 (query-shaped, `MetricRow` per dimension-group) into the wire `Snapshot`
@@ -15,10 +15,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pytest
 from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregator
 from telemetry_agent.metrics.counters import BASE_DIMS, REJECT_DIMS, SESSION_DIMS
-from telemetry_agent.publishing.snapshot_bridge import SnapshotCursor, build_snapshot
+from telemetry_agent.publishing.snapshot_bridge import build_snapshot
 from telemetry_shared.models.snapshot import Snapshot
 
 _METRIC_DIMENSIONS = {
@@ -122,32 +121,3 @@ def test_build_snapshot_is_pure_and_repeatable() -> None:
         )
 
     assert _build() == _build()
-
-
-class TestSnapshotCursor:
-    def test_rejects_non_positive_bucket_seconds(self) -> None:
-        with pytest.raises(ValueError, match="bucket_seconds"):
-            SnapshotCursor(0)
-
-    def test_first_call_returns_the_most_recently_completed_bucket(self) -> None:
-        cursor = SnapshotCursor(10)
-        now = datetime.fromtimestamp(105, tz=UTC)  # current bucket [100,110)
-        assert cursor.next_bucket(now) == 90  # last *completed* bucket
-
-    def test_does_not_re_emit_the_same_completed_bucket(self) -> None:
-        cursor = SnapshotCursor(10)
-        first = cursor.next_bucket(datetime.fromtimestamp(105, tz=UTC))
-        assert first is not None
-        cursor.mark_emitted(first)
-
-        again = cursor.next_bucket(datetime.fromtimestamp(108, tz=UTC))
-        assert again is None  # same completed bucket, ticking faster than bucket_seconds  # noqa: E501
-
-    def test_advances_once_the_next_bucket_has_completed(self) -> None:
-        cursor = SnapshotCursor(10)
-        first = cursor.next_bucket(datetime.fromtimestamp(105, tz=UTC))
-        assert first is not None
-        cursor.mark_emitted(first)
-
-        later = cursor.next_bucket(datetime.fromtimestamp(115, tz=UTC))
-        assert later == 100
