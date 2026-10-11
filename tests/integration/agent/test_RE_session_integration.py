@@ -100,7 +100,7 @@ def _counters(aggregator: MetricsAggregator, window: str) -> dict[str, Decimal]:
 def _tracker_fed(lines: list[bytes]) -> SessionHeartbeatTracker:
     """A tracker that has watched `lines` go past, so it knows which
     sessions exist and when each was last heard from. Mirrors what
-    `health/demo.py`'s `_poll_forever` does per tailed line.
+    `MetricsIngestor.ingest` does per committed line.
     """
     parser = FixParser(hash_key=_KEY)
     meta = SourceMeta(

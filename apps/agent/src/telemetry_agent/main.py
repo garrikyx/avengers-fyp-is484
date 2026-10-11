@@ -10,6 +10,10 @@ What runs, and on which thread:
                       correlator, session tracker, Health Reporter
     event loop        RuleEvaluator (UBS-113) every pipeline.evaluationInterval
                       -> AlertRouter -> BackendPublisher + CallbackDispatcher
+                      Same tick, every completed publish.metricsBucketSeconds
+                      bucket not yet sent: RuleEvaluator ->
+                      SnapshotEmitter.emit -> BackendPublisher.enqueue_snapshot
+                      (UBS-115/UBS-123)
                       BackendPublisher every publish.interval -> backend,
                       carrying the heartbeat (health/publishing.py)
                       CallbackDispatcher -> Magic callback endpoint
@@ -41,6 +45,7 @@ import httpx
 
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import DryRunCallbackSink, HttpsCallbackSink
+from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.config import (
     DEFAULT_CONFIG_PATH,
     AgentConfig,
@@ -68,6 +73,7 @@ from telemetry_agent.pipeline.monitor_adapter import (
 from telemetry_agent.pipeline.supervisor import PipelineBridge
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import DryRunPublishSink, HttpsPublishSink
+from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
 from telemetry_agent.rules.config_loader import SighupRuleReloader
 from telemetry_agent.rules.engine import RuleEngine
 
@@ -225,6 +231,7 @@ def build_agent(
         agent_id=cfg.agent_id,
         started_at=started_at or datetime.now(UTC),
     )
+    evaluator_counters = CounterRegistry()  # shared so shutdown logs emitter skips
     evaluator = RuleEvaluator(
         engine,
         ingestor.aggregator,
@@ -238,6 +245,17 @@ def build_agent(
         interval_seconds=cfg.evaluation_interval_seconds,
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
+        counters=evaluator_counters,
+        snapshot_emitter=SnapshotEmitter(
+            ingestor.aggregator,
+            publisher,
+            bucket_seconds=cfg.publish.metrics_bucket_seconds,
+            agent_id=cfg.agent_id,
+            application=APPLICATION,
+            instance_id=cfg.instance_id,
+            correlator=ingestor.correlator,
+            counters=evaluator_counters,
+        ),
     )
     return Agent(
         config=cfg,

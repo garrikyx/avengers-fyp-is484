@@ -43,7 +43,8 @@ Thumbs.db
 *.log
 
 #CLAUDE
-claude.*
+# CLAUDE.md is shared project instructions; personal notes go in CLAUDE.local.md
+CLAUDE.local.md
 # Claude Code local settings (machine-specific hook paths)
 .claude/settings.json
 

@@ -51,6 +51,7 @@ from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.metrics_event import derive_heartbeat_timeout_counters
 from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.publishing.publisher import BackendPublisher
+from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
 from telemetry_agent.rules.config_loader import SighupRuleReloader
 from telemetry_agent.rules.engine import RuleEngine
 from telemetry_agent.rules.types import SIGNATURE_DIMENSION, RuleKind
@@ -94,6 +95,7 @@ class RuleEvaluator:
         lock: AbstractContextManager[Any] | None = None,
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
+        snapshot_emitter: SnapshotEmitter | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be > 0")
@@ -113,6 +115,7 @@ class RuleEvaluator:
         self._counters = counters or CounterRegistry()
         self._logger = logger or logging.getLogger(__name__)
         self._reload_requested = False
+        self._snapshot_emitter = snapshot_emitter
         # One sampler per registry: `AgentCounterSampler` keeps a baseline,
         # and sharing one would diff each registry against the other's.
         self._callback_sampler = AgentCounterSampler(
@@ -151,6 +154,7 @@ class RuleEvaluator:
         with self._lock:
             changed = self._reload(now)
             self._age(now)
+            self._publish_metrics_snapshot(now)
             self._ingest_session_timeouts(now, monotonic_now)
             self._sample_agent_counters(now)
             changed.extend(self._evaluate(now))
@@ -186,6 +190,11 @@ class RuleEvaluator:
         self._aggregator.tick(now.timestamp())
         if self._correlator is not None:
             self._correlator.tick()
+
+    def _publish_metrics_snapshot(self, now: datetime) -> None:
+        """UBS-123: runs after aging so retention matches the aggregator."""
+        if self._snapshot_emitter is not None:
+            self._snapshot_emitter.emit(now)
 
     def _ingest_session_timeouts(self, now: datetime, monotonic_now: float) -> None:
         if self._session_tracker is None:
