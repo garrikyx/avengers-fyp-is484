@@ -12,7 +12,7 @@ from telemetry_agent.pipeline.types import ParsedEvent
 
 def test_committed_offset_advances_only_after_committer_ingest(tmp_path: Path) -> None:
     log_path = tmp_path / "Fix.log"
-    log_path.write_text("line-1\nline-2\n")
+    log_path.write_text("line-1\nline-2\n", newline="\n")
     tracker = OffsetTracker(registry_path=tmp_path / "offsets.json")
     monitor = LogMonitor(log_path, offset_tracker=tracker, commit_on_read=False)
 

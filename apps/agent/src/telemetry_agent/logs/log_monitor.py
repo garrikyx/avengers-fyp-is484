@@ -13,6 +13,61 @@ from telemetry_agent.logs.status import FileReadStatus
 logger = logging.getLogger(__name__)
 
 
+def _open_shared(path: Path) -> TextIO:
+    """Open a log for reading without blocking the writer's rotation.
+
+    On Windows a plain ``open()`` denies delete sharing, so a rename or
+    unlink by the log writer fails with WinError 32 while the agent holds
+    the file.  Opening with ``FILE_SHARE_DELETE`` gives the POSIX behaviour
+    the monitor relies on: the descriptor keeps following the renamed file.
+    A missing path still raises ``FileNotFoundError``.
+    """
+    if os.name != "nt":
+        return open(path, encoding="utf-8", errors="replace")
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    generic_read = 0x80000000
+    share_read_write_delete = 0x1 | 0x2 | 0x4
+    open_existing = 3
+    file_attribute_normal = 0x80
+    invalid_handle = wintypes.HANDLE(-1).value
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+
+    handle = create_file(
+        str(path),
+        generic_read,
+        share_read_write_delete,
+        None,
+        open_existing,
+        file_attribute_normal,
+        None,
+    )
+    if handle == invalid_handle:
+        # WinError maps ERROR_FILE_NOT_FOUND to FileNotFoundError.
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    except Exception:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
+        raise
+    return open(fd, encoding="utf-8", errors="replace")
+
+
 @dataclass(frozen=True, slots=True)
 class ReadLine:
     """One complete log line with stable byte identity for idempotent ingest."""
@@ -123,7 +178,7 @@ class LogMonitor:
 
     def _start_harvester(self, offset: int | None = None) -> None:
         """Spawns a new Harvester bound to the active inode."""
-        handle = open(self.file_path, encoding="utf-8", errors="replace")
+        handle = _open_shared(self.file_path)
         # The path can rotate between stat() and open(); bind to the file
         # descriptor actually opened rather than the earlier path identity.
         opened_stat = os.fstat(handle.fileno())
@@ -156,7 +211,7 @@ class LogMonitor:
         simply ignored.
         """
         try:
-            handle = open(path, encoding="utf-8", errors="replace")
+            handle = _open_shared(path)
         except FileNotFoundError:
             return None
 
