@@ -20,16 +20,20 @@ ALLOWED_DIMENSION_KEYS: frozenset[str] = frozenset(
         "sessionRejectReason",
         "reason",
         "severity",
+        "level",
+        "component",
+        "errorSignature",
     }
 )
 
 # Agent-internal snake_case dimension name -> wire camelCase name. Dimensions
-# already identical on both sides (symbol, side, reason, severity) are
-# omitted; `.get(dim, dim)` falls through unchanged for those.
+# already identical on both sides (symbol, side, reason, severity, level,
+# component) are omitted; `.get(dim, dim)` falls through unchanged for those.
 DIMENSION_KEY_ALIASES: dict[str, str] = {
     "instance_id": "instanceId",
     "session_id": "session",
     "ord_type": "ordType",
     "reject_reason": "rejectReason",
     "session_reject_reason": "sessionRejectReason",
+    "error_signature": "errorSignature",
 }
