@@ -208,6 +208,9 @@ its denominator is below `minSampleSize` (default 20), so an idle minute never l
 | `sessionRejectReason` | tag 373 name | 16 |
 | `reason` (parse errors) | closed set from spec 003 §3 | 12 |
 | `severity` | info / warning / critical | 3 |
+| `level` | Application.log level, closed set `[NWEIF]` | 5 |
+| `component` | Application.log component, free text | 50 per instance, `__other__` beyond cap |
+| `errorSignature` | Application.log error signature, free text | 50 per instance, `__other__` beyond cap |
 
 `FR-MET-029`: Cardinality caps MUST be enforced at the agent with a top-N sketch per bucket;
 values beyond the cap are folded into `__other__` and `metrics.cardinality_folded` is

@@ -25,7 +25,13 @@ import httpx
 from fastapi import FastAPI
 from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregator
 from telemetry_agent.metrics.correlation import LATENCY_DIMENSIONS, LatencyCorrelator
-from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS, derive_counters
+from telemetry_agent.metrics.counters import (
+    COUNTER_DIMENSIONS,
+    app_log_counter_dims,
+    derive_app_log_counters,
+    derive_counters,
+)
+from telemetry_agent.parser.applog.telemetry import AppLogTelemetry
 from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.pipeline.evaluator import RuleEvaluator
 from telemetry_agent.publishing.config import parse_publish_config
@@ -77,6 +83,42 @@ def _ingest_three_orders(aggregator: MetricsAggregator) -> None:
             order_qty=Decimal(100),
         )
         aggregator.ingest_counters(event, derive_counters(event))
+
+
+def _ingest_app_log_lines(aggregator: MetricsAggregator) -> None:
+    """Three Application.log lines spanning two levels and two components,
+    landing inside the completed bucket [_BUCKET_START, _T0), via the real
+    derive_app_log_counters/app_log_counter_dims production path."""
+    lines = [
+        AppLogTelemetry(
+            timestamp="", thread_id="1", level="I", component="OMS", message=""
+        ),
+        AppLogTelemetry(
+            timestamp="",
+            thread_id="1",
+            level="E",
+            component="OMS",
+            message="",
+            error_signature="conn_drop",
+        ),
+        AppLogTelemetry(
+            timestamp="",
+            thread_id="1",
+            level="E",
+            component="VS_2",
+            message="",
+            error_signature="conn_drop",
+        ),
+    ]
+    for i, telemetry in enumerate(lines):
+        dims = app_log_counter_dims(
+            telemetry, instance_id=_INSTANCE, component=telemetry.component
+        )
+        aggregator.ingest_agent_counters(
+            dims=dims,
+            counters=derive_app_log_counters(telemetry),
+            at=_BUCKET_START + timedelta(seconds=i),
+        )
 
 
 def _evaluator(
@@ -165,6 +207,54 @@ def test_real_aggregator_counters_reach_the_metric_store() -> None:
     totals = _read_counters(app)
     assert totals["orders_submitted"] == Decimal(3)
     assert totals["messages_total"] == Decimal(3)
+
+
+def test_app_log_metrics_reach_the_metric_store_as_distinct_series() -> None:
+    """UBS-125 regression: before `level`/`component`/`errorSignature` were
+    allowlisted, `_to_wire_dimensions` dropped them, so every app_log_* row
+    reached the wire with only `instanceId` -- and `MetricStore.merge`'s
+    per-bucket, per-dimension-key write silently overwrote all but the last
+    one. This pins that distinct levels/components now survive as distinct
+    series instead of colliding into one."""
+    aggregator = _aggregator()
+    _ingest_app_log_lines(aggregator)
+
+    app = create_app()
+    publisher = _publisher(app)
+    evaluator = _evaluator(aggregator, publisher)
+
+    evaluator.evaluate_once(now=_T0)
+    assert asyncio.run(_publish_and_drain(app, publisher)) is PublishAction.COMMIT
+
+    store = app.state.processor.store
+
+    # Totals: nothing silently lost to an overwrite.
+    totals = _read_counters(app)
+    assert totals["app_log_lines"] == Decimal(3)
+    assert totals["app_log_errors"] == Decimal(2)
+    assert totals["app_error_signatures"] == Decimal(2)
+
+    # Per-level breakdown: two distinct series, not one collapsed row.
+    by_level = store.read(
+        _INSTANCE, from_utc=_BUCKET_START, to_utc=_T0, group_by=("level",)
+    )
+    level_totals = {
+        row.dimensions["level"]: row.counters["app_log_lines"]
+        for row in by_level
+        if "app_log_lines" in row.counters
+    }
+    assert level_totals == {"I": Decimal(1), "E": Decimal(2)}
+
+    # Per-component breakdown: likewise two distinct series.
+    by_component = store.read(
+        _INSTANCE, from_utc=_BUCKET_START, to_utc=_T0, group_by=("component",)
+    )
+    component_totals = {
+        row.dimensions["component"]: row.counters["app_log_errors"]
+        for row in by_component
+        if "app_log_errors" in row.counters
+    }
+    assert component_totals == {"OMS": Decimal(1), "VS_2": Decimal(1)}
 
 
 def test_second_tick_before_the_bucket_closes_does_not_republish() -> None:
