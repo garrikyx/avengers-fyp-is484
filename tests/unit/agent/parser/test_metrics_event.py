@@ -261,7 +261,7 @@ def test_every_line_counts_toward_log_lines_read() -> None:
     """
     counters = _parser_counters(
         b"8=FIX.4.2|35=0|49=MAGIC|56=EXCH1|34=1|52=20260101-10:00:00|10=000|",
-        b"2026-01-01 10:00:00 [INFO] [CoreEngine] Heartbeat active.",
+        b"10:00:00.000001 <413013> [N] MAIN: Heartbeat active.",
         b"\x00\xff\xfe not a log line at all",
     )
     assert [c["log_lines_read"] for c in counters] == [Decimal(1)] * 3

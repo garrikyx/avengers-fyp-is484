@@ -32,7 +32,6 @@ from telemetry_shared.models.alerts import AlertEvent
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _T0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
 _APP = "Magic"
-_MAGIC_PATTERN = r"^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]+\]"
 
 _OOM = b"10:00:00.000001 <7> [E] VS_788: java.lang.OutOfMemoryError: heap"
 _DB_LOST = b"10:00:00.000002 <7> [E] DBPool: connection lost to primary database"
@@ -56,7 +55,7 @@ class _Agent:
             clock=lambda: self.now.timestamp(), monotonic=lambda: 0.0
         )
         self.parser = AppLogParser(
-            app_log_patterns=[_MAGIC_PATTERN],
+            app_log_patterns=list(cfg.logs.app_log_patterns),
             error_signatures=list(cfg.parsing.error_signatures),
         )
         publisher = BackendPublisher(

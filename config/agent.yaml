@@ -39,8 +39,8 @@ logs:
     - ./logs/Application.log
     - ./logs/Fix.log
   stateDir: ./.agent-state   # offsets.json lives here (UBS-23)
-  appLogPatterns:            # the simulator's Application.log line shape
-    - '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \[[A-Z]+\]'
+  appLogPatterns:            # sponsor/Magic Application.log line shape
+    - '^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]+\]'
 
 # --- Application.log error signatures (UBS-116; spec 010 `parsing:`) ---
 parsing:
@@ -49,6 +49,12 @@ parsing:
       match: "OutOfMemoryError|std::bad_alloc"
     - label: db_connection_lost
       match: "connection (lost|refused).*(db|database)"
+    - label: connection_disconnected
+      match: "connection disconnected"
+    - label: connection_timeout
+      match: "timed out after"
+    - label: venue_connection_failed
+      match: "failed to complete connection"
   maxDynamicSignatureLabels: 50   # cap on `%`-templated labels -> __other__
 
 # --- Parser pipeline + rule evaluation (UBS-48/49, UBS-112, UBS-113) ---
