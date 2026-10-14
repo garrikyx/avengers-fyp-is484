@@ -7,6 +7,7 @@ from telemetry_shared.models.alerts_query import (
     AlertsListResponse,
     AlertTransition,
 )
+from telemetry_shared.models.events_query import EventsListResponse
 from telemetry_shared.models.health import (
     AgentHeartbeat,
     AgentStatus,
@@ -45,6 +46,7 @@ __all__ = [
     "AlertRecord",
     "AlertsListResponse",
     "AlertTransition",
+    "EventsListResponse",
     "EventsRequest",
     "FileReadHealth",
     "Gauges",

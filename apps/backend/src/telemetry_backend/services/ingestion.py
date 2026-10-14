@@ -13,6 +13,7 @@ from telemetry_shared.models.ingestion import Heartbeat, TelemetryEvent
 from telemetry_shared.models.snapshot import Snapshot
 
 from telemetry_backend.services.alert_store import AlertStore
+from telemetry_backend.services.event_store import EventStore
 from telemetry_backend.services.heartbeat_monitor import HeartbeatMonitor
 from telemetry_backend.services.stream_processor import (
     StreamProcessor,
@@ -83,6 +84,7 @@ class IngestionService:
         queue_size: int = 10_000,
         stream_processor: StreamProcessor | None = None,
         alert_store: AlertStore | None = None,
+        event_store: EventStore | None = None,
         heartbeat_monitor: HeartbeatMonitor | None = None,
     ) -> None:
         self._queue: asyncio.Queue[AcceptedIngestion] = asyncio.Queue(
@@ -90,6 +92,7 @@ class IngestionService:
         )
         self.stream_processor = stream_processor or StreamProcessor()
         self.alert_store = alert_store or AlertStore()
+        self.event_store = event_store or EventStore()
         self.heartbeat_monitor = heartbeat_monitor
         self.rejected_payloads_total = 0
         self.queue_overflow_total = 0
@@ -277,6 +280,11 @@ class IngestionService:
                         list(item.alerts),
                         now,
                     )
+                if item.events:
+                    await asyncio.to_thread(
+                        self._process_events,
+                        list(item.events),
+                    )
                 if item.heartbeat is not None:
                     await asyncio.to_thread(
                         self._process_heartbeat,
@@ -290,6 +298,10 @@ class IngestionService:
     ) -> None:
         for alert in alerts:
             self.alert_store.merge(alert, source="agent", now=now)
+
+    def _process_events(self, events: list[TelemetryEvent]) -> None:
+        for event in events:
+            self.event_store.append(event)
 
     def _process_heartbeat(self, heartbeat: Heartbeat) -> None:
         if self.heartbeat_monitor is not None:

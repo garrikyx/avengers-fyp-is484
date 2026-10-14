@@ -28,6 +28,17 @@ class AlertStoreConfig:
 
 
 @dataclass(slots=True, frozen=True)
+class EventStoreConfig:
+    """Event store retention (UBS-118; spec 010 `store.recentAlertLimit` default)."""
+
+    recent_event_limit: int = 500
+
+    def __post_init__(self) -> None:
+        if self.recent_event_limit < 1:
+            raise ValueError("recent_event_limit must be at least 1")
+
+
+@dataclass(slots=True, frozen=True)
 class AlertingConfig:
     """Backend-owned alerting rules (spec 005 `FR-RUL-030`)."""
 
