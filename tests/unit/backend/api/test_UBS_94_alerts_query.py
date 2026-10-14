@@ -21,11 +21,7 @@ from tests.unit.backend.services.alert_fixtures import (
 
 def _app_with_store(store: AlertStore):
     service = IngestionService(alert_store=store)
-    return create_app(
-        service=service,
-        alert_store=store,
-        enable_heartbeat_monitor=False,
-    )
+    return create_app(service=service, enable_heartbeat_monitor=False)
 
 
 def test_UBS_94_list_filters_by_status_instance_and_since() -> None:
@@ -108,11 +104,7 @@ def test_UBS_94_unknown_query_parameter_returns_invalid_field() -> None:
 def test_UBS_94_batch_ingestion_makes_alerts_queryable() -> None:
     store = AlertStore()
     service = IngestionService(alert_store=store)
-    app = create_app(
-        service=service,
-        alert_store=store,
-        enable_heartbeat_monitor=False,
-    )
+    app = create_app(service=service, enable_heartbeat_monitor=False)
 
     with TestClient(app) as client:
         alert = make_alert_event(alert_id="from-batch")

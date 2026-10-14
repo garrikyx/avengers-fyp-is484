@@ -2,9 +2,8 @@
 endpoint, retrying transient failures with backoff and tracking each
 alert's delivery status.
 
-`enqueue()` is the entry point a future supervisor/pipeline-wiring step
-calls with each `AlertEvent` `RuleEngine.evaluate()`/`apply_rules()`
-produces; nothing in this repo calls it yet (see docs/plan/scaffold.md).
+`enqueue()` receives each `AlertEvent` `RuleEngine.evaluate()` produces,
+via `pipeline.AlertRouter` (UBS-110).
 """
 
 from __future__ import annotations

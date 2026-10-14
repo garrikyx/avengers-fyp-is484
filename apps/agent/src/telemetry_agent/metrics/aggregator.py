@@ -164,6 +164,11 @@ class MetricsAggregator:
     def _bucket_start(self, ts: float) -> int:
         return int(ts // self.config.bucket_seconds)
 
+    def oldest_retained_start(self, now: float) -> int:
+        """Epoch start of the oldest internal bucket fully retained at `now`."""
+        bucket_seconds = self.config.bucket_seconds
+        return (self._bucket_start(now) - self.config.capacity + 1) * bucket_seconds
+
     def tick(self, now: float | None = None) -> None:
         """Evict any bucket that has fallen outside the retained capacity.
 
@@ -173,14 +178,14 @@ class MetricsAggregator:
         or queries arriving.
         """
         now = self._clock() if now is None else now
-        oldest_valid = self._bucket_start(now) - self.config.capacity + 1
+        oldest_valid = self.oldest_retained_start(now) // self.config.bucket_seconds
         for bucket in self._buckets:
             if bucket.start is not None and bucket.start < oldest_valid:
                 bucket.clear()
 
     def _get_bucket(self, ts: float, *, now: float) -> _Bucket | None:
         start = self._bucket_start(ts)
-        oldest_valid = self._bucket_start(now) - self.config.capacity + 1
+        oldest_valid = self.oldest_retained_start(now) // self.config.bucket_seconds
         if start < oldest_valid:
             return (
                 None  # older than the retained window; drop, don't corrupt a live slot
@@ -336,6 +341,40 @@ class MetricsAggregator:
         result: dict[tuple[str, ...], MetricRow] = {}
         for bucket in self._buckets:
             if bucket.start is None or bucket.start < cutoff:
+                continue
+            self._merge_counters(bucket, group_by, result)
+            self._merge_histograms(bucket, group_by, result)
+        return result
+
+    def bucket_delta(
+        self, bucket_start: int, bucket_seconds: int, group_by: Sequence[str] = ()
+    ) -> dict[tuple[str, ...], MetricRow]:
+        """UBS-115: exact, non-overlapping delta for the closed interval
+        `[bucket_start, bucket_start + bucket_seconds)` in epoch seconds —
+        unlike `snapshot()`, not relative to `now` and not a rolling window.
+        This is what lets a caller publish "one snapshot per completed
+        bucket" (`FR-MET-024`) instead of a trailing sum that double-counts
+        across overlapping reads. Caller guarantees `bucket_start` is
+        already fully elapsed and aligned (`bucket_start % bucket_seconds
+        == 0`) — this is a pure read, no eviction, no `now`.
+        """
+        if bucket_seconds % self.config.bucket_seconds != 0:
+            raise ValueError(
+                f"bucket_seconds={bucket_seconds} must be a multiple of "
+                f"config.bucket_seconds={self.config.bucket_seconds}"
+            )
+        group_by = tuple(group_by)
+        if not set(group_by) <= self.config.known_dimensions:
+            raise ValueError(
+                f"group_by must be a subset of {sorted(self.config.known_dimensions)}"
+            )
+
+        start_idx = bucket_start // self.config.bucket_seconds
+        end_idx = (bucket_start + bucket_seconds) // self.config.bucket_seconds
+
+        result: dict[tuple[str, ...], MetricRow] = {}
+        for bucket in self._buckets:
+            if bucket.start is None or not (start_idx <= bucket.start < end_idx):
                 continue
             self._merge_counters(bucket, group_by, result)
             self._merge_histograms(bucket, group_by, result)

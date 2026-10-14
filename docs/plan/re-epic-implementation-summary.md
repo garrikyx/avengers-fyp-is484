@@ -34,11 +34,11 @@ MA-04 indicator — and picks the *highest* tier whose condition holds.
 | `ParseErrorRate` | rate | warning@1%, critical@25% | 5m | wired (UBS-18) |
 | `NoLogActivity` | absence | critical@0 (`messages_total`) | 1m | wired |
 | `NoExecutions` | absence (guarded) | warning@0 while `orders_submitted`>0 | 15m | wired |
-| `FixSessionDown` | threshold | critical@1 (`logouts` or `heartbeat_timeouts`) | 1m | wired (UBS-73, `logouts` only) |
+| `FixSessionDown` | threshold | critical@1 (`logouts` or `heartbeat_timeouts`) | 1m | wired (UBS-73 `logouts`, UBS-106 `heartbeat_timeouts`) |
 | `SeqGapDetected` | threshold | warning@0 | 1m | wired (UBS-73) |
 | `ClockSkew` | threshold | warning@10 | 5m | wired (UBS-73) |
 | `CallbackFailing` | threshold | warning@3 | 5m | wired (UBS-74) |
-| `BackendUnreachable` | threshold | warning@5 | 1m | no Backend Publisher yet |
+| `BackendUnreachable` | threshold (gauge) | warning@5 | n/a | wired (UBS-75) |
 
 "No producer" rules read as 0/no-fire structurally rather than raising —
 same posture MA-04 established for `parseErrorRate`. `HighRejectRate`,
@@ -141,7 +141,7 @@ reload mechanism are both fully unit-tested, including a real
 | `test_RE_05_config_loader.py` | Valid YAML round-trips to the same `RuleConfig`s; a missing file falls back to `DEFAULT_RULES`; `config/rules.yaml` itself matches `DEFAULT_RULES` one-for-one (catches drift between the two); every malformed shape (bad `kind`/`operator`, empty `tiers`, duplicate name, unknown field, empty rule list) raises `RuleConfigError` naming the rule, and never silently falls back once the file exists; duration-string parsing (`"30s"`/`"2m"`/`"1h"`). |
 | `test_RE_06_reload.py` | `apply_rules` preserves `alertId`/`firstObservedUtc` across a reload that changes a surviving rule's threshold (proven via a post-reload renotify carrying the same `alertId`); force-resolves a `firing` alert whose rule was removed (one `resolved` event) but drops a `pending` one silently; `SighupRuleReloader.reload()` swaps in a valid file and rejects a malformed one (old rules keep firing, error logged); a real `os.kill(os.getpid(), signal.SIGHUP)` round-trip proves `install()`'s OS wiring, not just the Python method. |
 | `tests/integration/agent/test_RE_integration.py` | Real `MetricsAggregator`/`LatencyCorrelator`/`snapshot()` output actually drives `RuleEngine.evaluate()` correctly — one rule per snapshot substructure (indicator, latency, gauge, counter), not the hand-built `MetricsSnapshot` fixtures the rest of this suite uses. Caught a real gap: `snapshot()`'s `min_sample_size` nulls latency percentiles independent of what a given rule's own `min_samples` would accept. |
-| `tests/integration/agent/test_RE_session_integration.py` (UBS-73) | Raw FIX bytes through the real `FixParser` and the `metrics_event` bridge fire `FixSessionDown`, `SeqGapDetected` and `ClockSkew` — including that ten skewed messages stay under `ClockSkew`'s `> 10`, that `FixSessionDown` still works with no `heartbeat_timeouts` producer, and that session counters answer a `session_id` query but are correctly absent from a `symbol` one (FR-MET-030). |
+| `tests/integration/agent/test_RE_session_integration.py` (UBS-73) | Raw FIX bytes through the real `FixParser` and the `metrics_event` bridge fire `FixSessionDown`, `SeqGapDetected` and `ClockSkew` — including that ten skewed messages stay under `ClockSkew`'s `> 10`, that `FixSessionDown` fires from either half alone — a logout with no timeout and (UBS-106) a timeout with no logout — that a clean logout does not also post a timeout, that one silence counts once however often the tick runs, and that session counters answer a `session_id` query but are correctly absent from a `symbol` one (FR-MET-030). |
 | `tests/integration/agent/test_RE_callback_integration.py` (UBS-74) | Real dispatcher failures against a mock Magic endpoint reach `CallbackFailing` through `AgentCounterSampler`; three failures stay under threshold; successful deliveries never touch the failure counter; repeated sampling of the monotonic registry doesn't inflate 3 failures into a false alert; and the agent's own counters leave `secondsSinceLastEvent` null. |
 | `test_MA_05_agent_counters.py` (UBS-74) | `ingest_agent_counters` dimension handling, cardinality folding, out-of-window drop, and that it leaves `_last_event_at` alone while `ingest_counters` still sets it; `AgentCounterSampler`'s first-sample baseline, delta arithmetic, registry-reset rebaselining, and per-bucket placement. |
 
@@ -153,11 +153,52 @@ offset_tracker.py`, `run_streamer.py`, `demo_suite.py`, and the still-broken
 here).
 
 **Known gaps, not closed here**: consecutive-failure streak tracking
-(client alert 3's "≥10 consecutive failures") has no rule kind or data
-producer; Backend Publisher doesn't exist, so `BackendUnreachable` has no
-data; `SighupRuleReloader.install()` has no real process to be called from
+(client alert 3's "≥10 consecutive failures") has no general rule kind —
+`BackendUnreachable` gets the same effect from a publisher-maintained gauge
+(`FR-MET-031`, UBS-75) rather than from a streak-aware evaluator;
+`SighupRuleReloader.install()` has no real process to be called from
 yet (M1 Log Monitor / an agent supervisor loop). All are documented,
 deliberate deferrals, not oversights.
+
+**Where alerts go (UBS-109/110).** `RuleEngine.evaluate()` takes a
+`MetricsSnapshot` and returns `AlertEvent`s — it never sees a parsed event,
+so alerts are its only output. `pipeline.AlertRouter` carries them into
+`BackendPublisher.enqueue_alert()`, which until UBS-109 was called nowhere:
+they now ride `TelemetryBatch.alerts` to `POST /telemetry/batch` and land in
+the backend's alert store (UBS-93/94/95), queryable from
+`GET /telemetry/alerts`. The router rejects any alert whose
+`agentId`/`application` differs from the publisher's at enqueue time, because
+`TelemetryBatch` validates that inside `publish_once`, uncaught — one bad
+alert would otherwise kill the publish loop and silently discard the good
+alerts batched with it. UBS-110 adds the second destination: given a
+`dispatcher`, the router also hands every alert to
+`CallbackDispatcher.enqueue()`, which signs it and delivers it to Magic.
+That includes alerts the identity check keeps off the backend, because a
+callback carries a single alert and has no batch to break. Each enqueue is
+guarded separately, so a fault on one path never costs the other its alert
+(`NFR-REL-003`).
+
+**What drives evaluation (UBS-113).** `pipeline.RuleEvaluator` is the
+periodic loop: every `interval_seconds` (default 10s) it does six things.
+
+1. Applies a pending SIGHUP rule reload.
+2. Ticks the aggregator and correlator.
+3. Ingests heartbeat timeouts for FIX sessions that went silent.
+4. Samples the dispatcher's and publisher's counters into the windowed store.
+5. Builds one snapshot per rule window and evaluates each.
+6. Routes everything that changed through the `AlertRouter`.
+
+A tick that raises is counted, and the loop carries on. Rule reloads are
+now safe. `SighupRuleReloader.reload()` used to throw away the `resolved`
+events `apply_rules()` returns. It now returns them, and
+`request_reload()` only sets a flag, so the reload runs between
+evaluations instead of inside a signal handler. The ingest side (UBS-112)
+must agree on two things. First, session times passed to
+`SessionHeartbeatTracker` use `time.monotonic()`. Second, if ingest runs
+on another thread, both sides share one `threading.Lock`.
+`RuleEvaluator(lock=...)` holds it while building snapshots. Still not
+wired: the agent entry point (UBS-114) that constructs this and runs
+`evaluator.run(stop)`.
 
 ## 7. Counter producers (UBS-73 / UBS-74)
 
@@ -182,11 +223,15 @@ sampler — and that separate write path deliberately does **not** touch
 `_last_event_at`, because the agent's own dispatcher retrying is not
 evidence that Magic is still producing log activity.
 
-`heartbeat_timeouts` is still unproduced, by choice: a timeout is the
-*absence* of a message, which no per-message derivation can observe. It
-belongs to the Health Reporter's periodic tick. `FixSessionDown` sums it
-with `logouts` and defaults a missing counter to 0, so the rule works
-correctly without it.
+`heartbeat_timeouts` is produced by UBS-106. A timeout is the *absence* of
+a message, which no per-message derivation can observe, so it needs two
+halves: `SessionHeartbeatTracker.observe` remembers when each session was
+last heard from, and `timed_out(now)` is called from the Health Reporter's
+periodic tick. Each silence is latched so it counts once rather than once
+per tick, and a `35=5` Logout drops the session instead of timing it out —
+otherwise one orderly shutdown would post both counters into this one rule.
+`FixSessionDown` still defaults a missing counter to 0, so either half
+fires the rule on its own.
 
 `parse_errors` and `log_lines_read` are `parse_error_rate`'s numerator and
 denominator, so they ride `ingest_agent_counters` too — every line has to be
@@ -198,8 +243,9 @@ firing on well-formed messages.
 Demo: `make rules-quickstart` walks one FIX session from healthy through a
 reject burst, a rising reject rate, latency degradation, a sequence gap,
 clock skew, a forced logout, the agent's own callbacks failing, and the
-absence/lifecycle/safety rules — 13 of the 14 configured rules fire, each
-traceable to a raw log line printed in the same run. Only
-`BackendUnreachable` stays silent, correctly: nothing produces
-`publish_failures` until the Backend Publisher exists. Runbook:
-`docs/plan/rule-engine-demo.md`.
+absence/lifecycle/safety rules — all 14 configured rules fire, each
+traceable to a raw log line printed in the same run. `BackendUnreachable`
+(UBS-75) closes the set: it reads the `consecutive_publish_failures` gauge
+(`FR-MET-031`) off a real `BackendPublisher`, rather than a windowed
+`publish_failures` count that `FR-PUB-005`'s backoff would make unreachable.
+Runbook: `docs/plan/rule-engine-demo.md`.

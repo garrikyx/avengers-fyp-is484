@@ -195,7 +195,7 @@ def test_5xx_and_transport_error_are_backoff_and_keep_data_buffered() -> None:
 
     assert action is PublishAction.BACKOFF
     assert publisher.queue_depth() == 1
-    assert publisher.counters.snapshot()["publish_failed"] == 1
+    assert publisher.counters.snapshot()["publish_failures"] == 1
 
 
 def test_nothing_to_send_returns_none_without_calling_sink() -> None:

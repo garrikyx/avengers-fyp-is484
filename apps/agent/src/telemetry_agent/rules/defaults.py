@@ -1,4 +1,4 @@
-"""RE-03: the 14 default rules (spec 005 §1.2).
+"""RE-03: the 16 default rules (spec 005 §1.2).
 
 Concrete `RuleConfig` values, used as the **fallback** by
 `telemetry_agent.rules.config_loader.load_rules()` when `config/rules.yaml`
@@ -12,9 +12,25 @@ placeholders. `PendingOrderTimeout` has no spec or client-given number at
 all — 30s is a domain default (typical institutional order-ack SLA; this
 gauge measures time-to-first-response, never time-to-fill, so a resting
 limit order is never penalized). Rules whose counters aren't wired yet
-(`FixSessionDown`, `SeqGapDetected`, `ClockSkew`, `CallbackFailing`,
-`BackendUnreachable`) are included for completeness — they read as 0/no-fire
-structurally rather than raising, until their producers land.
+(`FixSessionDown`'s `heartbeat_timeouts` half) are included for
+completeness — they read as 0/no-fire structurally rather than raising,
+until their producers land.
+
+`BackendUnreachable` reads the `consecutive_publish_failures` gauge
+(`FR-MET-031`), not a windowed `publish_failures` count. `FR-PUB-005`'s
+exponential backoff spaces failed attempts further and further apart, so
+any fixed window counts the backoff schedule rather than the outage — the
+earlier `> 5 in 1m` form yielded exactly five failures in the first minute
+under default config and could never fire. See spec 005 §1.2.
+
+The two `signature` rules (UBS-122) watch the two error signatures shipped
+in `config/agent.yaml` `parsing.errorSignatures`. `AppOutOfMemory`'s
+critical tier is spec 005 §1's own example (3+ matches in 1m); both rules
+also warn on the first match, and fire with no `for` delay, because one
+out-of-memory or lost database connection is already an incident rather
+than noise to be smoothed. `AppDbConnectionLost` escalates at 5 in 5m,
+since a client reconnecting usually logs a burst of these. Both are
+configurable in `rules.yaml`, like every other threshold here.
 
 `depends_on_log_activity=False` (`FR-RUL-021`) is set explicitly on the
 self-health rules below (`NoLogActivity` itself, plus the rules that watch
@@ -108,6 +124,9 @@ DEFAULT_RULES: tuple[RuleConfig, ...] = (
         kind=RuleKind.ABSENCE,
         source=ValueSource.COUNTER,
         metric="messages_total",
+        # UBS-122: Application.log lines are log activity too (spec 003
+        # FR-PRS-010) — a quiet FIX session with a busy app log is alive.
+        extra_counters=("app_log_lines",),
         operator="==",
         tiers=(_tier("critical", 0),),
         window="1m",
@@ -167,11 +186,35 @@ DEFAULT_RULES: tuple[RuleConfig, ...] = (
     RuleConfig(
         name="BackendUnreachable",
         kind=RuleKind.THRESHOLD,
-        source=ValueSource.COUNTER,
-        metric="publish_failures",
-        operator=">",
+        source=ValueSource.GAUGE,
+        metric="consecutive_publish_failures",
+        operator=">=",
         tiers=(_tier("warning", 5),),
+        window=None,
+        depends_on_log_activity=False,
+    ),
+    RuleConfig(
+        name="AppOutOfMemory",
+        kind=RuleKind.SIGNATURE,
+        source=ValueSource.COUNTER,
+        metric="app_error_signatures",
+        signature="out_of_memory",
+        operator=">=",
+        tiers=(_tier("warning", 1), _tier("critical", 3)),
         window="1m",
+        for_seconds=0,
+        depends_on_log_activity=False,
+    ),
+    RuleConfig(
+        name="AppDbConnectionLost",
+        kind=RuleKind.SIGNATURE,
+        source=ValueSource.COUNTER,
+        metric="app_error_signatures",
+        signature="db_connection_lost",
+        operator=">=",
+        tiers=(_tier("warning", 1), _tier("critical", 5)),
+        window="5m",
+        for_seconds=0,
         depends_on_log_activity=False,
     ),
 )

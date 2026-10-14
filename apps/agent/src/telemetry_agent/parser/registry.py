@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TypeVar
 
 from telemetry_agent.parser.protocol import Confidence, Parser
@@ -34,7 +35,7 @@ def registered_names() -> frozenset[str]:
 class Registry:
     """Selects the first parser in a configured chain with Confidence.HIGH."""
 
-    def __init__(self, parsers: dict[str, Parser] | None = None) -> None:
+    def __init__(self, parsers: Mapping[str, Parser] | None = None) -> None:
         self._parsers = parsers if parsers is not None else dict(_PARSERS)
 
     def select(self, chain: list[str], line: bytes) -> tuple[Parser | None, Confidence]:

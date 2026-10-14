@@ -59,11 +59,13 @@ def make_gauges(
     pending_orders: int = 0,
     oldest_pending_age_seconds: float | None = None,
     seconds_since_last_event: float | None = None,
+    consecutive_publish_failures: int | None = None,
 ) -> Gauges:
     return Gauges(
         pending_orders=pending_orders,
         oldest_pending_age_seconds=oldest_pending_age_seconds,
         seconds_since_last_event=seconds_since_last_event,
+        consecutive_publish_failures=consecutive_publish_failures,
     )
 
 

@@ -1,19 +1,16 @@
 """Heartbeat emitter (UBS-58, FR-HLT-001).
 
 Ticks on a fixed interval regardless of log activity: an idle agent must still
-be distinguishable from a dead one. The sink is pluggable because the real
-transport is the Backend Publisher (spec 002 §6, not built yet); until then the
-two sinks here cover local demos and the stub receiver in
-`scripts/heartbeat_receiver_stub.py`. See docs/plan/ubs58-60-notes.md.
+be distinguishable from a dead one. These sinks are for local viewing only
+(stdout / logging). The heartbeat reaches the backend through the Backend
+Publisher, never directly: see `health/publishing.py`. See
+docs/plan/ubs58-60-notes.md.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import urllib.error
-import urllib.request
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
@@ -111,49 +108,6 @@ class PrintHeartbeatSink:
 
     def __call__(self, heartbeat: AgentHeartbeat) -> None:
         print(heartbeat_json(heartbeat), flush=True)
-
-
-class HttpHeartbeatSink:
-    """`POST /telemetry/heartbeat` (spec 007 §2.3) with the stdlib only.
-
-    Placeholder transport until the Publisher lands: no retry, no gzip, no
-    auth. Any non-2xx or connection error raises so `HeartbeatEmitter.tick`
-    counts it as a failure.
-
-    Defaults to `wire="ingestion"` so heartbeats are accepted by the live
-    Ingestion Service (UBS-66); pass `wire="health"` to send our own richer
-    shape once the contract is reconciled.
-    """
-
-    def __init__(
-        self,
-        url: str,
-        timeout_seconds: float = 5.0,
-        wire: WireFormat = "ingestion",
-    ) -> None:
-        self.url = url
-        self.timeout_seconds = timeout_seconds
-        self.wire = wire
-
-    def __call__(self, heartbeat: AgentHeartbeat) -> None:
-        body = heartbeat_json(heartbeat, self.wire).encode("utf-8")
-        request = urllib.request.Request(
-            self.url,
-            data=body,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as resp:
-                if not 200 <= resp.status < 300:
-                    raise RuntimeError(f"heartbeat POST returned {resp.status}")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            try:
-                detail = json.dumps(json.loads(detail))
-            except ValueError:
-                pass
-            raise RuntimeError(f"heartbeat POST returned {exc.code}: {detail}") from exc
 
 
 class BufferingHeartbeatSink:

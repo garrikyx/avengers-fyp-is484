@@ -6,8 +6,7 @@ transient failures (`FR-PUB-004`/`005`).
 `enqueue_snapshot()`/`enqueue_event()`/`enqueue_alert()` are the entry
 points a future supervisor/pipeline-wiring step calls with each completed
 `Snapshot`/`TelemetryEvent`/`AlertEvent` the Metrics Aggregator and Rule
-Engine produce; nothing in this repo calls them yet (mirrors
-`callbacks.dispatcher`'s own "nothing calls it yet" scope). Every
+Engine produce; alerts arrive via `pipeline.AlertRouter` (UBS-109). Every
 `enqueue_*` is a synchronous, non-blocking deque append (`FR-PUB-007`) --
 publishing can never stall aggregation or rule evaluation, and it never
 blocks the Callback Dispatcher either, since the two share no state
@@ -98,6 +97,20 @@ class BackendPublisher:
     @property
     def counters(self) -> CounterRegistry:
         return self._counters
+
+    @property
+    def consecutive_failures(self) -> int:
+        """UBS-75 / `FR-MET-031`: failed attempts in a row since the last
+        successful commit — what `BackendUnreachable` alerts on.
+
+        Read rather than a windowed `publish_failures` count because
+        `FR-PUB-005`'s exponential backoff spaces attempts further and
+        further apart, so a fixed window measures the backoff schedule
+        instead of the outage (spec 005 §1.2). This rises monotonically
+        while the backend is unreachable and `_on_commit` zeroes it on the
+        first success, which is what resolves the alert.
+        """
+        return self._consecutive_failures
 
     def enqueue_snapshot(
         self, snapshot: Snapshot, *, now: datetime | None = None
@@ -223,7 +236,7 @@ class BackendPublisher:
             self._consecutive_failures += 1
             delay = self._retry_policy.delay_for_attempt(self._consecutive_failures)
             self._backoff_until = now + timedelta(seconds=delay)
-            self._counters.increment("publish_failed")
+            self._counters.increment("publish_failures")
             self._logger.warning(
                 "publish batch %s failed: status=%s error=%s; "
                 "backing off %.1fs (attempt %d)",

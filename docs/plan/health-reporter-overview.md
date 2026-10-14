@@ -1,6 +1,6 @@
 # Health Reporter — end-to-end overview (UBS-30 → UBS-58 → UBS-59 → UBS-60)
 
-Status: Living document · Last updated: 2026-09-20 · Branches: `UBS-58-Heartbeat-Emitter` → `UBS-59-Parse-Error-Rate` → `UBS-60-Publish-Queue-Depth` (stacked, pushed, no PRs yet)
+Status: Living document · Last updated: 2026-09-29 · Agent side (UBS-30/58/59/60) is on `main`; the backend half (UBS-69/85/96, §10) is on `UBS-69-85-96-Backend-Health-Monitor`
 
 This is the reference for the agent-side Health Reporter: what each ticket added, which
 functions do the work, why they are shaped that way, and how the pieces connect from a
@@ -51,20 +51,18 @@ flowchart LR
             CFG["config.py\nHeartbeatConfig · HealthThresholds\nload_health_config(agent.yaml)"]
             WIN["window.py\nSlidingWindowCounter ×2\n(parse errors · lines read)"]
             REP["reporter.py · HealthReporter\nfile_statuses() ─ UBS-30\nrecord_parse_result() ─ UBS-59\nset_queue_depth_provider() ─ UBS-60\nsnapshot() → HealthSignals\nderive_status() → (status, reasons)\nbuild_heartbeat() → AgentHeartbeat"]
-            EMIT["heartbeat.py · HeartbeatEmitter\nrun(stop) every interval → tick()"]
-            BUF["BufferingHeartbeatSink\nlen() = queue depth"]
-            HTTP["HttpHeartbeatSink\nPOST /telemetry/heartbeat"]
+            WIRE["publishing.py\nheartbeat_provider(reporter)\nconnect_reporter_to_publisher()"]
         end
+        PUB["publishing/ · BackendPublisher\nrun(stop) every publish.interval (10s)\nqueue_depth() · buffer_bytes()"]
     end
 
     subgraph shared["packages/telemetry_shared"]
         MODEL["models/health.py\nAgentHeartbeat · FileReadHealth\n(CamelModel → spec 004 §6 JSON)"]
     end
 
-    subgraph backend["Backend (not built yet)"]
-        STUB["scripts/heartbeat_receiver_stub.py\n(placeholder: validates, tracks STALE)"]
-        ING["Ingestion Service\nUBS-66 / UBS-87"]
-        HEALTHAPI["GET /telemetry/health/agents\nUBS-69"]
+    subgraph backend["Backend"]
+        ING["POST /telemetry/batch\nUBS-66 · UBS-85 guard"]
+        HEALTHAPI["Agent Registry →\nGET /telemetry/health/agents\nUBS-69"]
     end
 
     FIX --> LM1
@@ -78,62 +76,53 @@ flowchart LR
     LM2 -. "get_status(now)" .-> REP
     CFG --> REP
     WIN --> REP
-    BUF -. "queue_depth_provider" .-> REP
-    REP -- "AgentHeartbeat" --> EMIT
-    EMIT --> BUF --> HTTP
+    PUB -. "queue_depth / buffer_bytes" .-> REP
+    REP -- "AgentHeartbeat" --> WIRE
+    WIRE -- "heartbeat_provider()" --> PUB
     MODEL -. "wire shape" .-> REP
-    HTTP -- "JSON, every 10s" --> STUB
-    HTTP -. "future" .-> ING --> HEALTHAPI
+    PUB -- "TelemetryBatch{heartbeat}, every 10s" --> ING --> HEALTHAPI
 ```
 
 Reading the diagram:
 
 - **Left to right is the data path.** Bytes on disk → lines → parse results → health
-  signals → one heartbeat document → HTTP → backend.
+  signals → one heartbeat document → Backend Publisher → backend. The reporter never
+  talks to the backend itself (`health/publishing.py`).
 - **Dotted arrows are lookups, not flows.** The reporter *asks* each `LogMonitor` for its
-  status at snapshot time; it *asks* the queue provider how deep the queue is. Nothing
-  pushes into the reporter except parse results.
+  status at snapshot time; it *asks* the publisher how deep its outbox is. Nothing
+  pushes into the reporter except parse results (and the publisher's drop hook).
 - **`AgentHeartbeat` in `telemetry_shared` is the contract.** Both agent and backend
   import the same Pydantic model (`FR-ING-022`), so a schema drift fails at validation,
   not in production.
-- **The backend column is mostly future.** Today the stub receiver stands in for UBS-66/87
-  (ingestion) and previews UBS-69 (health read side).
+- **The backend column is live.** UBS-66 ingestion, UBS-85's guard and the UBS-69
+  registry and health API receive and serve the heartbeat (§10).
 
 ### 2.1 One heartbeat tick, as a sequence
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant E as HeartbeatEmitter.run()
+    participant P as BackendPublisher.run()
     participant R as HealthReporter
     participant M as LogMonitor (×N)
     participant W as SlidingWindowCounter (×2)
-    participant Q as queue_depth_provider
-    participant S as BufferingHeartbeatSink
-    participant H as HttpHeartbeatSink
-    participant B as Backend / stub
+    participant B as Backend POST /telemetry/batch
 
-    loop every heartbeat.interval (default 10s), even if idle
-        E->>R: build_heartbeat(now)
-        R->>R: snapshot(now)
+    loop every publish.interval (default 10s), even if idle
+        P->>R: heartbeat_provider() → build_heartbeat(now)
         R->>M: get_status(now)  [UBS-30]
         M-->>R: FileReadStatus(offset, size, last_read_at, read_lag_ms)
         R->>W: count(now)  [UBS-59]
         W-->>R: parse errors, lines read in last 300s
-        R->>Q: ()  [UBS-60]
-        Q-->>R: len(queue) → depth, trend vs previous
+        R->>P: queue_depth() / buffer_bytes()  [UBS-60]
+        P-->>R: outbox depth and bytes
         R->>R: derive_status(HealthSignals) → (status, reasons)  [FR-HLT-002/003]
-        R-->>E: AgentHeartbeat (spec 004 §6)
-        E->>S: sink(heartbeat)
-        S->>H: inner(oldest pending) … oldest-first
-        H->>B: POST /telemetry/heartbeat (camelCase JSON)
+        R-->>P: AgentHeartbeat → to_ingestion_heartbeat()
+        P->>B: TelemetryBatch{heartbeat, snapshots, events, alerts}
         alt backend reachable
-            B-->>H: 202
-            S->>S: popleft()
-        else backend down
-            H--xS: raises
-            S->>S: keep in queue (depth +1)
-            E->>E: failed_count += 1, log, continue
+            B-->>P: 202 (or 202 duplicate:true)
+        else backend down / 429 / 503
+            P->>P: keep items, back off (UBS-104); depth rises next tick
         end
     end
 ```
@@ -203,19 +192,16 @@ agent looked identical to the backend.
 | --- | --- | --- |
 | `HeartbeatEmitter.tick(now) -> AgentHeartbeat` | Build one heartbeat, hand it to the sink, count success/failure. **Never raises** on sink failure — logs a warning, increments `failed_count`. | `tick()` is synchronous and pure so it can be unit-tested one call at a time. Swallowing sink errors is the spec's own rule (002 §8.3: a backend outage must not affect the agent). |
 | `HeartbeatEmitter.run(stop: asyncio.Event)` | `tick()` immediately, then every `interval_seconds` until `stop` is set. | First tick immediate so a restarted agent appears at once. `asyncio.wait_for(stop.wait(), timeout=interval)` gives an interruptible sleep without a busy loop. Interval is **independent of log volume** — this is the acceptance criterion that an idle log still heartbeats. |
-| `HeartbeatSink = Callable[[AgentHeartbeat], None]` | The seam between the reporter and whatever transport exists. | The real transport is the Backend Publisher (M4), not built. A plain callable means the Publisher plugs in later without touching the emitter. |
-| `PrintHeartbeatSink`, `LoggingHeartbeatSink` | JSON to stdout / `logging`. | Demo and local runs. |
-| `HttpHeartbeatSink(url)` | `POST /telemetry/heartbeat` (spec 007 §2.3) with stdlib `urllib`; raises on non-2xx. | Zero new dependencies for a placeholder transport. Raising (instead of returning False) is what lets `tick()` count it as failed and lets `BufferingHeartbeatSink` keep the item queued. |
-| `heartbeat_json(hb, wire)` | `model_dump_json(by_alias=True)`, optionally flattened to UBS-66's ingestion contract first. | One function so every sink and test serialise identically. **Since 2026-09-22 the HTTP sink defaults to `wire="ingestion"`** so the live Ingestion Service accepts it; that drops `statusReasons` and turns unmeasured signals into `0`. Decision record and reversal: [`ubs58-60-notes.md`](./ubs58-60-notes.md#wire-compatibility-with-ubs-66). |
+| `HeartbeatSink = Callable[[AgentHeartbeat], None]` | Local viewing seam for the emitter. | The transport to the backend is the Backend Publisher, not a sink (see `health/publishing.py` below). |
+| `PrintHeartbeatSink`, `LoggingHeartbeatSink` | JSON to stdout / `logging`. | Local viewing and tests; the production agent sends heartbeats through the publisher instead. |
+| `health/publishing.py`: `heartbeat_provider(reporter)`, `connect_reporter_to_publisher(reporter, publisher)`, `drop_hook(reporter)` | The one supported way to send the heartbeat: the Backend Publisher calls the provider every tick and carries the result in `TelemetryBatch.heartbeat`; the reporter reads the publisher's outbox depth, bytes and drops. | 2026-10-07: the old `HttpHeartbeatSink` (direct `POST /telemetry/heartbeat`) was retired so the heartbeat has one route, with the publisher's retry, backoff, dedupe and buffering. |
+| `heartbeat_json(hb, wire)` | `model_dump_json(by_alias=True)`, optionally flattened to UBS-66's ingestion contract first. | One function so every sink and test serialise identically. **Since 2026-09-22 the backend receives the `wire="ingestion"` shape** (`to_ingestion_heartbeat`, applied by `heartbeat_provider`); that drops `statusReasons` and turns unmeasured signals into `0`. Decision record and reversal: [`ubs58-60-notes.md`](./ubs58-60-notes.md#wire-compatibility-with-ubs-66). |
 
-### 4.5 Placeholder receiver — `scripts/heartbeat_receiver_stub.py`
+### 4.5 Placeholder receiver (retired)
 
-Not part of the product. A stdlib `http.server` that (a) validates every POST body against
-`AgentHeartbeat` and returns **400 with the pydantic error on any drift**, (b) keeps
-`{agentId: lastHeartbeatUtc, status}` and serves it on `GET /telemetry/health/agents`,
-(c) prints `STALE <agentId>` after `--stale-after` seconds of silence. It exists because
-UBS-66/87/69 don't, and it is deleted when they do. Its output shape is *not* the UBS-69
-contract.
+`scripts/heartbeat_receiver_stub.py` stood in for the backend before UBS-66/69 existed.
+It was deleted on 2026-10-07 together with `HttpHeartbeatSink`: heartbeats now go
+through the Backend Publisher to the real backend.
 
 ---
 
@@ -288,10 +274,10 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 | Gap | Effect today | Owner |
 | --- | --- | --- |
-| Backend ingestion (`POST /telemetry/heartbeat`) | Heartbeats reach only the stub receiver | UBS-66 / UBS-87 |
-| Backend health read side (`lastHeartbeatUtc`, `unresponsive`, `/telemetry/health/agents`) | Stub only; UBS-58's two backend ACs live here now | UBS-69 |
-| Backend Publisher | `HttpHeartbeatSink` + `BufferingHeartbeatSink` are stand-ins; `publishBufferBytes` `null` | M4 |
-| Pipeline bridge (monitor → parser → reporter in a real process) | Only the demo calls `record_parse_result()` | M1.5 |
+| ~~Backend ingestion~~ | Done: `POST /telemetry/batch` (UBS-66, on `main`) | — |
+| ~~Backend health read side~~ | Done: registry + `/telemetry/health/agents` (UBS-69, §10) | — |
+| ~~Backend Publisher~~ | Done: heartbeat rides inside `TelemetryBatch` via `heartbeat_provider` (UBS-103) | — |
+| ~~Agent runtime~~ | Done: `telemetry-agent` (`main.py`, UBS-114) | — |
 | Callback Dispatcher wired | `callbackFailuresLast5Min` `null` | UBS-32–34 |
 | Resource sampling (`psutil`?) | `resourceUsage` `null` | team decision |
 | `LogMonitor` rotation count / error state | `rotationsDetected` 0, `state` never `error` | UBS-22/24 owner |
@@ -300,23 +286,80 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 
 ## 9. How to verify / demo
 
-```bash
-uv run pytest tests/unit/agent/health -q            # 71 tests across the four tickets
-uv run pytest tests/integration/agent/test_ubs30_health_integration.py -q
+**The real agent (UBS-114):** `config/agent.yaml` is a ready-to-run local
+dev config. Four terminals, all from the repo root:
 
-# terminal 1 — placeholder backend
-uv run python scripts/heartbeat_receiver_stub.py --stale-after 6
-# terminal 2 — agent demo, 2s heartbeats, POSTing to the stub
-uv run telemetry-agent-heartbeat --interval 2 --sink http://127.0.0.1:8000/telemetry/heartbeat
+```bash
+uv run telemetry-backend
+uv run python apps/simulator/src/simulator/mock_logger.py --max-bytes 50000000
+uv run telemetry-agent --config config/agent.yaml      # --check-config to validate only
+# optional: anything listening on 127.0.0.1:9000 receives Magic callbacks
 ```
 
-Then, in order:
+`telemetry-agent` runs the whole agent in one process: tail → parse →
+`MetricsIngestor` (UBS-112) → `RuleEvaluator` (UBS-113) → `AlertRouter` →
+Backend Publisher (alerts + heartbeat) and Callback Dispatcher (Magic). Secrets
+come from the environment (`.env.example`); localhost-only setups fall back to
+dev values with a warning. Automated: `tests/integration/test_UBS_114_agent_end_to_end.py`.
 
-1. Watch terminal 1: `202 … status=healthy readLag=n/a files=1` every 2s with no log activity (**UBS-58**).
-2. `echo '8=FIX.4.2|9=61|35=D|49=C|56=B|11=ORD-1|55=ABC|54=1|38=100|44=50.00|10=072|' >> demo_logs/Fix.log` → next heartbeat shows `readLag=<ms>`; wait > 5s → `status=degraded reasons=['Fix.log: read lag …']` (**UBS-30**).
-3. `echo '8=FIX.4.2|9=61|35=ZZ|11=ORD-9|10=072|' >> demo_logs/Fix.log` → `parseErrorCountLast5Min` becomes 1 and a `parse error rate …` reason appears (**UBS-59**).
-4. Ctrl-C terminal 1, wait ~30s, restart it → heartbeats arrive in a burst, the ones built during the outage carry `publishQueueDepth` rising past 10 with `degraded` / `unhealthy`, then the queue drains and status recovers (**UBS-60**).
-5. Ctrl-C terminal 2 → terminal 1 prints `STALE magic-agent-local` after 6s (preview of **UBS-69**).
+**Tests for the health path:**
 
-Every number you see in step 1–4 is produced by the code paths in sections 3–6; nothing
-is mocked in the demo.
+```bash
+uv run pytest tests/unit/agent/health tests/integration/agent/test_ubs30_health_integration.py -q
+uv run pytest tests/integration/test_health_monitor_e2e.py -q   # simulator lines -> health API
+```
+
+**What to look at while the real agent runs** (terminals above):
+
+1. `GET :8080/telemetry/health/agents` shows the agent `healthy` within one publish interval, with no log activity needed (**UBS-58**).
+2. `GET :8080/telemetry/health/agents/<id>` shows `logReadLagMs` per file; stop the simulator for > 5s and the reported status turns `degraded` (**UBS-30**).
+3. `parseErrorCountLast5Min` counts unparseable lines in the simulator output (**UBS-59**).
+4. Stop and restart the backend: the publisher backs off, then catches up; `publishQueueDepth` reflects its outbox (**UBS-60**).
+5. Ctrl-C the agent: after 60s the backend shows it `missing` (**UBS-69**); `curl 127.0.0.1:8081/metrics` shows the backend's counters (**UBS-96**).
+
+(2026-10-08: the earlier `scripts/health_monitor_demo.py` and `telemetry-agent-heartbeat` demos were retired; `telemetry-agent` replaces both.)
+
+---
+
+## 10. Backend half — UBS-69, UBS-85, UBS-96
+
+What happens to a heartbeat after the agent publishes it. Decisions are in
+[`ubs69-85-96-notes.md`](./ubs69-85-96-notes.md).
+
+```mermaid
+sequenceDiagram
+    participant P as BackendPublisher (agent)
+    participant R as POST /telemetry/batch
+    participant G as IngestGuard (UBS-85)
+    participant Q as Ingestion queue
+    participant A as AgentRegistry (UBS-69)
+    participant M as SelfMetrics (UBS-96)
+    P->>R: TelemetryBatch{batchId, heartbeat}
+    R->>G: check(agentId, batchId)
+    alt seen within 30m
+        G-->>R: Duplicate
+        R->>M: dedupe_hits++
+        R-->>P: 202 duplicate:true
+    else > 30 batches in last 60s
+        G-->>R: RateLimited(n)
+        R->>M: rate_limited++
+        R-->>P: 429 Retry-After: n
+    else
+        R->>Q: enqueue (503 queue_full if full, nothing remembered)
+        R->>G: commit(agentId, batchId)
+        R->>A: record_heartbeat
+        R->>M: ingest_batches++, heartbeats_received++
+        R-->>P: 202
+    end
+```
+
+| Ticket | Adds | Where |
+| --- | --- | --- |
+| UBS-69 | Agent registry (latest heartbeat per agent, `missing` after `missingHeartbeatThreshold`), `GET /telemetry/health/agents[/{id}]`, `data_completeness.build()` for UBS-91; one `StreamProcessor` shared by ingestion and `/readyz` | `services/agent_registry.py`, `api/health.py`, `main.py` |
+| UBS-85 | `batchId` dedupe (LRU 10 000/agent, TTL 30m → 202 `duplicate:true`) and per-agent rate limit (30/min → 429 `Retry-After`), config from `ingest:` | `services/ingest_guard.py` |
+| UBS-96 | Prometheus `/metrics`, `/healthz`, `/readyz` on the internal listener (`127.0.0.1:8081`); counters owned by the routes, ingestion/store numbers read at scrape time | `services/self_metrics.py`, `api/internal.py`, `create_internal_app()` |
+
+`/readyz` is `warming` (503) until `warmupWindow` has passed since the replica
+started **and** a snapshot has been merged — heartbeats alone never make it
+ready. The internal variant adds `hasData` so "just started" and "never got
+data" can be told apart.

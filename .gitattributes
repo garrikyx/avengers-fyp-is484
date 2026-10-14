@@ -1,0 +1,23 @@
+# graphify-out/ holds generated graph artifacts that are tracked on purpose so
+# the team shares one graph (see README "Knowledge graph (graphify)"). They are
+# rebuilt wholesale by the post-commit hook, so every code PR carries a large
+# machine-written diff alongside it.
+#
+# linguist-generated: GitHub collapses the diff by default and omits these files
+#   from language stats, so reviewers see the human change first.
+# -diff: git treats them as binary, so neither GitHub nor `git diff` tries to
+#   render thousands of lines of reordered JSON. `git diff --stat` still shows
+#   that they changed.
+#
+# Neither attribute untracks anything, and neither affects merging — the
+# merge=graphify driver below still resolves graph.json by union.
+graphify-out/*.json linguist-generated=true -diff
+
+# Union-merge driver so graph.json never shows conflict markers. The driver
+# itself is per-clone (it pins an absolute interpreter path in git config), so
+# each teammate must run `graphify hook install` once for this to take effect;
+# until they do, git falls back to a normal 3-way merge.
+graphify-out/graph.json merge=graphify
+
+# same for the report
+graphify-out/GRAPH_REPORT.md linguist-generated=true

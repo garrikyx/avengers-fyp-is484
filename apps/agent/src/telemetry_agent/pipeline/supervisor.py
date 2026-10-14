@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.metrics.demo_sink import DemoMetricsSink
@@ -27,6 +27,7 @@ class PipelineBridge:
         registry: Registry | None = None,
         *,
         monitors_by_path: dict[str, LogMonitor] | None = None,
+        on_event: Callable[[ParsedEvent], None] | None = None,
     ) -> None:
         cfg = config or PipelineConfig()
         policy = cfg.overflow_policy
@@ -56,6 +57,7 @@ class PipelineBridge:
                 event_queue=self._event_queue,
                 deduper=self._deduper,
                 monitors_by_path=monitors_by_path,
+                on_event=on_event,
             )
 
     @property
@@ -79,12 +81,16 @@ class PipelineBridge:
         monitors_by_path: dict[str, LogMonitor],
         *,
         sink: DemoMetricsSink | None = None,
+        on_event: Callable[[ParsedEvent], None] | None = None,
     ) -> PipelineCommitter:
+        """`on_event` receives every committed line after its offset is acked;
+        production passes `MetricsIngestor.on_event` (UBS-112)."""
         self._committer = PipelineCommitter(
             event_queue=self._event_queue,
             deduper=self._deduper,
             monitors_by_path=monitors_by_path,
             sink=sink,
+            on_event=on_event,
         )
         return self._committer
 

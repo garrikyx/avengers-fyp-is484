@@ -60,6 +60,13 @@ class _PublishYaml(BaseModel):
     buffer_bytes: int = 67_108_864  # 64 MiB, memory only (FR-PUB-008)
     buffer_max_age: str = "15m"
     halt_probe_interval: str = "5m"
+    # UBS-115 / FR-MET-024: the wire Snapshot's own bucket width — distinct
+    # from both AggregatorConfig.bucket_seconds (internal storage grain, 1s)
+    # and the evaluator's interval_seconds (alert-check cadence). Defaults to
+    # 10s to match spec 004 exactly and the backend's own
+    # StreamProcessorConfig.canonical_bucket_seconds, so the backend's
+    # floor-alignment is a lossless no-op for this agent's own buckets.
+    metrics_bucket_seconds: int = 10
     retry: _RetryYaml = _RetryYaml()
 
 
@@ -82,6 +89,7 @@ class PublishConfig(BaseModel):
     buffer_bytes: int
     buffer_max_age_seconds: float
     halt_probe_interval_seconds: float
+    metrics_bucket_seconds: int
     retry_base_seconds: float
     retry_factor: float
     retry_cap_seconds: float
@@ -108,6 +116,8 @@ def parse_publish_config(raw: dict[str, Any]) -> PublishConfig:
         raise PublishConfigError("publish.maxBatchItems must be >= 1")
     if parsed.buffer_bytes < 1:
         raise PublishConfigError("publish.bufferBytes must be >= 1")
+    if parsed.metrics_bucket_seconds < 1:
+        raise PublishConfigError("publish.metricsBucketSeconds must be >= 1")
     if not 0 <= parsed.retry.jitter < 1:
         raise PublishConfigError("publish.retry.jitter must be in [0, 1)")
 
@@ -126,6 +136,7 @@ def parse_publish_config(raw: dict[str, Any]) -> PublishConfig:
         halt_probe_interval_seconds=_parse_duration_seconds(
             parsed.halt_probe_interval
         ),
+        metrics_bucket_seconds=parsed.metrics_bucket_seconds,
         retry_base_seconds=_parse_duration_seconds(parsed.retry.base),
         retry_factor=parsed.retry.factor,
         retry_cap_seconds=_parse_duration_seconds(parsed.retry.cap),

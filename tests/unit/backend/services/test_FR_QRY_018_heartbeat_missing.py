@@ -34,11 +34,14 @@ def _heartbeat(*, sent_at: datetime) -> Heartbeat:
 
 
 def test_FR_QRY_018_stale_heartbeat_fires_backend_alert() -> None:
-    registry = AgentRegistry()
     store = AlertStore()
     now = BASE + timedelta(seconds=90)
     clock = {"now": now}
 
+    registry = AgentRegistry(
+        missing_threshold_seconds=60,
+        clock=lambda: clock["now"],
+    )
     monitor = HeartbeatMonitor(
         registry=registry,
         alert_store=store,
@@ -46,7 +49,7 @@ def test_FR_QRY_018_stale_heartbeat_fires_backend_alert() -> None:
         now_fn=lambda: clock["now"],
     )
 
-    registry.record_heartbeat(_heartbeat(sent_at=BASE), now=BASE)
+    registry.record_heartbeat(_heartbeat(sent_at=BASE), received_at=BASE)
     monitor.evaluate_once()
 
     listed = store.list_alerts(rule_name="AgentHeartbeatMissing")
@@ -58,10 +61,13 @@ def test_FR_QRY_018_stale_heartbeat_fires_backend_alert() -> None:
 
 
 def test_FR_QRY_018_fresh_heartbeat_resolves_backend_alert() -> None:
-    registry = AgentRegistry()
     store = AlertStore()
     clock = {"now": BASE + timedelta(seconds=90)}
 
+    registry = AgentRegistry(
+        missing_threshold_seconds=60,
+        clock=lambda: clock["now"],
+    )
     monitor = HeartbeatMonitor(
         registry=registry,
         alert_store=store,
@@ -69,7 +75,7 @@ def test_FR_QRY_018_fresh_heartbeat_resolves_backend_alert() -> None:
         now_fn=lambda: clock["now"],
     )
 
-    registry.record_heartbeat(_heartbeat(sent_at=BASE), now=BASE)
+    registry.record_heartbeat(_heartbeat(sent_at=BASE), received_at=BASE)
     monitor.evaluate_once()
     active = store.list_alerts(
         status="active", rule_name="AgentHeartbeatMissing"
@@ -77,7 +83,7 @@ def test_FR_QRY_018_fresh_heartbeat_resolves_backend_alert() -> None:
     assert active.counts.active == 1
 
     fresh = BASE + timedelta(seconds=80)
-    registry.record_heartbeat(_heartbeat(sent_at=fresh), now=fresh)
+    registry.record_heartbeat(_heartbeat(sent_at=fresh), received_at=fresh)
     clock["now"] = fresh
     monitor.on_heartbeat(AGENT_ID)
 

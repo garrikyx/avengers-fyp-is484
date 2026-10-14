@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from telemetry_agent.metrics.aggregator import MetricsAggregator
+from telemetry_agent.metrics.aggregator import OTHER_LABEL, MetricsAggregator
+from telemetry_agent.parser.applog.telemetry import AppLogTelemetry
 from telemetry_shared.models.parsed_message import ParsedMessageEvent
 
 # The full known FIX MsgType set (spec 003 §6) that this dispatch recognises
@@ -61,6 +62,16 @@ AGENT_DIMS: tuple[str, ...] = ("instance_id",)
 # it feeds is read ungrouped, where every reason sums back together.
 PARSE_ERROR_DIMS: tuple[str, ...] = (*AGENT_DIMS, "reason")
 
+# Application.log counters (UBS-116), fed by derive_app_log_counters. One
+# extra dimension per metric rather than all three on one metric: level x
+# component x signature would multiply into the shared maxSeriesPerBucket
+# budget and could fold FIX order series into __other__. `level` is a closed
+# set ([NWEIF]); `component` is free text, bounded by ComponentLimiter;
+# `error_signature` is bounded by the parser's SignatureMatcher.
+APP_LOG_LEVEL_DIMS: tuple[str, ...] = (*AGENT_DIMS, "level")
+APP_LOG_COMPONENT_DIMS: tuple[str, ...] = (*AGENT_DIMS, "component")
+APP_LOG_SIGNATURE_DIMS: tuple[str, ...] = (*AGENT_DIMS, "error_signature")
+
 # FR-MET-030's "one shared table", spec 004 §4.1 names.
 COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "messages_total": BASE_DIMS,
@@ -81,11 +92,12 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "session_rejects": REJECT_DIMS,
     "rejects_total": REJECT_DIMS,
     # Session counters, derived from the parser's FixTelemetry rather than
-    # from the event itself (parser.metrics_event.derive_session_counters) —
-    # `heartbeat_timeouts` is deliberately absent, since nothing produces it
-    # yet and RuleEngine._read_counter_sum already defaults a missing
-    # extra_counter to 0.
+    # from the event itself (parser.metrics_event.derive_session_counters).
+    # `heartbeat_timeouts` is the exception within the exception: it comes
+    # from SessionHeartbeatTracker's periodic tick rather than from any
+    # single message, because a timeout is the absence of one (UBS-106).
     "logons": SESSION_DIMS,
+    "heartbeat_timeouts": SESSION_DIMS,
     "logouts": SESSION_DIMS,
     "seq_gaps": SESSION_DIMS,
     "seq_gap_messages": SESSION_DIMS,
@@ -96,11 +108,22 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "callback_failures": AGENT_DIMS,
     "callback_delivered": AGENT_DIMS,
     "callback_queue_dropped": AGENT_DIMS,
+    # Backend Publisher health (spec 004 §4.3), fed the same way from the
+    # publisher's CounterRegistry. These are the windowed trend view;
+    # `BackendUnreachable` itself alerts on the consecutive_publish_failures
+    # gauge instead, for the backoff reason in spec 005 §1.2.
+    "publish_failures": AGENT_DIMS,
+    "publish_rejected": AGENT_DIMS,
     # Parser health, fed by parser.metrics_event.derive_parser_counters.
     # These two are `parse_error_rate`'s numerator and denominator (spec 004
     # §4.5) — the indicator ParseErrorRate reads.
     "log_lines_read": AGENT_DIMS,
     "parse_errors": PARSE_ERROR_DIMS,
+    # Application.log telemetry (UBS-116), fed by derive_app_log_counters.
+    # `app_error_signatures` is what a `signature` rule (spec 005 §1) reads.
+    "app_log_lines": APP_LOG_LEVEL_DIMS,
+    "app_log_errors": APP_LOG_COMPONENT_DIMS,
+    "app_error_signatures": APP_LOG_SIGNATURE_DIMS,
 }
 
 # spec 003 §6's own OrdRejReason(103) and SessionRejectReason(373) canonical
@@ -270,6 +293,68 @@ class ReasonNormalizer:
     @property
     def unmapped_seen(self) -> tuple[str, ...]:
         return tuple(self._unmapped_seen)
+
+
+# Magic's own [NWEIF] levels that count as an application error.
+APP_LOG_ERROR_LEVELS: frozenset[str] = frozenset({"E", "F"})
+
+
+def derive_app_log_counters(telemetry: AppLogTelemetry) -> dict[str, Decimal]:
+    """UBS-116: the Application.log counters, one dispatch per parsed line.
+
+    `app_error_signatures` counts at any level, not just E/F: an
+    OutOfMemory or a dropped connection is the signal regardless of the
+    level the application chose to log it at.
+    """
+    counters: dict[str, Decimal] = {"app_log_lines": Decimal(1)}
+    if telemetry.level in APP_LOG_ERROR_LEVELS:
+        counters["app_log_errors"] = Decimal(1)
+    if telemetry.error_signature is not None:
+        counters["app_error_signatures"] = Decimal(1)
+    return counters
+
+
+def app_log_counter_dims(
+    telemetry: AppLogTelemetry, *, instance_id: str, component: str
+) -> dict[str, str]:
+    """Dimension values for `derive_app_log_counters`' output — one mapping
+    covering all three metrics, as `parser_counter_dims` does for the parser
+    counters; `ingest_agent_counters` picks the subset each metric declares.
+
+    `component` is passed in already bounded (`ComponentLimiter.admit`), not
+    read off `telemetry`, so an unbounded raw value can never reach a label.
+    """
+    return {
+        "instance_id": instance_id,
+        "level": telemetry.level,
+        "component": component,
+        "error_signature": telemetry.error_signature or "none",
+    }
+
+
+class ComponentLimiter:
+    """Bounds the free-text `component` dimension of `app_log_errors`.
+
+    The first `max_labels` distinct components are kept for the life of the
+    process; any later one folds to `__other__` — the same first-come
+    admission `SignatureMatcher` applies to dynamic signature labels. The
+    aggregator's own per-bucket caps still apply on top; this exists so one
+    noisy log can't spend the shared maxSeriesPerBucket budget on its own.
+    """
+
+    def __init__(self, max_labels: int = 50) -> None:
+        self._max_labels = max_labels
+        self._admitted: set[str] = set()
+        self.folded = 0
+
+    def admit(self, component: str) -> str:
+        if component in self._admitted:
+            return component
+        if len(self._admitted) >= self._max_labels:
+            self.folded += 1
+            return OTHER_LABEL
+        self._admitted.add(component)
+        return component
 
 
 def top_reject_reasons(

@@ -178,6 +178,41 @@ def test_gauge_evaluator_none_when_gauge_is_none() -> None:
     assert _read_observed(rule, snapshot) is None
 
 
+def test_gauge_evaluator_reads_consecutive_publish_failures() -> None:
+    """FR-MET-031, the gauge BackendUnreachable alerts on."""
+    rule = RuleConfig(
+        name="G",
+        kind=RuleKind.THRESHOLD,
+        source=ValueSource.GAUGE,
+        metric="consecutive_publish_failures",
+        operator=">=",
+        tiers=(SeverityTier("warning", Decimal(5)),),
+        window=None,
+    )
+    snapshot = make_snapshot(
+        now=_T0, gauges=make_gauges(consecutive_publish_failures=7)
+    )
+    assert _read_observed(rule, snapshot) == Decimal(7)
+
+
+def test_unknown_gauge_name_reads_as_no_fire_rather_than_raising() -> None:
+    """A gauge name is hand-typed in rules.yaml just like a counter name.
+    An unknown *counter* already reads as no-fire, so a typo'd gauge must
+    silence its own rule, not crash every evaluation with AttributeError.
+    """
+    rule = RuleConfig(
+        name="G",
+        kind=RuleKind.THRESHOLD,
+        source=ValueSource.GAUGE,
+        metric="no_such_gauge",
+        operator=">",
+        tiers=(SeverityTier("warning", Decimal(1)),),
+        window=None,
+    )
+    snapshot = make_snapshot(now=_T0, gauges=make_gauges())
+    assert _read_observed(rule, snapshot) is None
+
+
 def _absence_rule(guard_metric: str | None = None) -> RuleConfig:
     return RuleConfig(
         name="A",

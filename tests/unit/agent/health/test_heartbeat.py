@@ -10,7 +10,6 @@ import pytest
 from telemetry_agent.health.config import HeartbeatConfig
 from telemetry_agent.health.heartbeat import (
     HeartbeatEmitter,
-    HttpHeartbeatSink,
     LoggingHeartbeatSink,
     heartbeat_json,
 )
@@ -180,41 +179,6 @@ def test_logging_sink_writes_wire_json(caplog: pytest.LogCaptureFixture) -> None
     with caplog.at_level(logging.INFO):
         LoggingHeartbeatSink()(hb)
     assert '"agentId":"magic-agent-sg-01"' in caplog.text
-
-
-def test_http_sink_posts_json_and_raises_on_4xx() -> None:
-    from http import HTTPStatus
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    from threading import Thread
-
-    received: list[dict[str, object]] = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
-            body = self.rfile.read(int(self.headers["Content-Length"]))
-            received.append(json.loads(body))
-            code = HTTPStatus.ACCEPTED if self.path == "/ok" else HTTPStatus.BAD_REQUEST
-            self.send_response(code)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.write(b"{}")
-
-        def log_message(self, *_: object) -> None:
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-    hb = _reporter(FakeClock()).build_heartbeat()
-    try:
-        HttpHeartbeatSink(f"{base}/ok")(hb)
-        assert received[-1]["agentId"] == "magic-agent-sg-01"
-        assert "sentAtUtc" in received[-1]
-        with pytest.raises(RuntimeError, match="400"):
-            HttpHeartbeatSink(f"{base}/bad")(hb)
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 # --- review fixes ----------------------------------------------------------------

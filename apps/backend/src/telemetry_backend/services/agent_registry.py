@@ -1,65 +1,131 @@
-"""Minimal agent registry for heartbeat tracking (subset of `FR-ING-010`)."""
+"""Agent Registry (spec 006 FR-ING-010; UBS-69 read side, UBS-87 write side).
+
+One in-memory record per `agentId`: the last heartbeat document plus when the
+backend received it. Staleness is decided at *read* time from the backend's
+own clock (`received_at`), never from the agent's `sentAtUtc` alone - an
+agent that has died cannot report its own death, and an agent with a skewed
+clock must not look dead or alive because of it (spec 004 s6, UBS-69 scope
+note). See docs/plan/ubs69-96-notes.md.
+"""
 
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
-from datetime import datetime
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
+from telemetry_shared.models.health import RegistryStatus
 from telemetry_shared.models.ingestion import Heartbeat
 
+Clock = Callable[[], datetime]
 
-@dataclass(slots=True)
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(slots=True, frozen=True)
 class AgentRecord:
     agent_id: str
-    application: str
-    instance_ids: list[str] = field(default_factory=list)
-    agent_version: str = ""
-    last_heartbeat_utc: datetime | None = None
+    first_seen_at: datetime
+    received_at: datetime  # backend clock, drives staleness
+    heartbeat: Heartbeat  # last document as sent (UBS-66 wire contract)
+
+    @property
+    def instance_ids(self) -> list[str]:
+        return list(self.heartbeat.instance_ids)
+
+    @property
+    def agent_version(self) -> str:
+        return self.heartbeat.agent_version
+
+    @property
+    def last_heartbeat_utc(self) -> datetime:
+        return self.heartbeat.sent_at_utc
 
 
 class AgentRegistry:
-    """Records the latest heartbeat per known agent."""
+    """Thread-safe map of known agents. Memory-only by design (FR-QRY-005)."""
 
-    def __init__(self) -> None:
-        self._agents: dict[str, AgentRecord] = {}
+    def __init__(
+        self, missing_threshold_seconds: float = 60.0, clock: Clock | None = None
+    ) -> None:
+        if missing_threshold_seconds <= 0:
+            raise ValueError("missing_threshold_seconds must be > 0")
+        self.missing_threshold_seconds = missing_threshold_seconds
+        self._clock = clock or _utc_now
         self._lock = threading.Lock()
+        self._agents: dict[str, AgentRecord] = {}
 
-    def record_heartbeat(self, heartbeat: Heartbeat, *, now: datetime) -> None:
+    # --- write side (UBS-87 calls this from the batch path) ----------------------
+
+    def record_heartbeat(
+        self, heartbeat: Heartbeat, received_at: datetime | None = None
+    ) -> bool:
+        """Store the latest heartbeat. Returns True on first contact so the
+        caller can emit the unknown-agent event FR-ING-010 asks for."""
+        received_at = received_at or self._clock()
         with self._lock:
             existing = self._agents.get(heartbeat.agent_id)
             if existing is None:
-                existing = AgentRecord(
+                self._agents[heartbeat.agent_id] = AgentRecord(
                     agent_id=heartbeat.agent_id,
-                    application="Magic",
+                    first_seen_at=received_at,
+                    received_at=received_at,
+                    heartbeat=heartbeat,
                 )
-                self._agents[heartbeat.agent_id] = existing
-            existing.instance_ids = list(heartbeat.instance_ids)
-            existing.agent_version = heartbeat.agent_version
-            existing.last_heartbeat_utc = heartbeat.sent_at_utc or now
+                return True
+            # Liveness is the backend's own observation: the agent just spoke,
+            # so `received_at` always moves forward. The *document* is only
+            # replaced if it is not older than the stored one, so a
+            # late-delivered heartbeat (retry buffer, out-of-order network)
+            # cannot roll the reported status backwards - and an agent whose
+            # clock was stepped back keeps being seen as alive meanwhile.
+            newer_doc = heartbeat.sent_at_utc >= existing.heartbeat.sent_at_utc
+            self._agents[heartbeat.agent_id] = replace(
+                existing,
+                received_at=received_at,
+                heartbeat=heartbeat if newer_doc else existing.heartbeat,
+            )
+            return False
 
-    def get_record(self, agent_id: str) -> AgentRecord | None:
+    def remove(self, agent_id: str) -> bool:
+        """Decommission (spec 011 runbook) so `missing` does not fire forever."""
+        with self._lock:
+            return self._agents.pop(agent_id, None) is not None
+
+    # --- read side (UBS-69) --------------------------------------------------------
+
+    def get(self, agent_id: str) -> AgentRecord | None:
         with self._lock:
             return self._agents.get(agent_id)
 
-    def get_last_heartbeat(self, agent_id: str) -> datetime | None:
+    def all(self) -> list[AgentRecord]:
         with self._lock:
-            record = self._agents.get(agent_id)
-            return None if record is None else record.last_heartbeat_utc
+            return sorted(self._agents.values(), key=lambda r: r.agent_id)
 
-    def agents_exceeding_threshold(
-        self, threshold_seconds: float, *, now: datetime
-    ) -> list[AgentRecord]:
-        stale: list[AgentRecord] = []
-        with self._lock:
-            for record in self._agents.values():
-                if record.last_heartbeat_utc is None:
-                    continue
-                age = (now - record.last_heartbeat_utc).total_seconds()
-                if age > threshold_seconds:
-                    stale.append(record)
-        return stale
+    def heartbeat_age_ms(self, record: AgentRecord, at: datetime | None = None) -> int:
+        at = at or self._clock()
+        return max(0, int((at - record.received_at).total_seconds() * 1000))
 
-    def all_agent_ids(self) -> list[str]:
+    def is_stale(self, record: AgentRecord, at: datetime | None = None) -> bool:
+        return self.heartbeat_age_ms(record, at) > self.missing_threshold_seconds * 1000
+
+    def status_of(
+        self, record: AgentRecord, at: datetime | None = None
+    ) -> RegistryStatus:
+        """`missing` if stale, otherwise whatever the agent last reported."""
+        if self.is_stale(record, at):
+            return "missing"
+        return record.heartbeat.status
+
+    def stale_agents(self, at: datetime | None = None) -> list[str]:
+        """Agent IDs past the threshold - the `dataCompleteness.staleAgents`
+        input (FR-QRY-015) and what UBS-95's AgentHeartbeatMissing reads."""
+        at = at or self._clock()
+        return [r.agent_id for r in self.all() if self.is_stale(r, at)]
+
+    def __len__(self) -> int:
         with self._lock:
-            return list(self._agents.keys())
+            return len(self._agents)

@@ -83,6 +83,11 @@ class StreamProcessor:
         # caught-up-and-idle. Injectable for tests that need a fixed clock.
         self._started_at = started_at or datetime.now(UTC)
 
+    @property
+    def config(self) -> StreamProcessorConfig:
+        """Read-only configuration shared with the ingestion boundary."""
+        return self._config
+
     def is_ready(self, *, now: datetime | None = None) -> bool:
         """FR-QRY-005: `False` ("warming") until `warmupWindow` has elapsed
         since this replica started AND at least one snapshot has actually

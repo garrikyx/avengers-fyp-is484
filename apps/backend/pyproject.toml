@@ -7,8 +7,14 @@ dependencies = [
     "uvicorn>=0.34",
     "httpx>=0.28",
     "redis>=5",
+    "pyyaml",
+    "httpx",
+    "prometheus-client>=0.20",
     "telemetry-shared",
 ]
+
+[project.scripts]
+telemetry-backend = "telemetry_backend.main:main"
 
 [build-system]
 requires = ["hatchling"]
