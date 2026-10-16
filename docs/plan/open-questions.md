@@ -308,4 +308,22 @@ stale README/scaffold language that mentions Redis (Day-1) and PostgreSQL (Day-2
 ## Resolved
 
 
-*(none yet — record answers here with the date, the decision, and the specs updated)*
+*Record answers here with the date, the decision, and the specs updated.*
+
+### 2026-10-16 sponsor call (Avinash Gopal)
+
+- **Q-10 (partly answered):** People must be notified, not only Magic. Push events reach end
+  users "in the group chat" through Copilot/Teams. This is UBS-120 (Teams notification),
+  raised to High. Escalation policy and quiet hours remain open. Updated: spec 000 §3.1.
+- **Q-8 (new fact):** Application.log has a `[C]` critical level as well as `[E]` and `[F]`.
+  The severities rank F > C > E. Updated: spec 004 `FR-MET-033`, §5 `level`; spec 005
+  `AppLogFailure` and `AppLogCritical`.
+- **Q-13 (partly answered):** The telemetry server may run remotely and connect to the log
+  host, or co-located "if it is within the metrics, not consuming more memory". Day-1 keeps
+  the agent co-located; remote fetching is a spike. Updated: spec 002 §2.
+- **New scope from the same call:**
+  - host/system events (disk, memory, Magic process): spec 002 §7.1, spec 005 §1.2;
+  - an MCP server for M365 Copilot: ADR 0007, spec 008 `FR-NLQ-026`;
+  - technical vs executive answers by audience: spec 008 `FR-NLQ-027`;
+  - end-of-day business summaries: `FR-NLQ-028`, Day-2;
+  - configurable action hooks: ADR 0008, spec 005 §5, Day-2.

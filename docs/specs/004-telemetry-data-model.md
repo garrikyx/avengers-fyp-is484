@@ -1,6 +1,6 @@
 # 004 — Telemetry Data Model
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 This is the contract between agent and backend. Changing anything here is a versioned
 change (`schemaVersion`), and both sides MUST be updated together.
@@ -77,6 +77,21 @@ Rules:
 | `agent.started` / `agent.stopping` / `agent.state_reset` | Lifecycle | no |
 | `alert.fired` / `alert.resolved` | Alert state change (spec 005) | no |
 | `callback.failed` | Callback exhausted retries | rate-limited |
+
+### 2.2 Event classes
+
+Every `eventType` belongs to one class. The class is fixed by the `eventType` prefix and is
+not a separate field.
+
+| Class | Prefixes | Source |
+| --- | --- | --- |
+| **System event** | `host.*`, `agent.*`, `log.*` | The host, Magic's process, the agent itself |
+| **Application event** | `fix.*`, `app.*`, `parse.*` | What Magic logs or trades |
+| **Alert event** | `alert.*`, `callback.*` | The Rule Engine and Callback Dispatcher, about either class |
+
+Host conditions (disk, memory, Magic process liveness) are not separate event types. They
+are gauges (§4.7) that rules turn into `alert.fired` / `alert.resolved` (spec 005 §1.2).
+That is the event the agent pushes.
 
 ## 3. Metric snapshot
 
@@ -193,6 +208,38 @@ agent restarts harmless.
 its denominator is below `minSampleSize` (default 20), so an idle minute never looks like a
 100% reject rate.
 
+### 4.6 Application.log counters
+
+`app_log_lines` (dimensions `instanceId`, `level`), `app_log_errors` (dimensions
+`instanceId`, `level`, `component`), and `app_error_signatures` (dimensions `instanceId`,
+`errorSignature`).
+
+`FR-MET-033`: Magic's Application.log levels rank **F > C > E**, as stated by the sponsor
+(2026-10-16):
+
+- `[F]` failure is the most severe.
+- `[C]` critical is medium severity.
+- `[E]` error is the least severe of the three.
+
+`app_log_errors` MUST count E, C and F lines, and the `level` dimension MUST let a rule
+select one level (spec 005 §1.2). `[N]`, `[W]` and `[I]` lines count only toward
+`app_log_lines`.
+
+### 4.7 Host gauges
+
+`FR-MET-034`: The agent MUST report these host gauges, sampled by the Host Monitor
+(spec 002 §7.1) and carried in `gauges` at bucket close (`FR-MET-028`):
+
+| Gauge | Value | Dimensions |
+| --- | --- | --- |
+| `host_disk_used_ratio` | Used ÷ total bytes, `0.0`–`1.0`, for each configured path's filesystem | `instanceId`, `mount` |
+| `host_memory_used_ratio` | Used ÷ total physical memory, `0.0`–`1.0` | `instanceId` |
+| `magic_process_up` | `1` if the configured Magic process is running, else `0` | `instanceId` |
+
+A gauge the agent cannot read MUST be omitted, never reported as `0`. A rule then reports
+`insufficient_data` instead of a false "disk empty" or "Magic down" (the same reasoning as
+`FR-MET-031`).
+
 ## 5. Dimensions and cardinality
 
 | Dimension | Values | Cap |
@@ -208,7 +255,8 @@ its denominator is below `minSampleSize` (default 20), so an idle minute never l
 | `sessionRejectReason` | tag 373 name | 16 |
 | `reason` (parse errors) | closed set from spec 003 §3 | 12 |
 | `severity` | info / warning / critical | 3 |
-| `level` | Application.log level, closed set `[NWEIF]` | 5 |
+| `level` | Application.log level, closed set `[NWEICF]` (`C` added 2026-10-16, `FR-MET-033`) | 6 |
+| `mount` | Host filesystem path from `host.diskPaths` | 8 |
 | `component` | Application.log component, free text | 50 per instance, `__other__` beyond cap |
 | `errorSignature` | Application.log error signature, free text | 50 per instance, `__other__` beyond cap |
 
