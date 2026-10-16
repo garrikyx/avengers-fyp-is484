@@ -72,3 +72,19 @@ The five default roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-
 ### Domain docs
 
 Single-context: root `GLOSSARY.md` (created lazily) + `docs/adr/`, with `docs/specs/` as the requirements source. See `docs/agents/domain.md`.
+
+
+## Git Attribution
+
+When creating commits, pushing changes, or opening pull requests:
+
+- Do not add `Co-Authored-By` trailers or any AI attribution to commit messages.
+- Do not identify Claude, Anthropic, or any AI assistant as a contributor or co-author in commits or pull requests.
+- Use only my existing Git-configured identity as the commit author.
+- Do not modify my `git config user.name` or `user.email`.
+- Do not add AI-generated signatures or attribution footers.
+
+## Subagent Usage Policy
+
+Prefer Sonnet for basic codebase exploration and independent implementation.
+Use Opus subagents only when advanced reasoning is necessary.
