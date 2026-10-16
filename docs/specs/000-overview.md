@@ -1,6 +1,6 @@
 # 000 — Overview, Scope and Conventions
 
-Status: Draft · Owner: TBD · Last updated: 2026-09-07
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 ## 1. Purpose
 
@@ -12,6 +12,13 @@ to Magic as callbacks.
 
 The system is **streaming-first** and **stores no raw logs**. It derives metrics, counters,
 summaries and structured events as log lines are produced, and discards the raw content.
+
+Consumers get telemetry two ways. **Pull**: they ask, through the query APIs or Copilot and
+Teams. **Push**: the agent publishes events as they happen, and they reach Magic as
+callbacks and people as chat notifications. Events are either **system events** (the host
+or a process: disk full, memory pressure, Magic not running, agent lifecycle) or
+**application events** (what Magic logs or trades: FIX activity, Application.log
+`[F]`/`[C]` lines, error signatures). Spec 004 §2.2 holds the catalogue.
 
 ## 2. Problem statement
 
@@ -34,7 +41,13 @@ summaries and structured events as log lines are produced, and discards the raw 
 - Callback delivery to a Magic-provided HTTPS endpoint, with retry and delivery tracking.
 - Structured telemetry publication to a centralised backend.
 - Metrics, alert and health query APIs.
-- Natural language query access through Copilot or Teams for a fixed intent catalogue.
+- Natural language query access through Copilot (API plugin or MCP server, ADR 0007) or
+  Teams for a fixed intent catalogue.
+- Push notification of firing and resolved alerts to a Teams chat.
+- System events: host disk and memory pressure and Magic process liveness, alerted with
+  configurable thresholds (spec 002 §7.1, spec 005 §1.2).
+- Application.log severity: `[F]` failure and `[C]` critical lines raise alerts; `[E]` is
+  counted only (spec 004 `FR-MET-033`).
 - Self-monitoring: heartbeat, parse error counts, queue depth, callback failures.
 
 ### 3.2 Out of scope (Day-2 or later)
@@ -43,6 +56,11 @@ summaries and structured events as log lines are produced, and discards the raw 
 - Durable persistence, historical forensics, log replay, long-term trend analytics.
 - Anomaly detection and adaptive thresholds.
 - Dashboards beyond what the query API enables; rich Teams interactive workflows.
+- Executive and end-of-day reporting for business users over historical data (spec 008
+  `FR-NLQ-027`, `FR-NLQ-028`); this needs Day-2 persistence.
+- Configurable remediation actions per event type, e.g. a disk-cleanup job when the disk is
+  full (spec 005 §5, ADR 0008).
+- Reading logs on a remote host. The agent is co-located with Magic (spec 002 §2).
 - Any storage or transmission of raw log lines or full FIX message bodies.
 
 ### 3.3 Explicit non-goals
@@ -59,8 +77,9 @@ summaries and structured events as log lines are produced, and discards the raw 
 | Magic application | Writes logs; receives alert callbacks; owns the callback endpoint contract |
 | Telemetry Agent | Runs on the Magic host; reads logs; publishes telemetry; sends callbacks |
 | Telemetry Backend | Aggregates telemetry from all agents; serves queries |
-| Support / Ops engineer | Asks questions in Teams or Copilot; receives alerts |
-| Developer | Queries metrics APIs during incident investigation |
+| Support / Ops engineer | Asks live questions in Teams or Copilot and gets technical answers; receives pushed alert notifications |
+| Developer | Queries live metrics through the APIs or Copilot during incident investigation; gets technical answers |
+| Business user | Asks about historical or end-of-day activity and gets executive-format answers and summaries (Day-2, spec 008 `FR-NLQ-027`) |
 | Platform operator | Deploys and configures agents, runs the runbooks in spec 011 |
 
 ## 5. Glossary
