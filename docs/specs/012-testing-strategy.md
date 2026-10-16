@@ -1,11 +1,22 @@
 # 012 — Testing Strategy
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Spec-driven development only works if requirements are traceable to tests.
-`FR-TST-001`: Every `MUST` requirement in specs 002–010 MUST be covered by at least one
+`FR-TST-001`: Every `MUST` requirement in specs 002–010 applicable to the tested profile MUST be covered by at least one
 automated test, and the test MUST name the requirement ID in its name or a comment. A CI job
 MUST report any requirement ID with no referencing test.
+
+**Day-1 POC profile (team decision, 2026-10-16).** Use the simulator's FIX/Application.log
+formats, a local server, bounded in-memory storage, mock Magic callbacks, and real Teams
+queries plus firing/resolved notifications in one configured group chat. Exercise the
+existing per-alert delivery details through the technical integration view (`FR-NLQ-029`).
+Load acceptance uses Q-1's synthetic 5,000 sustained / 20,000 peak lines/sec per host;
+report peak duration, hardware and line sizes rather than infer production capacity.
+Historical reporting, cloud deployment and custom backend authentication are outside
+this profile. Auth tests for production requirements are deferred, not counted as passing;
+Microsoft platform integration setup/validation remains required (spec 009 §3.3).
+POC decisions describe acceptance targets, not evidence that the features are implemented.
 
 ## 1. Test levels
 

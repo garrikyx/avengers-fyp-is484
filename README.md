@@ -6,7 +6,7 @@ The repo contains four main applications:
 
 ```text
 apps/
-├── agent/       # Runs beside each Magic instance
+├── agent/       # Runs on each Magic log host; supports multiple instances
 ├── backend/     # Central telemetry API/service
 ├── teams/       # Microsoft Teams integration
 └── simulator/   # Generates synthetic Magic/FIX logs for testing
@@ -27,18 +27,19 @@ Magic / Simulator
 Telemetry Agent
       ↓
 Telemetry Backend
-      ↓
-Redis
+ (bounded in-memory stores)
       ↓
 Microsoft Teams
 
 Day 2:
-Telemetry Backend → PostgreSQL
+Telemetry Backend → approved historical store (technology TBD)
 ```
 
-Each Magic instance is paired with one Telemetry Agent. Multiple agents send structured telemetry to the central backend.
+Default to one Telemetry Agent per Magic host, with per-file-set instance IDs. Multiple agents send structured telemetry to the central backend.
 
-Day 1 uses Redis for temporary/shared telemetry state. Day 2 adds PostgreSQL for approved historical metrics, alerts and anomaly data.
+Day 1 deploys on a local server and uses bounded, process-local in-memory stores (6h default, 24h maximum); no telemetry database or Redis dependency is required ([ADR 0005](docs/adr/0005-in-memory-metric-store.md)). Day 2 adds approved historical storage; its technology and retention are not yet selected. Day-2 cloud uploads require client-information masking in derived telemetry; raw logs/full FIX payloads remain prohibited.
+
+The POC uses simulator formats, mock Magic callbacks, and real queries plus firing/resolved notifications in one team-controlled Teams chat. Custom backend authentication is outside POC acceptance; platform credentials and message validation required to connect Teams/Copilot still apply. Historical/end-of-day reporting and central config distribution are Day-2. See [the reconciled decisions](docs/plan/open-questions.md) for POC scope and remaining production inputs. These are acceptance targets, not a claim that all integration features are implemented.
 
 Raw Magic logs and full FIX payloads must not be persisted.
 
@@ -80,18 +81,18 @@ Main areas:
 ```text
 api/           # FastAPI endpoints
 services/      # Business logic
-repositories/  # Redis / PostgreSQL access
+repositories/  # Store abstractions
 anomaly/       # Day-2 anomaly detection
-persistence/   # Day-2 PostgreSQL
+persistence/   # Day-2 historical storage (technology TBD)
 ```
 
 Backend flow should generally be:
 
 ```text
-API → Service → Repository → Redis/PostgreSQL
+API → Service / Repository → bounded in-memory store (Day 1)
 ```
 
-Do not call Redis directly from FastAPI route handlers.
+Keep storage access behind service/repository abstractions.
 
 ---
 
@@ -108,7 +109,7 @@ Used for:
 * calling backend APIs
 * formatting responses
 
-Teams should communicate with the backend, not directly with Redis or PostgreSQL.
+Teams communicates through backend APIs; it does not access telemetry stores directly.
 
 ---
 
@@ -209,8 +210,8 @@ Current stack:
 Python 3.14+
 FastAPI
 Pydantic
-Redis
-PostgreSQL (Day 2)
+Bounded in-memory telemetry stores (Day 1)
+Historical storage (Day 2; technology TBD)
 pytest
 Ruff
 mypy
@@ -225,10 +226,10 @@ Useful commands will be added as the project setup matures.
 
 * Agent must remain lightweight.
 * Target Agent resource usage: **<2% CPU and <500 MB memory**.
-* Backend should be stateless and horizontally scalable.
-* Shared state belongs in Redis.
-* Historical Day-2 data belongs in PostgreSQL.
-* Raw logs/full FIX payloads must not be persisted, only sanitised logs
+* Backend supports horizontal scaling; Day-1 replica state is process-local and queries must preserve completeness.
+* Day-1 telemetry state uses bounded in-memory stores (ADR 0005).
+* Historical Day-2 data belongs behind storage abstractions; retention and technology remain undecided.
+* Raw logs/full FIX payloads must not be persisted or transmitted; publish only allowlisted derived/sanitised telemetry.
 * Teams only communicates through Backend APIs.
 * Day-1 rules use configured thresholds.
 * Day-2 anomaly detection compares current behaviour against historical/rolling baselines.

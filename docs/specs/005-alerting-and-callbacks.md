@@ -88,14 +88,14 @@ provisional pending [Q-5](../plan/open-questions.md).
 | `AppOutOfMemory` | signature | warning @ ≥ 1 `out_of_memory` match, critical @ ≥ 3 | 1m, for 0s |
 | `AppDbConnectionLost` | signature | warning @ ≥ 1 `db_connection_lost` match, critical @ ≥ 5 | 5m, for 0s |
 | `AppLogFailure` | threshold, `level: F` | critical @ `app_log_errors` ≥ 1 | 1m, for 0s |
-| `AppLogCritical` | threshold, `level: C` | warning @ `app_log_errors` ≥ 1 | 1m, for 0s |
 | `HostDiskFull` | threshold (gauge) | warning @ `host_disk_used_ratio` > 0.85, critical @ > 0.95 | for 1m |
 | `HostMemoryHigh` | threshold (gauge) | warning @ `host_memory_used_ratio` > 0.90, critical @ > 0.95 | for 2m |
 | `ApplicationDown` | threshold (gauge) | critical @ `magic_process_up` == 0 | for 30s |
 
-The last five rules come from the 2026-10-16 sponsor call. Their **severities** follow
-the sponsor's ranking (spec 004 `FR-MET-033`): `[F]` maps to critical and `[C]` to
-warning. `[E]` lines are counted but have no default rule.
+The last four rules cover application failure and host/system events discussed in the
+2026-10-16 sponsor call. `AppLogFailure` maps `[F]` to critical. `[E]` lines are counted
+but have no default level-based rule. The POC level set follows the simulator samples
+(spec 004 `FR-MET-033`).
 
 Their **thresholds** are common operational defaults, not UBS values, and are provisional
 pending [Q-5](../plan/open-questions.md). `HostDiskFull`, `HostMemoryHigh` and

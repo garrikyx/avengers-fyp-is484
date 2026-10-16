@@ -1,10 +1,12 @@
 # 003 — Parser Engine and FIX Parsing
 
-Status: Draft · Owner: TBD · Last updated: 2026-09-07
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Day-1 supports FIX 4.2 and 4.4 tag=value messages embedded in text log lines. The parser
-interface is designed so a binary protocol parser can be added on Day-2 without touching
-the rest of the pipeline.
+interface is configurable per file set so parsers for other text log formats or binary
+protocols can be added without touching the rest of the pipeline (§9). The POC uses the
+simulator's FIX records for FIX telemetry and its Application.log records for application
+health; additional log formats are outside POC acceptance.
 
 ## 0. Invocation
 
@@ -177,8 +179,8 @@ content — both are operationally interesting.
 
 ## 9. Parser plugin interface
 
-`FR-PRS-030`: All parsers MUST satisfy one interface so Day-2 binary support requires no
-pipeline change:
+`FR-PRS-030`: All parsers MUST satisfy one interface so additional text log formats and
+Day-2 binary support require no pipeline change:
 
 ```python
 # FR-PRS-030 — Python Protocol (reference implementation in apps/agent/src/telemetry_agent/parser/)

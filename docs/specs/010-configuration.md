@@ -11,6 +11,13 @@ diff them against this document's values.
 
 ## 1. Agent configuration
 
+The POC uses local configuration and the specified reload mechanism. Central distribution
+is Day-2 (Q-12). The `trading-hours` schedule below is a demo example, not a confirmed
+production calendar; verify runtime schedule gating before claiming schedule-aware alerts.
+NL query dates use the user's timezone separately (spec 008 `FR-NLQ-012`). Backend-token
+and identity-registration settings are production targets under spec 009 §3.3's POC
+exception; Microsoft platform credentials needed for the real Teams demo still apply.
+
 ```yaml
 agent:
   agentId: magic-agent-sg-01        # required, must match backend-registered identity

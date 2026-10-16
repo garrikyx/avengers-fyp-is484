@@ -1,6 +1,13 @@
 # Sponsor email — deployment and storage clarifications (Q-13)
 
-Status: Draft · For: Avinash Gopal · From: Avengers FYP team · Date: 2026-09-27
+Status: Superseded draft — do not send unchanged · Original date: 2026-09-27
+
+The team reconciled deployment scope on 2026-10-16 in [Q-13](./open-questions.md): Day-1
+is a local-server POC with in-memory storage; cloud deployment is Day-2 and requires
+masking client information before approved derived telemetry is uploaded. Raw logs/full
+FIX payloads remain prohibited. The questions below are historical; only unresolved
+production infrastructure/access, HA and Day-2 masking/storage details should be carried
+into a new sponsor message. This draft has not been sent by the agent.
 
 ---
 

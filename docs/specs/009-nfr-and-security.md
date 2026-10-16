@@ -1,9 +1,14 @@
 # 009 — Non-Functional Requirements and Security
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Every requirement here is stated as something a test or a measurement can decide. Provisional
 numbers are marked and depend on [Q-1](../plan/open-questions.md) (expected throughput).
+
+**POC load profile (team decision, 2026-10-16):** 5,000 lines/sec sustained and 20,000
+lines/sec peak per host are synthetic acceptance targets, not measured production load.
+Load reports must record hardware, line sizes, peak duration and achieved rates. Existing
+resource/latency requirements still apply; production capacity needs measured inputs.
 
 ## 1. Performance
 
@@ -43,6 +48,7 @@ numbers are marked and depend on [Q-1](../plan/open-questions.md) (expected thro
 | `NFR-SEC-001` | Raw log lines MUST NOT be persisted to disk, transmitted off-host, or included in any event, metric label, alert, or error message. |
 | `NFR-SEC-002` | Only the allowlisted FIX tags of spec 003 §4 may be extracted, and only in their specified emitted form (hashed where required). An automated test MUST run a corpus containing distinctive sentinel values in non-allowlisted tags (price, account, party IDs, free text) and assert those sentinels appear in **no** outbound payload, log file, or state file. |
 | `NFR-SEC-003` | The agent state file MUST contain only offsets, file identities, and alert state. |
+| `NFR-SEC-020` | Day-2 cloud deployment MUST mask client information in approved derived/sanitised telemetry before upload. The exact masking policy must be agreed before client-data cloud use. Masking does not permit uploading raw logs or full FIX payloads (`NFR-SEC-001`, ADR 0004). |
 | `NFR-SEC-012` | Order identifiers MUST be HMAC-SHA256 hashed and truncated (spec 003 §4); the key MUST come from the environment and MUST be rotatable (rotation breaks cross-period correlation, which is accepted and documented). |
 | `NFR-SEC-013` | Debug logging MUST NOT have a mode that prints raw lines. If a developer needs that locally, it MUST be a separate build tag (`//go:build debugraw`) that is never compiled into release artefacts, and CI MUST assert the release binary does not include it. |
 
@@ -55,6 +61,18 @@ numbers are marked and depend on [Q-1](../plan/open-questions.md) (expected thro
 | `NFR-SEC-006` | Secrets MUST be redacted from all logs and from all error responses; a CI check MUST grep artefacts for known secret-shaped patterns. |
 
 ### 3.3 Transport and identity
+
+**Local synthetic-data POC exception (team decision, 2026-10-16).** Custom telemetry-backend
+authentication is outside POC acceptance: `FR-ING-002`, `NFR-SEC-008`, the authenticated
+per-user part of `NFR-SEC-009`/`FR-NLQ-018`, and identity-bound query auditing/rate limits
+are production targets. No additional ingestion/query bearer-token implementation is
+required for the POC. The read-only query boundary still applies.
+
+This exception does not remove app registration, credentials or incoming-message
+validation required by the selected Microsoft Teams/Copilot connection. Demonstrate
+real Teams queries and notifications against the local server with synthetic data.
+Do not represent that demo as production authentication or per-user isolation validation.
+Production credential ownership, rotation and application/instance grants remain Q-3.
 
 | ID | Requirement |
 | --- | --- |
@@ -79,6 +97,10 @@ numbers are marked and depend on [Q-1](../plan/open-questions.md) (expected thro
 `NFR-SEC-011`: The backend MUST log, for each query: request ID, authenticated user or agent,
 interpreted query, result row count, and duration — but not the raw question text and not
 result values.
+
+For POC requests without backend authentication, record the actor as unauthenticated;
+any supplied surface identity is separate context, not a verified backend identity.
+Request IDs, interpreted queries, counts and duration remain required.
 
 ## 4. Scalability
 

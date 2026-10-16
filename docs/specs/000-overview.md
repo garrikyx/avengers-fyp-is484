@@ -18,7 +18,7 @@ Teams. **Push**: the agent publishes events as they happen, and they reach Magic
 callbacks and people as chat notifications. Events are either **system events** (the host
 or a process: disk full, memory pressure, Magic not running, agent lifecycle) or
 **application events** (what Magic logs or trades: FIX activity, Application.log
-`[F]`/`[C]` lines, error signatures). Spec 004 §2.2 holds the catalogue.
+`[F]` lines, error signatures). Spec 004 §2.2 holds the catalogue.
 
 ## 2. Problem statement
 
@@ -46,7 +46,7 @@ or a process: disk full, memory pressure, Magic not running, agent lifecycle) or
 - Push notification of firing and resolved alerts to a Teams chat.
 - System events: host disk and memory pressure and Magic process liveness, alerted with
   configurable thresholds (spec 002 §7.1, spec 005 §1.2).
-- Application.log severity: `[F]` failure and `[C]` critical lines raise alerts; `[E]` is
+- Application.log severity: `[F]` failure lines raise alerts; `[E]` is
   counted only (spec 004 `FR-MET-033`).
 - Self-monitoring: heartbeat, parse error counts, queue depth, callback failures.
 
@@ -61,6 +61,8 @@ or a process: disk full, memory pressure, Magic not running, agent lifecycle) or
 - Configurable remediation actions per event type, e.g. a disk-cleanup job when the disk is
   full (spec 005 §5, ADR 0008).
 - Reading logs on a remote host. The agent is co-located with Magic (spec 002 §2).
+- Backend-to-agent central configuration distribution; Day-1 uses local configuration
+  and reload (spec 010).
 - Any storage or transmission of raw log lines or full FIX message bodies.
 
 ### 3.3 Explicit non-goals
@@ -122,6 +124,14 @@ reuse. A withdrawn requirement keeps its ID and is annotated `(withdrawn — see
 
 ## 7. Day-1 acceptance definition
 
+The team settled the Day-1 POC scope on 2026-10-16: deploy on a local server, use the
+simulator formats, demonstrate real Teams interaction, and mock the Magic callback
+endpoint. Historical/end-of-day reporting and cloud deployment are Day-2. Cloud upload
+requires masking client information in approved derived telemetry; raw logs/full FIX
+payloads remain prohibited (spec 009 §3.1). Custom backend authentication is outside POC
+acceptance; Microsoft platform credentials and message validation needed to connect
+Teams/Copilot remain required (spec 009 §3.3).
+
 Day-1 is complete when, against a synthetic Magic log stream at the throughput agreed in
 [open question Q-1](../plan/open-questions.md):
 
@@ -134,3 +144,7 @@ Day-1 is complete when, against a synthetic Magic log stream at the throughput a
    without data loss beyond the documented bounds in `NFR-REL-001`–`NFR-REL-004`.
 5. An automated test proves no raw log line or non-allowlisted FIX tag left the host
    (`NFR-SEC-002`).
+6. A user asks a telemetry question in a team-controlled Teams chat and receives a
+   query-backed answer; firing and resolved alerts are pushed to that configured chat.
+   This is a real Teams integration, not a mocked chat. Backend reachability and platform
+   setup are demonstrated separately from deferred custom backend authentication.

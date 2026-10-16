@@ -118,6 +118,21 @@ It reads from the Day-2 historical store (UBS-37/UBS-39), not the in-memory wind
 
 ## 6. Integration surfaces
 
+**POC scope (team decision, 2026-10-16).** Demonstrate queries and firing/resolved alert
+notifications in one configurable, team-controlled Teams group chat. The Magic callback
+endpoint is mocked; Teams is real. Automatic email/pager escalation, per-team routing
+and quiet-hours policies are outside POC acceptance. Historical/executive end-of-day
+reporting remains Day-2.
+
+The backend-authentication POC exception in spec 009 §3.3 applies to `FR-NLQ-018`,
+the authentication part of `FR-NLQ-026`, and identity-bound audit/rate-limit behaviour
+(`FR-NLQ-019`, `FR-NLQ-021`). Microsoft platform credentials and message validation needed
+to connect the selected Teams/Copilot surface remain required. POC logs must label
+unauthenticated backend requests accurately; a platform-provided actor is not evidence
+that the backend authenticated that actor. Query logging, read-only tools, escaping,
+bounded requests and the LLM timeout still apply. A POC rate limit may use a surface
+conversation or request source rather than claim an authenticated backend identity.
+
 | Surface | Approach |
 | --- | --- |
 | Copilot | Declarative agent + API plugin pointed at the generated OpenAPI document, restricted to `POST /telemetry/nl/query`, the metrics query, alert and health read endpoints |
@@ -130,6 +145,12 @@ It MUST NOT read Redis, the stores or logs directly. It MUST expose no mutating 
 apply the same Entra ID authentication, read-only authorisation, rate limits and audit
 logging as the other surfaces (`FR-NLQ-018`, `019`, `021`). Tool outputs carry the same
 `dataCompleteness` envelope as the API responses.
+
+`FR-NLQ-029`: The technical Teams/Copilot alert detail view MUST surface the alert API's
+existing `delivery` block: status, attempts, `lastAttemptUtc`, and `correlationId` (spec 007
+§4.1). Read these values through the backend APIs and escape rendered output. Missing
+delivery data MUST be shown as unavailable, never interpreted as successful delivery.
+This is per-alert delivery visibility (UBS-102), not a durable audit store or export.
 
 | ID | Requirement |
 | --- | --- |

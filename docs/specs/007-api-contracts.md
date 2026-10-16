@@ -1,6 +1,6 @@
 # 007 — API Contracts
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Base path: `/telemetry`. All requests and responses are JSON, UTF-8. All timestamps are UTC
 ISO-8601 with milliseconds. This spec is the source for the OpenAPI document generated from
@@ -15,11 +15,17 @@ FastAPI; where they disagree, this spec is wrong and MUST be corrected.
 | `FR-QRY-032` | Unknown top-level request fields MUST be rejected with `400 invalid_field` (strict models), so typos in a query never silently return the wrong answer. |
 | `FR-QRY-033` | All list responses MUST be explicitly bounded and MUST report `truncated: true` when a cap was applied. |
 
-Authentication:
+Production authentication target (final identity/tenant arrangements remain Q-3):
 
 - Agent → backend: `Authorization: Bearer <agent token>` or mutual TLS. `FR-ING-002`.
 - Human/tool → backend: OAuth 2.0 bearer token from Entra ID, scope `Telemetry.Read`.
 - Copilot/Teams → backend: same, via the app registration in [Q-3](../plan/open-questions.md).
+
+For the local synthetic-data POC, custom backend token enforcement is deferred (spec 009
+§3.3). The Teams/Copilot adapter may call these APIs without a backend user token. The
+selected Microsoft integration still requires its platform registration, credentials
+and incoming-message validation. Platform setup and local-server reachability are part
+of the real Teams demonstration; they do not imply per-user backend Entra enforcement.
 
 ## 2. Ingestion
 

@@ -214,14 +214,11 @@ its denominator is below `minSampleSize` (default 20), so an idle minute never l
 `instanceId`, `level`, `component`), and `app_error_signatures` (dimensions `instanceId`,
 `errorSignature`).
 
-`FR-MET-033`: Magic's Application.log levels rank **F > C > E**, as stated by the sponsor
-(2026-10-16):
+`FR-MET-033`: The POC Application.log level set MUST be `N`, `W`, `E`, `I`, and `F`,
+matching the sponsor-format simulator samples (confirmed by the team on 2026-10-16).
+`[F]` denotes failure and `[E]` denotes error.
 
-- `[F]` failure is the most severe.
-- `[C]` critical is medium severity.
-- `[E]` error is the least severe of the three.
-
-`app_log_errors` MUST count E, C and F lines, and the `level` dimension MUST let a rule
+`app_log_errors` MUST count E and F lines, and the `level` dimension MUST let a rule
 select one level (spec 005 §1.2). `[N]`, `[W]` and `[I]` lines count only toward
 `app_log_lines`.
 
@@ -255,7 +252,7 @@ A gauge the agent cannot read MUST be omitted, never reported as `0`. A rule the
 | `sessionRejectReason` | tag 373 name | 16 |
 | `reason` (parse errors) | closed set from spec 003 §3 | 12 |
 | `severity` | info / warning / critical | 3 |
-| `level` | Application.log level, closed set `[NWEICF]` (`C` added 2026-10-16, `FR-MET-033`) | 6 |
+| `level` | Application.log level, closed set `[NWEIF]` (`FR-MET-033`) | 5 |
 | `mount` | Host filesystem path from `host.diskPaths` | 8 |
 | `component` | Application.log component, free text | 50 per instance, `__other__` beyond cap |
 | `errorSignature` | Application.log error signature, free text | 50 per instance, `__other__` beyond cap |

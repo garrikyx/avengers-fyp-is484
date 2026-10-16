@@ -122,10 +122,15 @@ covers uncorrelated, implausible and evicted cases; 30-minute soak holds RSS und
 
 ### M4 — Backend ingestion, store and query (`FR-ING-*`, `FR-QRY-*`)
 
-Scope: FastAPI app, auth, strict validation, partial batch acceptance, `batchId` dedupe, bucket
+Scope: FastAPI app, strict validation, partial batch acceptance, `batchId` dedupe, bucket
 merge, ring buffer plus rollups, memory shedding, query engine with filters/groupBy/topK/series,
 KPIs with `minSampleSize`, approximate percentiles, `dataCompleteness`, alert store, agent
 registry, `/healthz` `/readyz` `/metrics`, error shape.
+
+Custom backend authentication is a production target, deferred for the local synthetic-data
+POC (2026-10-16 team decision, spec 009 §3.3). Microsoft platform credentials and message
+validation needed for real Teams queries/notifications remain required. The reconciled
+POC scope in [open-questions.md](./open-questions.md) supersedes earlier hosting/auth assumptions.
 
 Exit: contract tests pass both directions against `contracts/`; `null` vs `0` semantics test
 passes (`FR-QRY-035`); agent → backend → query round-trip shows a reject burst within 5 seconds
