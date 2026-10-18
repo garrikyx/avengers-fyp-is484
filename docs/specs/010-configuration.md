@@ -1,6 +1,6 @@
 # 010 — Configuration Reference
 
-Status: Draft · Owner: TBD · Last updated: 2026-09-07
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Precedence: command-line flag > environment variable > config file > built-in default
 (`FR-CFG-001`). Environment variables are prefixed `MAGIC_TELEMETRY_` and map to keys by
@@ -105,6 +105,14 @@ publish:
 heartbeat:
   interval: 10s
 
+host:                                # Host Monitor, spec 002 §7.1
+  enabled: true
+  sampleInterval: 30s                # FR-HLT-013
+  diskPaths: ["/var/log/magic"]      # one host_disk_used_ratio per filesystem (FR-MET-034)
+  memory: true                       # host_memory_used_ratio
+  process:
+    name: ""                         # exact executable name; empty disables magic_process_up (FR-HLT-014)
+
 callbacks:
   enabled: true
   endpoint: https://magic-host.internal.example/magic/callbacks/telemetry-alerts
@@ -152,6 +160,9 @@ alerting:
 | `pipeline.overflowPolicy` | `block` (default): zero loss, backpressure via read lag. `drop_oldest`: legacy shed-load mode; increments drop counters. |
 | `pipeline.dedupeCapacity` / `dedupeTtl` | Bounds the processed-line LRU used for idempotent re-ingest after restart (`FR-PIP-007`). |
 | `callbacks.dryRun` | Required for pre-production validation before Magic's endpoint exists. |
+| `host.process.name` | Empty by default, because the Magic executable name is UBS-specific and is not invented here. `ApplicationDown` stays inactive until it is set. |
+| `host.diskPaths` | Paths, not devices. Each resolves to its filesystem, so the log volume is watched even when it is a separate mount. |
+| `actions` / `allowedCommands` | Day-2 (spec 005 §5). Not part of the Day-1 schema; listed here only so the key names are reserved. |
 
 ## 2. Backend configuration
 

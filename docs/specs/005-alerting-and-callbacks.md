@@ -1,6 +1,6 @@
 # 005 — Rule Engine, Alerting and Callbacks
 
-Status: Draft · Owner: TBD · Last updated: 2026-09-07
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Alerting lives in the **agent**, not the backend, so that alerts survive a backend outage
 (`NFR-REL-003`). The backend receives alert state changes for querying and summarisation but
@@ -87,6 +87,25 @@ provisional pending [Q-5](../plan/open-questions.md).
 | `BackendUnreachable` | threshold | warning @ `consecutive_publish_failures` >= 5 | n/a — reads a gauge, not a window |
 | `AppOutOfMemory` | signature | warning @ ≥ 1 `out_of_memory` match, critical @ ≥ 3 | 1m, for 0s |
 | `AppDbConnectionLost` | signature | warning @ ≥ 1 `db_connection_lost` match, critical @ ≥ 5 | 5m, for 0s |
+| `AppLogFailure` | threshold, `level: F` | critical @ `app_log_errors` ≥ 1 | 1m, for 0s |
+| `AppLogCritical` | threshold, `level: C` | warning @ `app_log_errors` ≥ 1 | 1m, for 0s |
+| `HostDiskFull` | threshold (gauge) | warning @ `host_disk_used_ratio` > 0.85, critical @ > 0.95 | for 1m |
+| `HostMemoryHigh` | threshold (gauge) | warning @ `host_memory_used_ratio` > 0.90, critical @ > 0.95 | for 2m |
+| `ApplicationDown` | threshold (gauge) | critical @ `magic_process_up` == 0 | for 30s |
+
+The last five rules come from the 2026-10-16 sponsor call. Their **severities** follow
+the sponsor's ranking (spec 004 `FR-MET-033`): `[F]` maps to critical and `[C]` to
+warning. `[E]` lines are counted but have no default rule.
+
+Their **thresholds** are common operational defaults, not UBS values, and are provisional
+pending [Q-5](../plan/open-questions.md). `HostDiskFull`, `HostMemoryHigh` and
+`ApplicationDown` load only when the `host` block (spec 010) enables the matching gauge.
+
+`FR-RUL-023`: A `threshold` rule MAY declare `level:` to count only lines of one
+Application.log level. It MUST be valid only when the rule's metric carries the `level`
+dimension. The agent evaluates it against a snapshot grouped by `level`, the same way a
+`signature` rule is evaluated against `error_signature`, and the alert carries
+`groupBy: {level: F}`.
 
 `BackendUnreachable` reads the `consecutive_publish_failures` gauge (spec 004
 `FR-MET-031`), restoring this rule's original "5 consecutive failures"
@@ -237,3 +256,36 @@ interface with the HTTPS implementation as the Day-1 default.
 | `FR-RUL-018` | A maintenance window (`silences` config: rule name / instance / time range) MUST suppress notification while still recording alert state. |
 | `FR-RUL-019` | Rules dependent on the agent's own health (`ParseErrorRate`, `NoLogActivity`) MUST be suppressed for `startupGrace` (default `60s`) after agent start so a cold start does not page anyone. |
 | `FR-RUL-021` | Dependent-alert suppression: while `NoLogActivity` is firing for an instance, trading rules for that instance MUST be suppressed, since absence of data is not absence of rejects. |
+
+## 5. Action hooks (Day-2)
+
+The sponsor asked on 2026-10-16 that both the event type and the function it calls be
+configurable, for example "disk full → run a cleanup job". Day-1 has one action: the
+callback to Magic (§3). Day-2 lets a rule name the actions it triggers. See
+[ADR 0008](../adr/0008-configurable-action-hooks.md).
+
+```yaml
+actions:
+  - name: disk-cleanup
+    type: command                   # command | callback
+    command: /opt/magic/bin/cleanup-disk   # absolute path, fixed argv, no shell
+    args: ["--older-than", "7d"]
+    timeout: 60s
+    dryRun: true
+  - name: ops-webhook
+    type: callback                  # §3 dispatcher, another endpoint
+    endpoint: https://ops.internal.example/hooks/telemetry
+
+rules:
+  - name: HostDiskFull
+    # …
+    actions: [disk-cleanup]         # fired on pending→firing only
+```
+
+| ID | Requirement |
+| --- | --- |
+| `FR-CBK-013` | A rule MAY list `actions` by name. Each action MUST be defined in the `actions` block, and an unknown name MUST fail config load (`FR-RUL-009`). |
+| `FR-CBK-014` | A `callback` action MUST reuse the §3 dispatcher: signing, retry, delivery tracking and dry run. Only the endpoint differs. |
+| `FR-CBK-015` | A `command` action MUST run an absolute-path executable from the `allowedCommands` list with a fixed argv and **no shell**. Alert data MUST be passed only as the §3.3 JSON on stdin and never interpolated into arguments. |
+| `FR-CBK-016` | An action MUST run at most once per alert occurrence (on `pending→firing`, keyed by `alertId`) and never on renotify. Each action runs one at a time with its `timeout` enforced. Its exit status, duration and timeout are counted as `action_runs{action,outcome}`. |
+| `FR-CBK-017` | Actions MUST default to `dryRun: true` and log what would run. A failed or timed-out action MUST NOT affect alert state, the Magic callback or publishing. |

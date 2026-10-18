@@ -1,6 +1,6 @@
 # 008 — Natural Language Query Layer (Copilot / Teams)
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 ## 1. Design stance
 
@@ -90,13 +90,46 @@ activity to compute a reject rate", never "0%".
 `FR-NLQ-017`: Every answer MUST include the `interpretedQuery` in the API response, and in
 Teams MUST offer a "show the query / show the numbers" affordance.
 
+`FR-NLQ-027`: Answers MUST support two audiences. The sponsor asked for this on
+2026-10-16: developers and support query live data, while business users query
+historical or end-of-day data.
+
+| `audience` | For | Shape |
+| --- | --- | --- |
+| `technical` (default) | Developers, support; live data | The FR-NLQ-015 format. Exact numbers, instance, session, alert IDs and rule names. |
+| `executive` | Business users; historical / end-of-day | Plain language with no internal IDs. Shows the change against the previous comparable period and a chart-ready table (name and value rows) the surface can render as a chart. |
+
+The audience comes from the surface configuration (for example, a business Teams channel) or
+from an explicit request. It never comes from the LLM. Both styles keep the anti-fabrication
+rules: every number comes from the query result (§3). Until Day-2 persistence exists, an
+executive answer over a range longer than the retention window MUST state the clamp
+(`FR-NLQ-013`).
+
+`FR-NLQ-028` (Day-2): An end-of-day summary MUST be producible for each application and
+posted to a configured Teams channel at a configured local time. It MUST be rendered in the
+`executive` style and include:
+
+- order, execution and reject totals and rates;
+- the top reject reasons;
+- alerts fired and resolved, by severity;
+- the change against the previous trading day.
+
+It reads from the Day-2 historical store (UBS-37/UBS-39), not the in-memory window.
+
 ## 6. Integration surfaces
 
 | Surface | Approach |
 | --- | --- |
 | Copilot | Declarative agent + API plugin pointed at the generated OpenAPI document, restricted to `POST /telemetry/nl/query`, the metrics query, alert and health read endpoints |
 | Teams | Bot that forwards the message text to `/telemetry/nl/query` and renders an Adaptive Card: headline number, breakdown table, alert badge, caveats, "show query" action |
+| Copilot (MCP) | An MCP server exposing read-only tools over the same backend APIs: `nl_query`, `query_metrics`, `list_alerts`, `get_alert`, `list_agent_health`, `list_events`. See [ADR 0007](../adr/0007-mcp-server-for-copilot.md) |
 | Direct API | `POST /telemetry/nl/query` for any other tooling |
+
+`FR-NLQ-026`: The MCP server MUST be a thin adapter that calls only the backend HTTP APIs.
+It MUST NOT read Redis, the stores or logs directly. It MUST expose no mutating tool and MUST
+apply the same Entra ID authentication, read-only authorisation, rate limits and audit
+logging as the other surfaces (`FR-NLQ-018`, `019`, `021`). Tool outputs carry the same
+`dataCompleteness` envelope as the API responses.
 
 | ID | Requirement |
 | --- | --- |

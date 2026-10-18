@@ -1,6 +1,6 @@
 # 002 — Telemetry Agent Design
 
-Status: Draft · Owner: TBD · Last updated: 2026-09-07
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 ## 1. Process model
 
@@ -58,6 +58,16 @@ is discarded while the source file remains the durable log (ADR 0004). Smaller d
 queues still bound memory while blocking rather than dropping (`NFR-REL-009`).
 
 ## 2. Log Monitor
+
+The agent reads logs on the host it runs on. On 2026-10-16 the sponsor allowed two
+placements: a server that connects to the log host remotely, or the agent on the same host
+"if it is within the metrics, not consuming more memory". Day-1 keeps co-location.
+
+- It fits the resource budget (`NFR-PERF-003`).
+- Raw lines never cross the network (`NFR-SEC-001`, ADR 0004).
+
+Fetching logs remotely (SSH/SFTP) is a separate spike. It must keep raw lines off the wire
+or justify an exception before any build ([Q-13](../plan/open-questions.md)).
 
 ### 2.1 Requirements
 
@@ -164,6 +174,22 @@ See [011-observability-and-runbooks.md](./011-observability-and-runbooks.md).
 `FR-HLT-001`: A heartbeat MUST be published every `heartbeatInterval` (default `10s`) even
 when there is no telemetry, and MUST include read lag, parse error counts, callback failure
 counts, queue depths and drop counters.
+
+### 7.1 Host Monitor
+
+The Host Monitor samples system events, which are conditions of the host and of Magic's
+process rather than of its logs, so they can be pushed as alerts (spec 004 §2.2). It is part
+of the Health Reporter. It reads OS counters only and never reads file contents.
+
+| ID | Requirement |
+| --- | --- |
+| `FR-HLT-013` | Every `host.sampleInterval` (default `30s`) the agent MUST sample the free/total bytes of each filesystem in `host.diskPaths` and the used/total physical memory, and report them as the gauges in spec 004 `FR-MET-034`. |
+| `FR-HLT-014` | When `host.process.name` is set, the agent MUST report `magic_process_up` (1/0) on the same tick by matching running process names. Matching MUST be by exact executable name, never by command line, so no argument text is read. |
+| `FR-HLT-015` | Sampling MUST stay within the agent budget (`NFR-PERF-003`). It MUST run off the parsing path and never block log reading. A failed read (permission, platform) MUST omit that gauge and count `host_sample_errors`; it MUST NOT stop the agent. |
+| `FR-HLT-016` | The heartbeat's `resourceUsage` (spec 004 §6) MUST report the agent process's own RSS and CPU. It is set from the same sampler, so it is never the always-zero default. |
+
+Alerting on these gauges is configuration: `HostDiskFull`, `HostMemoryHigh` and
+`ApplicationDown` in spec 005 §1.2.
 
 ## 8. Sequence flows
 

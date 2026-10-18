@@ -1,74 +1,106 @@
-This is an SMU FinTech project sponsored by UBS called Unified Telemetry Intelligence for the Magic trading application.
+# Project instructions
 
-Architecture constraints:
+SMU FinTech project sponsored by UBS: Unified Telemetry Intelligence for the
+Magic trading application.
 
-- Monorepo.
-- Python 3.14+ unless a strong technical reason requires otherwise.
-- No frontend. User interface is Microsoft Teams.
-- One Magic instance has one Telemetry Agent deployed alongside it.
-- Many Telemetry Agents send structured telemetry to one logical Telemetry Backend.
-- Backend must support horizontal scaling.
-- Backend instances should be stateless.
-- Redis is the shared volatile Day-1 state store.
-- Day-1 must not require persistent telemetry storage.
-- Day-2 adds PostgreSQL for permitted historical telemetry.
-- Never persist raw Magic logs or full raw FIX payloads.
-- Persist only necessary derived/sanitised telemetry such as aggregated metrics, alert history, anomaly records, callback delivery state, configuration history, and approved structured fields.
-- Telemetry Agent must target <2% host CPU and <500 MB RAM.
-- Agent performs lightweight processing close to Magic:
-  log monitor -> parser -> metrics aggregator -> rule engine -> callback dispatcher -> backend publisher -> health reporter.
-- Expensive historical anomaly analysis belongs in the backend, not the Agent.
-- Backend uses FastAPI.
-- Shared schemas use Pydantic.
-- Redis access must be abstracted through repositories/services, not called directly from FastAPI route handlers.
-- Day-2 persistence should similarly use repository abstractions.
-- Microsoft Teams integration talks only to Backend APIs and must not directly query Redis/PostgreSQL.
-- Magic simulator generates configurable FIX send/receive logs for development.
-- Docker Compose should eventually allow developers to run the local stack easily.
-- Use pytest for testing.
-- Use Ruff for formatting/linting.
-- Use mypy or equivalent static type checking.
-- Prefer asyncio/non-blocking I/O where appropriate.
-- Keep dependencies lightweight, especially in the Telemetry Agent.
-- Do not introduce Kubernetes unless specifically requested.
-- Never commit secrets.
-- Do not invent UBS-specific production data or thresholds.
-- Thresholds and anomaly parameters must be configurable.
-- Maintain clear separation between Day-1 deterministic rules and Day-2 anomaly detection.
+## Requirements and decisions
 
-Development principle:
-Do not overengineer. Build the smallest testable implementation that supports the architecture and user stories.
+Before changing code, read [domain guidance](docs/agents/domain.md), the specs in
+`docs/specs/` that cover the affected components, and the relevant decisions in
+`docs/adr/`. Use requirement IDs in tests and proposals. Specs are authoritative
+requirements; `docs/plan/` contains working notes. Surface conflicts with accepted
+ADRs or specs explicitly rather than silently overriding them.
+
+Use the Python version declared in `pyproject.toml` (currently 3.14+). Older
+architecture documents mentioning Python 3.12 do not lower the workspace minimum.
+
+## Architecture constraints
+
+- Keep the monorepo and shared Pydantic schemas in `packages/telemetry_shared/`.
+- User interaction is through Microsoft Teams or Copilot and backend APIs; a
+  standalone frontend is outside the current scope.
+- Default to one Telemetry Agent per Magic host, with multiple instances supported
+  through per-file-set `instanceId` configuration. Per-instance deployment is an
+  option when isolation is required (spec 001 §4).
+- Many agents publish structured telemetry to one logical, horizontally scalable
+  FastAPI backend.
+- Day-1 metric storage uses process-local, bounded in-memory time buckets
+  ([ADR 0005](docs/adr/0005-in-memory-metric-store.md)). Cross-replica queries must
+  preserve completeness through the routing and scatter-gather requirements in
+  specs 001 and 006. Redis is not a required Day-1 dependency.
+- Keep storage access behind repository/service abstractions; route handlers and
+  Teams/Copilot adapters use those interfaces or backend APIs.
+- Day-1 requires no durable telemetry storage. Day-2 historical storage must hold
+  only approved derived/sanitised telemetry and remain behind storage abstractions.
+- Raw Magic logs and full raw FIX payloads must remain on the Magic host and must
+  never be copied into telemetry storage, published payloads or diagnostic output
+  ([ADR 0004](docs/adr/0004-no-raw-log-persistence.md)). Publish only allowlisted,
+  sanitised fields and derived metrics/events.
+- Target Agent resource usage: <2% host CPU and <500 MB RAM at the agreed load
+  (`NFR-PERF-003`). Keep dependencies lightweight and queues bounded.
+- Keep log monitoring, parsing, aggregation, deterministic rules and signed Magic
+  callbacks in the Agent. Alerting must continue during a backend outage; callback
+  dispatch must not depend on successful backend publication.
+- Expensive historical anomaly analysis belongs in the backend. Keep Day-1
+  deterministic rules separate from Day-2 anomaly detection.
+- Thresholds and anomaly parameters must be configurable. Use synthetic development
+  data; UBS production data and thresholds require an approved source.
+- The Magic simulator generates configurable FIX send/receive logs for development.
+- Prefer asyncio/non-blocking I/O where appropriate. Keep CPU-bound parsing off the
+  supervisor loop as described in ADR 0006.
+- Use Docker Compose for local stack orchestration when needed. Introduce
+  Kubernetes only when explicitly requested.
+- Keep secrets out of commits.
+
+## Development workflow
+
+Build the smallest testable implementation that supports the requirements. Keep
+changes within the requested scope.
 
 Before implementing large changes:
-1. inspect existing code,
-2. explain the intended change,
-3. identify affected files,
-4. implement,
-5. run tests/lint/type checks,
-6. summarise results.
 
-Do not make unrelated changes.
+1. Inspect the affected code, specs and ADRs.
+2. Explain the intended change and identify affected files.
+3. Implement the change.
+4. Run relevant pytest tests, Ruff formatting/lint checks and mypy type checks.
+   Consult `Makefile` and `pyproject.toml` for commands and configured scope.
+5. Summarise the result, validation and any remaining limitations.
 
-## graphify
+## Graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+When `graphify-out/graph.json` exists and the `graphify` command is available:
 
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- For codebase questions, first run `graphify query "<question>"`. Use
+  `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"`
+  for focused concepts.
+- Use `graphify-out/wiki/index.md` for broad navigation when it exists.
+- Read `graphify-out/GRAPH_REPORT.md` for broad architecture reviews or when the
+  scoped commands provide insufficient context.
+- After modifying code, run `graphify update .` to refresh the graph (AST-only).
 
-## Agent skills
+If Graphify is unavailable or its results are stale or incomplete, inspect the
+source directly. Graph results are navigation aids; verify findings against code.
 
-### Issue tracker
+## Agent guidance
 
-Issues live in Jira project UBS (avengersfyp.atlassian.net), via the Atlassian Rovo MCP tools. See `docs/agents/issue-tracker.md`.
+- **Jira work:** Read [issue tracker guidance](docs/agents/issue-tracker.md) before
+  reading or updating UBS issues. Use the configured Atlassian Rovo MCP tools when
+  available; report unavailable access rather than substituting GitHub Issues.
+- **Triage:** Read [triage label mappings](docs/agents/triage-labels.md) when applying
+  Jira triage labels.
+- **Domain terminology:** Follow [domain guidance](docs/agents/domain.md) when
+  naming concepts or proposing spec, glossary or ADR changes.
 
-### Triage labels
+## Git attribution
 
-The five default roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), applied as Jira labels. See `docs/agents/triage-labels.md`.
+- Use the existing Git-configured identity as the commit author; preserve
+  `user.name` and `user.email`.
+- Commit messages and pull requests must contain no `Co-Authored-By` trailers,
+  AI contributor claims, signatures or attribution footers.
 
-### Domain docs
+## Subagent usage policy
 
-Single-context: root `GLOSSARY.md` (created lazily) + `docs/adr/`, with `docs/specs/` as the requirements source. See `docs/agents/domain.md`.
+When delegation is appropriate and the runtime supports model selection, prefer
+Sonnet for basic exploration and independent implementation. Use Opus subagents
+only when advanced reasoning is necessary. If these models are unavailable, use
+supported models without assuming a cross-provider equivalent.
