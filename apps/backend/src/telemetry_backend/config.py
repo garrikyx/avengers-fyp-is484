@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -171,6 +172,98 @@ def parse_duration_seconds(value: str | int | float) -> float:
     return float(number) * _DURATION_UNIT_SECONDS[unit]
 
 
+OSS_LLM_PROVIDERS: frozenset[str] = frozenset(
+    {"openai-compatible", "ollama", "vllm"}
+)
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+DEFAULT_VLLM_BASE_URL = "http://127.0.0.1:8000/v1"
+OSS_LLM_DEFAULT_TIMEOUT_SECONDS = 25.0
+AZURE_LLM_DEFAULT_TIMEOUT_SECONDS = 2.0
+
+
+@dataclass(slots=True, frozen=True)
+class LlmConfig:
+    provider: str = "openai-compatible"
+    model: str = "llama3.2"
+    base_url: str | None = DEFAULT_OLLAMA_BASE_URL
+    deployment: str = "gpt-4o-mini"
+    endpoint: str | None = None
+    api_version: str = "2024-08-01-preview"
+    timeout_seconds: float = OSS_LLM_DEFAULT_TIMEOUT_SECONDS
+    max_retries: int = 1
+    structured_output: bool = True
+    require_api_key: bool = False
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise BackendConfigError("nl.llm.timeout must be > 0")
+        if self.max_retries < 0:
+            raise BackendConfigError("nl.llm.maxRetries must be >= 0")
+
+
+def resolve_llm_config(
+    config: LlmConfig, *, timeout_from_yaml: bool
+) -> LlmConfig:
+    """Apply provider-specific defaults after YAML merge."""
+    provider = config.provider
+    if provider not in OSS_LLM_PROVIDERS | {"azure-openai", "mock"}:
+        raise BackendConfigError(f"unsupported nl.llm.provider {provider!r}")
+
+    timeout = config.timeout_seconds
+    if not timeout_from_yaml:
+        if provider == "azure-openai":
+            timeout = AZURE_LLM_DEFAULT_TIMEOUT_SECONDS
+        elif provider in OSS_LLM_PROVIDERS:
+            timeout = OSS_LLM_DEFAULT_TIMEOUT_SECONDS
+
+    if provider in OSS_LLM_PROVIDERS:
+        base_url = config.base_url
+        if base_url is None:
+            base_url = (
+                DEFAULT_VLLM_BASE_URL
+                if provider == "vllm"
+                else DEFAULT_OLLAMA_BASE_URL
+            )
+        return replace(config, base_url=base_url, timeout_seconds=timeout)
+
+    if provider == "azure-openai":
+        return replace(config, timeout_seconds=timeout)
+
+    return replace(config, timeout_seconds=timeout)
+
+
+@dataclass(slots=True, frozen=True)
+class NlConfig:
+    enabled: bool = False
+    max_question_chars: int = 500
+    per_user_rate_limit_per_minute: int = 20
+    default_timezone: str = "Asia/Singapore"
+    default_time_range: str = "30m"
+    llm: LlmConfig = field(default_factory=LlmConfig)
+
+    def __post_init__(self) -> None:
+        if self.max_question_chars < 1:
+            raise BackendConfigError("nl.maxQuestionChars must be >= 1")
+        if self.per_user_rate_limit_per_minute < 1:
+            raise BackendConfigError("nl.perUserRateLimitPerMinute must be >= 1")
+
+
+def ensure_nl_llm_credentials(config: NlConfig) -> None:
+    if not config.enabled:
+        return
+    provider = config.llm.provider
+    needs_key = provider == "azure-openai" or (
+        provider in OSS_LLM_PROVIDERS and config.llm.require_api_key
+    )
+    if not needs_key:
+        return
+    if not os.environ.get("MAGIC_TELEMETRY_LLM_API_KEY"):
+        raise BackendConfigError(
+            "MAGIC_TELEMETRY_LLM_API_KEY is required when nl is enabled "
+            f"with {provider} (NFR-SEC-004)"
+        )
+
+
 @dataclass(slots=True, frozen=True)
 class IngestGuardConfig:
     """UBS-85: batch dedupe (FR-ING-004) and per-agent rate limiting
@@ -251,6 +344,28 @@ class _AlertingYaml(_Lenient):
     missing_heartbeat_threshold: str | int | float | None = None
 
 
+class _LlmYaml(_Lenient):
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    deployment: str | None = None
+    endpoint: str | None = None
+    api_version: str | None = None
+    timeout: str | int | float | None = None
+    max_retries: int | None = None
+    structured_output: bool | None = None
+    require_api_key: bool | None = None
+
+
+class _NlYaml(_Lenient):
+    enabled: bool | None = None
+    max_question_chars: int | None = None
+    per_user_rate_limit_per_minute: int | None = None
+    default_timezone: str | None = None
+    default_time_range: str | None = None
+    llm: _LlmYaml | None = None
+
+
 class _IngestYaml(_Lenient):
     # `maxBodyBytes` and `queueSize` live in this section too but are read
     # elsewhere (or not yet); `extra="allow"` keeps them legal.
@@ -267,18 +382,19 @@ class _BackendConfigYaml(BaseModel):
     store: _StoreYaml | None = None
     alerting: _AlertingYaml | None = None
     ingest: _IngestYaml | None = None
+    nl: _NlYaml | None = None
 
 
 def _drop_none(**kwargs: Any) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
-def load_backend_health_config(path: Path | str | None) -> BackendHealthConfig:
+def _load_backend_yaml(path: Path | str | None) -> _BackendConfigYaml:
     if path is None:
-        return BackendHealthConfig()
+        return _BackendConfigYaml()
     file = Path(path)
     if not file.exists():
-        return BackendHealthConfig()
+        return _BackendConfigYaml()
     try:
         raw = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
@@ -286,9 +402,48 @@ def load_backend_health_config(path: Path | str | None) -> BackendHealthConfig:
     if not isinstance(raw, dict):
         raise BackendConfigError(f"{file}: top level must be a mapping")
     try:
-        parsed = _BackendConfigYaml.model_validate(raw)
+        return _BackendConfigYaml.model_validate(raw)
     except ValidationError as exc:
         raise BackendConfigError(f"{file}: {exc}") from exc
+
+
+def load_nl_config(path: Path | str | None) -> NlConfig:
+    parsed = _load_backend_yaml(path)
+    nl = parsed.nl or _NlYaml()
+    llm = nl.llm or _LlmYaml()
+    timeout_from_yaml = llm.timeout is not None
+    raw_llm = LlmConfig(
+        **_drop_none(
+            provider=llm.provider,
+            model=llm.model,
+            base_url=llm.base_url,
+            deployment=llm.deployment,
+            endpoint=llm.endpoint,
+            api_version=llm.api_version,
+            timeout_seconds=(
+                parse_duration_seconds(llm.timeout)
+                if llm.timeout is not None
+                else None
+            ),
+            max_retries=llm.max_retries,
+            structured_output=llm.structured_output,
+            require_api_key=llm.require_api_key,
+        )
+    )
+    return NlConfig(
+        **_drop_none(
+            enabled=nl.enabled,
+            max_question_chars=nl.max_question_chars,
+            per_user_rate_limit_per_minute=nl.per_user_rate_limit_per_minute,
+            default_timezone=nl.default_timezone,
+            default_time_range=nl.default_time_range,
+            llm=resolve_llm_config(raw_llm, timeout_from_yaml=timeout_from_yaml),
+        )
+    )
+
+
+def load_backend_health_config(path: Path | str | None) -> BackendHealthConfig:
+    parsed = _load_backend_yaml(path)
 
     backend = parsed.backend or _BackendYaml()
     store = parsed.store or _StoreYaml()
