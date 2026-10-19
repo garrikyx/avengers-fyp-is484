@@ -858,9 +858,9 @@
     "semantic_hash": "ecd272d15b3b2cb2ac3bac809ff44ae2"
   },
   "README.md": {
-    "mtime": 1792135214.6194851,
-    "seen": 1792135335.919306,
-    "ast_hash": "a6c3c7b060b8e2e7fdb306995e014cde",
+    "mtime": 1792380433.9755383,
+    "seen": 1792380452.752182,
+    "ast_hash": "bf1e0855b0ca8f344a329ec4f1ac636b",
     "semantic_hash": ""
   },
   "apps/agent/testdata/fix/demo_logs.txt": {
@@ -906,10 +906,10 @@
     "semantic_hash": ""
   },
   "docs/README.md": {
-    "mtime": 1788872696.3091476,
-    "seen": 1791724864.384309,
-    "ast_hash": "7546b1fb2fdfdf2ed049d63e652c3e8e",
-    "semantic_hash": "7546b1fb2fdfdf2ed049d63e652c3e8e"
+    "mtime": 1792380267.2220292,
+    "seen": 1792380272.798329,
+    "ast_hash": "237e96ff30ecc16de1ced3a1cb371b17",
+    "semantic_hash": ""
   },
   "docs/adr/0001-agent-in-go.md": {
     "mtime": 1788359877.923884,
@@ -918,10 +918,10 @@
     "semantic_hash": "6a75d3d2854a9f3f469f02ba0a0956ab"
   },
   "docs/adr/0002-backend-in-python-fastapi.md": {
-    "mtime": 1788872696.3094275,
-    "seen": 1791724864.384311,
-    "ast_hash": "72c4a08d4a7044ab8890950cb6b78a11",
-    "semantic_hash": "72c4a08d4a7044ab8890950cb6b78a11"
+    "mtime": 1792380267.2224233,
+    "seen": 1792380272.79833,
+    "ast_hash": "4bad5f043d1e0b510e2237c01206ec05",
+    "semantic_hash": ""
   },
   "docs/adr/0003-https-json-transport-day-1.md": {
     "mtime": 1787582680.0154977,
@@ -942,10 +942,10 @@
     "semantic_hash": "3d34f152d00c754061c616a95c7561e8"
   },
   "docs/adr/0006-agent-in-python.md": {
-    "mtime": 1789994127.8942125,
-    "seen": 1791724864.384313,
-    "ast_hash": "4ed1359602e64205f2b6766c0d363fe4",
-    "semantic_hash": "4ed1359602e64205f2b6766c0d363fe4"
+    "mtime": 1792380267.2232733,
+    "seen": 1792380272.798332,
+    "ast_hash": "f1332a0e117c9399a1b8b7f85ee0bd39",
+    "semantic_hash": ""
   },
   "docs/plan/implementation-status.md": {
     "mtime": 1792120734.0554225,
@@ -960,9 +960,9 @@
     "semantic_hash": "3582b6a9fc389088d42c8d809623561c"
   },
   "docs/plan/open-questions.md": {
-    "mtime": 1792135214.6742365,
-    "seen": 1792135335.9193642,
-    "ast_hash": "0cad890bc9488401ab8b7a9377b917b3",
+    "mtime": 1792380415.594953,
+    "seen": 1792380452.752198,
+    "ast_hash": "c243206a525dfd32e985c83f350514ee",
     "semantic_hash": ""
   },
   "docs/plan/re-epic-implementation-summary.md": {
@@ -972,10 +972,10 @@
     "semantic_hash": ""
   },
   "docs/plan/scaffold.md": {
-    "mtime": 1792135214.7052045,
-    "seen": 1792135335.919371,
-    "ast_hash": "f7b00e585fdae0526671ef5077d2699f",
-    "semantic_hash": "f7b00e585fdae0526671ef5077d2699f"
+    "mtime": 1792380433.9759266,
+    "seen": 1792380452.7522,
+    "ast_hash": "5d593674f8b9558d00ffac6a733bcd41",
+    "semantic_hash": ""
   },
   "docs/plan/ubs30-notes.md": {
     "mtime": 1788710746.0593793,
@@ -996,16 +996,16 @@
     "semantic_hash": "09d3a31297d7df98cd406750e850103d"
   },
   "docs/specs/000-overview.md": {
-    "mtime": 1792135214.9238336,
-    "seen": 1792135335.9193861,
-    "ast_hash": "bb06ca7bf8a597f878681b30bc6762b1",
+    "mtime": 1792380415.4679842,
+    "seen": 1792380452.752204,
+    "ast_hash": "1c9bd6d40b3d57f12c3e03c1394517c7",
     "semantic_hash": ""
   },
   "docs/specs/001-architecture.md": {
-    "mtime": 1792135214.9563365,
-    "seen": 1792135335.9193878,
-    "ast_hash": "37d125653ad22721ec67740747891937",
-    "semantic_hash": "37d125653ad22721ec67740747891937"
+    "mtime": 1792380415.5343668,
+    "seen": 1792380452.7522051,
+    "ast_hash": "1b72b5b2cbcd122441fdef8b6b7878a2",
+    "semantic_hash": ""
   },
   "docs/specs/002-agent.md": {
     "mtime": 1792122553.0520804,
@@ -1014,51 +1014,51 @@
     "semantic_hash": ""
   },
   "docs/specs/003-fix-parsing.md": {
-    "mtime": 1792135215.0052953,
-    "seen": 1792135335.919392,
-    "ast_hash": "40c4f3c303638ca185e31d92dd762be2",
-    "semantic_hash": "40c4f3c303638ca185e31d92dd762be2"
+    "mtime": 1792380415.5345116,
+    "seen": 1792380452.752206,
+    "ast_hash": "c84f18a290372c7733bd28ef7cd804fd",
+    "semantic_hash": ""
   },
   "docs/specs/004-telemetry-data-model.md": {
-    "mtime": 1792135215.0543578,
-    "seen": 1792135335.919395,
-    "ast_hash": "6e65e11e5c91ab11dffeabae029de49c",
+    "mtime": 1792380415.5361295,
+    "seen": 1792380452.752206,
+    "ast_hash": "e2071ed8c09f4d61219d0266be0e7f43",
     "semantic_hash": ""
   },
   "docs/specs/005-alerting-and-callbacks.md": {
-    "mtime": 1792135215.7522786,
-    "seen": 1792135335.919397,
-    "ast_hash": "b405070f987fca4cd15280355ba901f8",
+    "mtime": 1792380433.9761786,
+    "seen": 1792380452.752207,
+    "ast_hash": "b2d2b0d210ecef65a2f20cfd28aedc2d",
     "semantic_hash": ""
   },
   "docs/specs/006-backend.md": {
-    "mtime": 1792135215.9740927,
-    "seen": 1792135335.919399,
-    "ast_hash": "fb44f1ab3a93e42eaccf504c2163f751",
-    "semantic_hash": "fb44f1ab3a93e42eaccf504c2163f751"
+    "mtime": 1792380415.5674646,
+    "seen": 1792380452.752207,
+    "ast_hash": "f3dbc4ea4cc87e35e392c47e42b22971",
+    "semantic_hash": ""
   },
   "docs/specs/007-api-contracts.md": {
-    "mtime": 1792135216.3346217,
-    "seen": 1792135335.919401,
-    "ast_hash": "a5495a0444ccbb967ebc9c1e384f90f3",
-    "semantic_hash": "a5495a0444ccbb967ebc9c1e384f90f3"
+    "mtime": 1792380415.565393,
+    "seen": 1792380452.7522078,
+    "ast_hash": "dd370053770853efd418ea5612caa770",
+    "semantic_hash": ""
   },
   "docs/specs/008-nl-query.md": {
-    "mtime": 1792135216.3896332,
-    "seen": 1792135335.919403,
-    "ast_hash": "5921ffd082e15b4529d0fad218f55575",
+    "mtime": 1792380415.5941176,
+    "seen": 1792380452.7522078,
+    "ast_hash": "8c4c3949c433ece350ffd11c11c2c1ad",
     "semantic_hash": ""
   },
   "docs/specs/009-nfr-and-security.md": {
-    "mtime": 1792135216.601657,
-    "seen": 1792135335.919405,
-    "ast_hash": "404432a2931d245f2f98d850070aae67",
-    "semantic_hash": "404432a2931d245f2f98d850070aae67"
+    "mtime": 1792380415.4750886,
+    "seen": 1792380452.752209,
+    "ast_hash": "deaae0725c0c7b65ae3116d8f104e9cc",
+    "semantic_hash": ""
   },
   "docs/specs/010-configuration.md": {
-    "mtime": 1792135216.8552384,
-    "seen": 1792135335.9194071,
-    "ast_hash": "078b885c1e009e1fca968c0c2411b55b",
+    "mtime": 1792380415.4797635,
+    "seen": 1792380452.752209,
+    "ast_hash": "4135f1dae6d24847961d744f08f3f2a2",
     "semantic_hash": ""
   },
   "docs/specs/011-observability-and-runbooks.md": {
@@ -1068,10 +1068,10 @@
     "semantic_hash": "4bade51d9558c86e283d520d9d17f971"
   },
   "docs/specs/012-testing-strategy.md": {
-    "mtime": 1792135216.9040987,
-    "seen": 1792135335.91941,
-    "ast_hash": "1a45fdc7dddd518df9401d709bd7655b",
-    "semantic_hash": "1a45fdc7dddd518df9401d709bd7655b"
+    "mtime": 1792380415.6034715,
+    "seen": 1792380452.7522109,
+    "ast_hash": "3e34677bec436441fe9dbeff54f70c20",
+    "semantic_hash": ""
   },
   "docs/telemetry-schema.md": {
     "mtime": 1788687614.703021,
@@ -1554,9 +1554,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792124002.8802123,
-    "seen": 1792135080.7941692,
-    "ast_hash": "8f03608456d5d314f9c3f0c07f833863",
+    "mtime": 1792380267.2209923,
+    "seen": 1792380272.798323,
+    "ast_hash": "5ec4d4bfbeef80ca2b9089f8762dab45",
     "semantic_hash": ""
   },
   "apps/backend/src/telemetry_backend/api/__init__.py": {
@@ -1782,9 +1782,9 @@
     "semantic_hash": ""
   },
   "docs/plan/sponsor-email-deployment-clarifications.md": {
-    "mtime": 1792135214.7829735,
-    "seen": 1792135335.919373,
-    "ast_hash": "93f00b81f4aabf215b08a713a2b1037f",
+    "mtime": 1792380433.9757223,
+    "seen": 1792380452.7522,
+    "ast_hash": "4db37c000b3d13d18dd29a4dfe962b3b",
     "semantic_hash": ""
   },
   "tests/integration/agent/test_UBS_110_rule_engine_to_callbacks.py": {
@@ -2046,9 +2046,9 @@
     "semantic_hash": ""
   },
   "docs/adr/0007-mcp-server-for-copilot.md": {
-    "mtime": 1792135214.6392026,
-    "seen": 1792135335.9193442,
-    "ast_hash": "85ebd914572ab19f8418e7f167419a44",
+    "mtime": 1792380415.5453491,
+    "seen": 1792380452.752192,
+    "ast_hash": "401ea02286fdd509ceeac1b19472012d",
     "semantic_hash": ""
   },
   "docs/adr/0008-configurable-action-hooks.md": {
@@ -2061,6 +2061,18 @@
     "mtime": 1792120734.0559797,
     "seen": 1792123235.6282492,
     "ast_hash": "0e1d76f04455e820195f2934899dfef0",
+    "semantic_hash": ""
+  },
+  ".markdownlint-cli2.yaml": {
+    "mtime": 1792380267.218866,
+    "seen": 1792380272.798322,
+    "ast_hash": "c4f9f7bf8a54b34faceef00fb6f4f407",
+    "semantic_hash": ""
+  },
+  ".pre-commit-config.yaml": {
+    "mtime": 1792380267.2193942,
+    "seen": 1792380272.798322,
+    "ast_hash": "c5e88fc1f7fac30bacb86f1144790b0b",
     "semantic_hash": ""
   }
 }
