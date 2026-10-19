@@ -219,11 +219,15 @@ nl:
   maxQuestionChars: 500
   perUserRateLimitPerMinute: 20
   llm:
-    provider: azure-openai
-    deployment: gpt-4o-mini
-    timeout: 2s
+    provider: ollama # mock | openai-compatible | ollama | vllm | azure-openai
+    baseUrl: http://127.0.0.1:11434/v1
+    model: llama3.2 # must match `ollama pull` / vLLM served model
+    timeout: 30s # OSS defaults ~25s; azure-openai default 2s (FR-NLQ-021)
     maxRetries: 1
     structuredOutput: true # FR-NLQ-007
+    requireApiKey: false # true for authenticated vLLM / LiteLLM / OpenAI-compat
+    deployment: gpt-4o-mini # azure-openai only
+    endpoint: "" # azure-openai resource URL
   defaultTimezone: Asia/Singapore
   defaultTimeRange: 30m
 
@@ -235,14 +239,14 @@ auth:
 
 ## 3. Required environment variables
 
-| Variable                              | Component | Purpose                                                       |
-| ------------------------------------- | --------- | ------------------------------------------------------------- |
-| `MAGIC_TELEMETRY_PUBLISH_TOKEN`       | Agent     | Bearer token for backend ingestion (when `agentAuth: bearer`) |
-| `MAGIC_TELEMETRY_CALLBACK_SECRET`     | Agent     | HMAC-SHA256 key for callback signing                          |
-| `MAGIC_TELEMETRY_ID_HASH_KEY`         | Agent     | HMAC key for identifier hashing (`FR-PRS-021`)                |
-| `MAGIC_TELEMETRY_AGENT_TOKENS`        | Backend   | Agent token store reference or secret manager path            |
-| `MAGIC_TELEMETRY_LLM_API_KEY`         | Backend   | LLM credential for the NL fallback                            |
-| `MAGIC_TELEMETRY_ENTRA_CLIENT_SECRET` | Backend   | Entra app credential                                          |
+| Variable                              | Component | Purpose                                                                                                                                                    |
+| ------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAGIC_TELEMETRY_PUBLISH_TOKEN`       | Agent     | Bearer token for backend ingestion (when `agentAuth: bearer`)                                                                                              |
+| `MAGIC_TELEMETRY_CALLBACK_SECRET`     | Agent     | HMAC-SHA256 key for callback signing                                                                                                                       |
+| `MAGIC_TELEMETRY_ID_HASH_KEY`         | Agent     | HMAC key for identifier hashing (`FR-PRS-021`)                                                                                                             |
+| `MAGIC_TELEMETRY_AGENT_TOKENS`        | Backend   | Agent token store reference or secret manager path                                                                                                         |
+| `MAGIC_TELEMETRY_LLM_API_KEY`         | Backend   | LLM credential: required for `azure-openai`; optional for local Ollama; required when `nl.llm.requireApiKey` is true (Bearer on OpenAI-compatible clients) |
+| `MAGIC_TELEMETRY_ENTRA_CLIENT_SECRET` | Backend   | Entra app credential                                                                                                                                       |
 
 `NFR-SEC-004`: the process MUST fail to start if a required secret is missing, rather
 than falling back to an insecure default. The `ID_HASH_KEY` MUST be identical across

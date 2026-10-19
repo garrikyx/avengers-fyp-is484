@@ -94,6 +94,22 @@ class QueryEngine:
         self._query_config = query_config or QueryConfig()
         self._stream_config = stream_config or stream_processor._config
 
+    @property
+    def store(self) -> MetricStore:
+        return self._store
+
+    def prepare_metrics_query(
+        self, request: MetricsQueryRequest, *, now: datetime
+    ) -> tuple[datetime, datetime]:
+        """Validate and resolve the effective UTC window (FR-NLQ-002)."""
+        from_utc, to_utc = self._resolve_time_range(request, now=now)
+        self._validate_clamps(
+            request, from_utc=from_utc, to_utc=to_utc
+        )
+        self._validate_retention(from_utc=from_utc, to_utc=to_utc, now=now)
+        self._validate_metrics_and_dimensions(request)
+        return from_utc, to_utc
+
     async def query(
         self,
         request: MetricsQueryRequest,
@@ -129,10 +145,7 @@ class QueryEngine:
     def _execute_sync(
         self, request: MetricsQueryRequest, *, now: datetime
     ) -> MetricsQueryResponse:
-        from_utc, to_utc = self._resolve_time_range(request, now=now)
-        self._validate_clamps(request, from_utc=from_utc, to_utc=to_utc)
-        self._validate_retention(from_utc=from_utc, to_utc=to_utc, now=now)
-        self._validate_metrics_and_dimensions(request)
+        from_utc, to_utc = self.prepare_metrics_query(request, now=now)
 
         stored_group_by = tuple(
             resolve_dimension_name(dim) for dim in request.group_by
@@ -601,11 +614,8 @@ class QueryEngine:
         failed_peers: list[str] | None = None,
         partial: bool = False,
     ) -> DataCompleteness:
-        expected_ids = self._registry.all_agent_ids()
-        stale_records = self._registry.agents_exceeding_threshold(
-            self._query_config.missing_heartbeat_threshold_seconds, now=now
-        )
-        stale_agents = [record.agent_id for record in stale_records]
+        expected_ids = [record.agent_id for record in self._registry.all()]
+        stale_agents = self._registry.stale_agents(at=now)
         confidence: str = "complete"
         if stale_agents or restarted_buckets > 0 or partial or failed_peers:
             confidence = "partial"

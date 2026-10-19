@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 
 from fastapi import Request
 
-from telemetry_backend.config import AlertingConfig, BackendHealthConfig
+from telemetry_backend.config import AlertingConfig, BackendHealthConfig, NlConfig
+from telemetry_backend.nl.service import NlQueryService
 from telemetry_backend.services.agent_registry import AgentRegistry
 from telemetry_backend.services.alert_store import AlertStore
 from telemetry_backend.services.event_store import EventStore
@@ -33,6 +34,8 @@ def _utc_now() -> datetime:
 @dataclass(slots=True)
 class AppDeps:
     config: BackendHealthConfig = field(default_factory=BackendHealthConfig)
+    nl_config: NlConfig = field(default_factory=NlConfig)
+    nl_service: NlQueryService | None = None
     clock: Clock = _utc_now
     registry: AgentRegistry = field(init=False)
     alert_store: AlertStore = field(default_factory=AlertStore)

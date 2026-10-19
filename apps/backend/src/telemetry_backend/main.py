@@ -38,7 +38,11 @@ from telemetry_shared.models.ingestion import (
     TelemetryBatch,
     TelemetryEvent,
 )
-from telemetry_shared.models.metrics_query import MetricsQueryRequest, MetricsQueryResponse
+from telemetry_shared.models.metrics_query import (
+    MetricsQueryRequest,
+    MetricsQueryResponse,
+)
+from telemetry_shared.models.nl_query import NlQueryRequest
 
 from telemetry_backend.api import health as health_api
 from telemetry_backend.api import internal as internal_api
@@ -46,9 +50,13 @@ from telemetry_backend.config import (
     BackendConfigError,
     QueryConfig,
     StreamProcessorConfig,
+    ensure_nl_llm_credentials,
     load_backend_health_config,
+    load_nl_config,
 )
 from telemetry_backend.deps import AppDeps
+from telemetry_backend.nl.factory import build_nl_service
+from telemetry_backend.nl.intents import build_intents_response
 from telemetry_backend.services.ingest_guard import Duplicate, RateLimited
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
 from telemetry_backend.services.query_engine import (
@@ -220,6 +228,14 @@ def create_app(
         agent_registry=registry,
         query_config=qconfig,
     )
+    if app_deps.nl_service is None and app_deps.nl_config.enabled:
+        app_deps.nl_service = build_nl_service(
+            app_deps.nl_config,
+            query_engine=engine,
+            alert_store=store,
+            stream_config=stream._config,
+        )
+    nl_service = app_deps.nl_service
     fanout_client: HttpxFanoutClient | None = None
     if qconfig.query_mode == "fanout" and qconfig.replica_registry:
         fanout_client = HttpxFanoutClient()
@@ -633,6 +649,38 @@ def create_app(
             )
         return detail
 
+    @app.get("/telemetry/nl/intents")
+    async def nl_intents(request: Request) -> JSONResponse:
+        if not app_deps.nl_config.enabled:
+            return _error_response(
+                request,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="internal_error",
+                message="Natural language queries are disabled.",
+                details=[],
+            )
+        body = build_intents_response()
+        return JSONResponse(content=body.model_dump(mode="json", by_alias=True))
+
+    @app.post("/telemetry/nl/query")
+    async def nl_query(request: Request, payload: NlQueryRequest) -> JSONResponse:
+        if not app_deps.nl_config.enabled or nl_service is None:
+            return _error_response(
+                request,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="internal_error",
+                message="Natural language queries are disabled.",
+                details=[],
+            )
+        outcome = await nl_service.interpret_and_query(
+            payload.question,
+            context=payload.context,
+            now=app_deps.clock(),
+        )
+        return JSONResponse(
+            content=outcome.answer.model_dump(mode="json", by_alias=True)
+        )
+
     return app
 
 
@@ -705,12 +753,16 @@ def main() -> None:
     )
     try:
         config = load_backend_health_config(args.config)
+        nl_config = load_nl_config(args.config)
+        ensure_nl_llm_credentials(nl_config)
     except BackendConfigError as exc:
         raise SystemExit(f"config error: {exc}") from exc
     if args.check_config:
-        print(f"config ok: {config}")
+        print(f"config ok: {config}, nl={nl_config}")
         return
     try:
-        asyncio.run(_serve(AppDeps(config=config), args.log_level))
+        asyncio.run(
+            _serve(AppDeps(config=config, nl_config=nl_config), args.log_level)
+        )
     except KeyboardInterrupt:
         pass

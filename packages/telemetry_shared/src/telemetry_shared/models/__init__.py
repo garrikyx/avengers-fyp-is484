@@ -44,6 +44,18 @@ from telemetry_shared.models.metrics_query import (
     QueryTimeRange,
     SeriesPoint,
 )
+from telemetry_shared.models.nl_query import (
+    IntentCatalogueEntry,
+    IntentId,
+    InterpretationSource,
+    InterpretedQuery,
+    NlCitation,
+    NlClarificationResponse,
+    NlIntentsResponse,
+    NlQueryContext,
+    NlQueryRequest,
+    NlQueryResponse,
+)
 from telemetry_shared.models.snapshot import HistogramPayload, SeriesEntry, Snapshot
 
 __all__ = [
@@ -69,9 +81,19 @@ __all__ = [
     "DataCompleteness",
     "EffectiveTimeRange",
     "MetricsGroup",
+    "IntentCatalogueEntry",
+    "IntentId",
+    "InterpretationSource",
+    "InterpretedQuery",
     "MetricsQueryRequest",
     "MetricsQueryResponse",
     "MetricsSnapshot",
+    "NlCitation",
+    "NlClarificationResponse",
+    "NlIntentsResponse",
+    "NlQueryContext",
+    "NlQueryRequest",
+    "NlQueryResponse",
     "QueryGroup",
     "QueryInterpretation",
     "QueryTimeRange",
