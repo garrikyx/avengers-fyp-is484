@@ -858,8 +858,8 @@
     "semantic_hash": "ecd272d15b3b2cb2ac3bac809ff44ae2"
   },
   "README.md": {
-    "mtime": 1791634355.0937488,
-    "seen": 1791724864.384305,
+    "mtime": 1792135214.6194851,
+    "seen": 1792135335.919306,
     "ast_hash": "a6c3c7b060b8e2e7fdb306995e014cde",
     "semantic_hash": ""
   },
@@ -960,8 +960,8 @@
     "semantic_hash": "3582b6a9fc389088d42c8d809623561c"
   },
   "docs/plan/open-questions.md": {
-    "mtime": 1792122598.9282553,
-    "seen": 1792123235.6282518,
+    "mtime": 1792135214.6742365,
+    "seen": 1792135335.9193642,
     "ast_hash": "0cad890bc9488401ab8b7a9377b917b3",
     "semantic_hash": ""
   },
@@ -972,8 +972,8 @@
     "semantic_hash": ""
   },
   "docs/plan/scaffold.md": {
-    "mtime": 1788872696.310365,
-    "seen": 1791724864.384319,
+    "mtime": 1792135214.7052045,
+    "seen": 1792135335.919371,
     "ast_hash": "f7b00e585fdae0526671ef5077d2699f",
     "semantic_hash": "f7b00e585fdae0526671ef5077d2699f"
   },
@@ -996,14 +996,14 @@
     "semantic_hash": "09d3a31297d7df98cd406750e850103d"
   },
   "docs/specs/000-overview.md": {
-    "mtime": 1792122445.366629,
-    "seen": 1792123235.628282,
+    "mtime": 1792135214.9238336,
+    "seen": 1792135335.9193861,
     "ast_hash": "bb06ca7bf8a597f878681b30bc6762b1",
     "semantic_hash": ""
   },
   "docs/specs/001-architecture.md": {
-    "mtime": 1788872696.310875,
-    "seen": 1791724864.384324,
+    "mtime": 1792135214.9563365,
+    "seen": 1792135335.9193878,
     "ast_hash": "37d125653ad22721ec67740747891937",
     "semantic_hash": "37d125653ad22721ec67740747891937"
   },
@@ -1014,50 +1014,50 @@
     "semantic_hash": ""
   },
   "docs/specs/003-fix-parsing.md": {
-    "mtime": 1788872696.3114948,
-    "seen": 1791724864.384325,
+    "mtime": 1792135215.0052953,
+    "seen": 1792135335.919392,
     "ast_hash": "40c4f3c303638ca185e31d92dd762be2",
     "semantic_hash": "40c4f3c303638ca185e31d92dd762be2"
   },
   "docs/specs/004-telemetry-data-model.md": {
-    "mtime": 1792122553.090721,
-    "seen": 1792123235.6282911,
+    "mtime": 1792135215.0543578,
+    "seen": 1792135335.919395,
     "ast_hash": "6e65e11e5c91ab11dffeabae029de49c",
     "semantic_hash": ""
   },
   "docs/specs/005-alerting-and-callbacks.md": {
-    "mtime": 1792122529.8034136,
-    "seen": 1792123235.628294,
+    "mtime": 1792135215.7522786,
+    "seen": 1792135335.919397,
     "ast_hash": "b405070f987fca4cd15280355ba901f8",
     "semantic_hash": ""
   },
   "docs/specs/006-backend.md": {
-    "mtime": 1788794027.7548518,
-    "seen": 1791724864.384327,
+    "mtime": 1792135215.9740927,
+    "seen": 1792135335.919399,
     "ast_hash": "fb44f1ab3a93e42eaccf504c2163f751",
     "semantic_hash": "fb44f1ab3a93e42eaccf504c2163f751"
   },
   "docs/specs/007-api-contracts.md": {
-    "mtime": 1787582680.0185595,
-    "seen": 1791724864.384328,
+    "mtime": 1792135216.3346217,
+    "seen": 1792135335.919401,
     "ast_hash": "a5495a0444ccbb967ebc9c1e384f90f3",
     "semantic_hash": "a5495a0444ccbb967ebc9c1e384f90f3"
   },
   "docs/specs/008-nl-query.md": {
-    "mtime": 1792122553.1439722,
-    "seen": 1792123235.628302,
+    "mtime": 1792135216.3896332,
+    "seen": 1792135335.919403,
     "ast_hash": "5921ffd082e15b4529d0fad218f55575",
     "semantic_hash": ""
   },
   "docs/specs/009-nfr-and-security.md": {
-    "mtime": 1788359877.926422,
-    "seen": 1791724864.3843288,
+    "mtime": 1792135216.601657,
+    "seen": 1792135335.919405,
     "ast_hash": "404432a2931d245f2f98d850070aae67",
     "semantic_hash": "404432a2931d245f2f98d850070aae67"
   },
   "docs/specs/010-configuration.md": {
-    "mtime": 1792122562.832342,
-    "seen": 1792123235.6283069,
+    "mtime": 1792135216.8552384,
+    "seen": 1792135335.9194071,
     "ast_hash": "078b885c1e009e1fca968c0c2411b55b",
     "semantic_hash": ""
   },
@@ -1068,8 +1068,8 @@
     "semantic_hash": "4bade51d9558c86e283d520d9d17f971"
   },
   "docs/specs/012-testing-strategy.md": {
-    "mtime": 1788359877.9270005,
-    "seen": 1791724864.384331,
+    "mtime": 1792135216.9040987,
+    "seen": 1792135335.91941,
     "ast_hash": "1a45fdc7dddd518df9401d709bd7655b",
     "semantic_hash": "1a45fdc7dddd518df9401d709bd7655b"
   },
@@ -1554,9 +1554,9 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1792120768.0622234,
-    "seen": 1792123235.628176,
-    "ast_hash": "72143dc3c0d4b6285f6c0c6e70c6b3e9",
+    "mtime": 1792124002.8802123,
+    "seen": 1792135080.7941692,
+    "ast_hash": "8f03608456d5d314f9c3f0c07f833863",
     "semantic_hash": ""
   },
   "apps/backend/src/telemetry_backend/api/__init__.py": {
@@ -1782,8 +1782,8 @@
     "semantic_hash": ""
   },
   "docs/plan/sponsor-email-deployment-clarifications.md": {
-    "mtime": 1791293271.3372185,
-    "seen": 1791724864.38432,
+    "mtime": 1792135214.7829735,
+    "seen": 1792135335.919373,
     "ast_hash": "93f00b81f4aabf215b08a713a2b1037f",
     "semantic_hash": ""
   },
@@ -2046,8 +2046,8 @@
     "semantic_hash": ""
   },
   "docs/adr/0007-mcp-server-for-copilot.md": {
-    "mtime": 1792122589.1930304,
-    "seen": 1792123235.6282182,
+    "mtime": 1792135214.6392026,
+    "seen": 1792135335.9193442,
     "ast_hash": "85ebd914572ab19f8418e7f167419a44",
     "semantic_hash": ""
   },

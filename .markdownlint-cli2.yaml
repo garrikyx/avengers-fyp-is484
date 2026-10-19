@@ -1,0 +1,6 @@
+config:
+  # Prettier handles wrapping; tables, URLs, and code can exceed printWidth.
+  MD013: false
+
+ignores:
+  - graphify-out/**
