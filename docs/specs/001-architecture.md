@@ -1,6 +1,6 @@
 # 001 — Architecture
 
-Status: Draft · Owner: TBD · Last updated: 2026-09-07
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 ## 1. Shape of the system
 
@@ -35,6 +35,10 @@ _The "stream proc." stage above is the Stream Processor — window alignment and
 cross-agent merge (counters sum, ratios recompute from summed numerator/denominator,
 histograms combine bucket-wise) — between the Ingestion Service and the Metric Store.
 See §2's component table and spec 006 §3._
+
+The client's dashed backend-to-agent config/control line is Day-2 scope. Day-1 agents
+read local configuration and use the specified reload mechanism; no central push is
+required for the POC (Q-12).
 
 Key property: **alerting does not depend on the backend.** The rule engine and callback
 dispatcher run in the agent, so a backend outage degrades querying but not alerting
@@ -78,16 +82,22 @@ Default: **one agent per host**, monitoring all Magic instances whose logs that 
 owns. Each monitored file set is tagged with its `instanceId` in configuration, so a
 single agent reports for multiple instances.
 
-| Option                       | When to prefer                                                    | Trade-off                                               |
-| ---------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------- |
-| One agent per host (default) | Multiple Magic instances share a host and log directory           | One failure domain for all instances on the host        |
-| One agent per instance       | Strict process isolation or per-instance resource limits required | More processes, more config, higher aggregate overhead  |
-| Remote agent on a log-share  | Logs are on a network share the agent can read                    | Read latency and share availability become dependencies |
+The Day-1 POC backend deploys on a **local server** with bounded in-memory storage and
+no telemetry database (ADR 0005). Cloud deployment is Day-2 and requires masking client
+information before approved derived telemetry is uploaded (spec 009 §3.1). Server
+ownership/access and production HA requirements remain unconfirmed (Q-13).
+
+| Option                               | When to prefer                                                    | Trade-off                                              |
+| ------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------ |
+| One agent per host (default)         | Multiple Magic instances share a host and log directory           | One failure domain for all instances on the host       |
+| One agent per instance               | Strict process isolation or per-instance resource limits required | More processes, more config, higher aggregate overhead |
+| Remote log fetching (deferred spike) | Only after resolving raw-data transport constraints               | Outside Day-1 POC; spec 002 §2 and ADR 0004 apply      |
 
 `FR-CFG-010`: The agent MUST support monitoring multiple instances in one process, with
 per-file-set `instanceId`, parser selection and thresholds.
 
-Resolution of the preferred production topology is [Q-4](../plan/open-questions.md).
+The POC topology is settled in [Q-4](../plan/open-questions.md); production host access
+and isolation constraints still need validation.
 
 ## 5. Scaling and multi-tenancy
 

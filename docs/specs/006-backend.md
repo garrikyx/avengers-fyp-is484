@@ -1,6 +1,6 @@
 # 006 — Telemetry Backend Service
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Python 3.14 + FastAPI + Uvicorn ([ADR 0002](../adr/0002-backend-in-python-fastapi.md)),
 in-memory state only ([ADR 0005](../adr/0005-in-memory-metric-store.md)).
@@ -33,6 +33,10 @@ HTTP (FastAPI)
 ```
 
 ## 2. Ingestion
+
+The local synthetic-data POC defers custom backend authentication under spec 009 §3.3.
+`FR-ING-002` remains a production requirement; it is not a POC acceptance gate. Payload
+validation, allowlists, deduplication and bounded processing still apply.
 
 | ID           | Requirement                                                                                                                                                                                                                                                                                               |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
