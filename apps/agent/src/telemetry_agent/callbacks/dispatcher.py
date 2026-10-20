@@ -72,6 +72,19 @@ class CallbackDispatcher:
         )
         self._queue.put_dropping_oldest(alert)
 
+    async def deliver(self, alert: AlertEvent) -> DeliveryStatus:
+        """Deliver one alert now, bypassing the queue and the workers, and
+        return its final status. For a caller that runs its own serial queue
+        with its own timeout: a `callback` action (UBS-35, `FR-CBK-014`)
+        reuses signing, retry and tracking this way, one run at a time.
+        """
+        self._tracker.record(
+            alert.alert_id, DeliveryStatus.PENDING, now=datetime.now(UTC)
+        )
+        await self._deliver(alert)
+        record = self._tracker.status_of(alert.alert_id)
+        return record.status if record is not None else DeliveryStatus.FAILED
+
     async def run(self) -> None:
         """Spawns `maxInflight` workers pulling from the queue. Runs until
         cancelled by the caller.
@@ -98,9 +111,7 @@ class CallbackDispatcher:
         occurrence (`FR-CBK-003`); each attempt gets its own
         `X-Telemetry-Delivery-Id` so Magic can distinguish retries in logs.
         """
-        idempotency_key = (
-            f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
-        )
+        idempotency_key = f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
         payload = from_alert_event(alert, now=datetime.now(UTC))
         body = payload.model_dump_json(by_alias=True).encode("utf-8")
 

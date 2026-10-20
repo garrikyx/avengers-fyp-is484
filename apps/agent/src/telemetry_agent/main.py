@@ -2,6 +2,7 @@
 
     uv run telemetry-agent --config config/agent.yaml
     uv run telemetry-agent --check-config
+    uv run telemetry-agent --test-rule HighRejectRate --replay logs/Fix.log
 
 What runs, and on which thread:
 
@@ -17,6 +18,8 @@ What runs, and on which thread:
                       BackendPublisher every publish.interval -> backend,
                       carrying the heartbeat (health/publishing.py)
                       CallbackDispatcher -> Magic callback endpoint
+                      ActionRunner -> a rule's actions on pending->firing,
+                      one at a time (UBS-35, spec 005 s5)
 
 The pipeline thread and the loop share the metrics and health state, which is
 not thread-safe; everything that touches it from the loop holds
@@ -32,17 +35,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import signal
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 
+from telemetry_agent.actions.config import (
+    ActionCatalogue,
+    ActionConfigError,
+    ActionType,
+    load_action_catalogue,
+)
+from telemetry_agent.actions.runner import ActionRunner
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import DryRunCallbackSink, HttpsCallbackSink
 from telemetry_agent.common.self_metrics import CounterRegistry
@@ -63,6 +75,7 @@ from telemetry_agent.parser.applog.parser import AppLogParser
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.registry import Registry
 from telemetry_agent.pipeline.alert_router import AlertRouter
+from telemetry_agent.pipeline.backtest import ReplayParsers, backtest
 from telemetry_agent.pipeline.config import PipelineConfig
 from telemetry_agent.pipeline.evaluator import RuleEvaluator
 from telemetry_agent.pipeline.ingest import MetricsIngestor
@@ -106,6 +119,7 @@ class Agent:
     router: AlertRouter
     engine: RuleEngine
     evaluator: RuleEvaluator
+    actions: ActionRunner
 
 
 def _is_local(url: str) -> bool:
@@ -221,15 +235,61 @@ def build_agent(
         )
 
     # --- rules (event loop, UBS-113) ---------------------------------------------
-    router = AlertRouter(
-        publisher, agent_id=cfg.agent_id, application=APPLICATION, dispatcher=dispatcher
-    )
     engine = RuleEngine(
         cfg.rules,
         instance_id=cfg.instance_id,
         application=APPLICATION,
         agent_id=cfg.agent_id,
         started_at=started_at or datetime.now(UTC),
+    )
+
+    # --- rule actions (UBS-35); reloaded with the rules file ---------------------
+    env_secret = env.get(_SECRET_ENV, "")
+
+    def check_action_secret(catalogue: ActionCatalogue) -> None:
+        """A callback action is signed like the Magic callback. The dev
+        secret is only acceptable when every callback endpoint is local."""
+        endpoints = [
+            a.callbacks.endpoint
+            for a in catalogue.values()
+            if a.type is ActionType.CALLBACK and a.callbacks is not None
+        ]
+        if env_secret or not endpoints:
+            return
+        if local and all(_is_local(url) for url in endpoints):
+            logger.warning(
+                "%s not set; using a dev value (localhost only)", _SECRET_ENV
+            )
+            return
+        raise ActionConfigError(f"{_SECRET_ENV} is required for callback actions")
+
+    try:
+        check_action_secret(cfg.actions)
+    except ActionConfigError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    def rule_actions(rule_name: str) -> tuple[str, ...]:
+        rule = next((r for r in engine.rules if r.name == rule_name), None)
+        return rule.actions if rule is not None else ()
+
+    actions = ActionRunner(
+        cfg.actions,
+        rule_actions,
+        secret=(env_secret or _DEV_SECRET).encode(),
+        callback_transport=callback_transport,
+    )
+
+    def stage_actions(path: Path) -> Callable[[], None]:
+        catalogue = load_action_catalogue(path, allowed_commands=cfg.allowed_commands)
+        check_action_secret(catalogue)
+        return lambda: actions.replace_catalogue(catalogue)
+
+    router = AlertRouter(
+        publisher,
+        agent_id=cfg.agent_id,
+        application=APPLICATION,
+        dispatcher=dispatcher,
+        actions=actions,
     )
     evaluator_counters = CounterRegistry()  # shared so shutdown logs emitter skips
     evaluator = RuleEvaluator(
@@ -241,8 +301,9 @@ def build_agent(
         session_tracker=ingestor.session_tracker,
         publisher=publisher,
         dispatcher=dispatcher,
-        reloader=SighupRuleReloader(engine, cfg.rules_path),
+        reloader=SighupRuleReloader(engine, cfg.rules_path, stage=stage_actions),
         interval_seconds=cfg.evaluation_interval_seconds,
+        reload_check_seconds=cfg.rules_reload_check_seconds,
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
         counters=evaluator_counters,
@@ -271,6 +332,7 @@ def build_agent(
         router=router,
         engine=engine,
         evaluator=evaluator,
+        actions=actions,
     )
 
 
@@ -293,10 +355,11 @@ async def run_agent(agent: Agent, stop: asyncio.Event) -> None:
 
     pipeline.add_done_callback(_pipeline_died)
     delivery = asyncio.create_task(agent.dispatcher.run()) if agent.dispatcher else None
+    action_runs = asyncio.create_task(agent.actions.run())
     try:
         await asyncio.gather(agent.publisher.run(stop), agent.evaluator.run(stop))
     finally:
-        await _shutdown(agent, halt, pipeline, delivery)
+        await _shutdown(agent, halt, pipeline, delivery, action_runs)
 
 
 async def _shutdown(
@@ -304,6 +367,7 @@ async def _shutdown(
     halt: threading.Event,
     pipeline: asyncio.Task[None],
     delivery: asyncio.Task[None] | None,
+    action_runs: asyncio.Task[None] | None = None,
 ) -> None:
     halt.set()
     with contextlib.suppress(Exception):
@@ -315,10 +379,13 @@ async def _shutdown(
     # One last batch so the final heartbeat and any routed alerts go out.
     with contextlib.suppress(Exception):
         await asyncio.wait_for(agent.publisher.publish_once(), SHUTDOWN_GRACE_SECONDS)
-    if delivery is not None:
-        delivery.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await delivery
+    for task in (delivery, action_runs):
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+    with contextlib.suppress(Exception):
+        await agent.actions.aclose()
     for sink in (agent.publish_sink, agent.callback_sink):
         aclose = getattr(sink, "aclose", None)
         if aclose is not None:
@@ -357,7 +424,8 @@ async def _main_async(cfg: AgentConfig) -> None:
         else ("dry-run" if cfg.callbacks.dry_run else cfg.callbacks.endpoint)
     )
     logger.info(
-        "agent %s (%s) tailing %s -> %s; %d rules every %.0fs; callbacks %s",
+        "agent %s (%s) tailing %s -> %s; %d rules every %.0fs; callbacks %s; "
+        "%d actions",
         cfg.agent_id,
         cfg.instance_id,
         ", ".join(str(p) for p in cfg.logs.paths),
@@ -365,6 +433,7 @@ async def _main_async(cfg: AgentConfig) -> None:
         len(cfg.rules),
         cfg.evaluation_interval_seconds,
         callbacks,
+        len(cfg.actions),
     )
     await run_agent(agent, stop)
 
@@ -376,7 +445,54 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--check-config", action="store_true", help="validate the config and exit"
     )
+    test = parser.add_argument_group(
+        "test mode (UBS-36)",
+        "replay log files through one rule, draft or active, and report when it "
+        "would have fired; nothing is published, called back or run",
+    )
+    test.add_argument("--test-rule", metavar="NAME", help="the rule to test")
+    test.add_argument(
+        "--replay", nargs="+", type=Path, metavar="LOG", help="log files to replay"
+    )
+    test.add_argument(
+        "--replay-date",
+        type=date.fromisoformat,
+        metavar="YYYY-MM-DD",
+        help="date for Application.log times when no FIX line carries one",
+    )
+    test.add_argument("--json", action="store_true", help="print the report as JSON")
     return parser
+
+
+def _test_rule(cfg: AgentConfig, args: argparse.Namespace) -> None:
+    rule = next((r for r in cfg.rules if r.name == args.test_rule), None)
+    if rule is None:
+        names = ", ".join(r.name for r in cfg.rules)
+        raise SystemExit(f"unknown rule {args.test_rule!r}; rules: {names}")
+    if not args.replay:
+        raise SystemExit("--test-rule needs --replay LOG [LOG ...]")
+    missing = [str(p) for p in args.replay if not p.is_file()]
+    if missing:
+        raise SystemExit(f"replay file(s) not found: {', '.join(missing)}")
+    report = backtest(
+        rule,
+        args.replay,
+        parsers=ReplayParsers(
+            hash_key=(os.environ.get(_HASH_KEY_ENV) or _DEV_HASH_KEY).encode(),
+            app_log_patterns=cfg.logs.app_log_patterns,
+            error_signatures=cfg.parsing.error_signatures,
+            max_dynamic_signature_labels=cfg.parsing.max_dynamic_signature_labels,
+        ),
+        instance_id=cfg.instance_id,
+        agent_id=cfg.agent_id,
+        evaluation_interval_seconds=cfg.evaluation_interval_seconds,
+        actions=cfg.actions,
+        replay_date=args.replay_date,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(report.render_text())
 
 
 def main() -> None:
@@ -389,6 +505,9 @@ def main() -> None:
         cfg = load_agent_config(args.config)
     except AgentConfigError as exc:
         raise SystemExit(f"config error: {exc}") from exc
+    if args.test_rule:
+        _test_rule(cfg, args)
+        return
     if args.check_config:
         callbacks = (
             "" if cfg.callbacks is None else f", callbacks -> {cfg.callbacks.endpoint}"
@@ -396,6 +515,7 @@ def main() -> None:
         print(
             f"config ok: agent {cfg.agent_id} ({cfg.instance_id}), "
             f"{len(cfg.logs.paths)} log files, {len(cfg.rules)} rules, "
+            f"{len(cfg.actions)} actions, "
             f"publish -> {cfg.publish.endpoint}{callbacks}"
         )
         return

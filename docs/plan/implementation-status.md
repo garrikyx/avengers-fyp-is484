@@ -136,9 +136,21 @@ Not yet wired: consecutive-failure streak tracking as a general rule kind
 FR-MET-031). Session-message counters (`logouts`, `seq_gaps`,
 `clock_skew_events`) landed with UBS-73 and `heartbeat_timeouts` with
 UBS-106 (FR-MET-032). `config/rules.yaml` loading and
-SIGHUP reload are implemented (`config_loader.py`); only the call to
-`SighupRuleReloader.install()` from a real running process is unwired,
-since no agent supervisor loop exists yet (M1).
+SIGHUP reload are implemented (`config_loader.py`) and wired into the
+running agent by `RuleEvaluator` (UBS-113), with an mtime trigger since
+UBS-35.
+
+## Rule actions and test mode (UBS-35, UBS-36)
+
+| ID | Story | Requirement | Status | Verified by |
+| --- | --- | --- | --- | --- |
+| UBS-35 | Custom conditions bound to configurable actions | `FR-CBK-013`–`017` (spec 005 §5), `FR-RUL-008`/`009` reload | Done on branch, pending ADR 0008 | `tests/unit/agent/actions/`, `tests/unit/agent/rules/test_UBS_35_36_reload_and_draft.py`, `tests/integration/test_UBS_35_actions_end_to_end.py` |
+| UBS-36 | Validate a condition before activation | `FR-RUL-031`–`033` (spec 005 §6) | Done on branch | `tests/unit/agent/pipeline/test_UBS_36_backtest.py`, `tests/integration/test_UBS_36_backtest_cli.py` |
+
+Code: `apps/agent/src/telemetry_agent/actions/` (catalogue + runner),
+`pipeline/backtest.py` (test mode), `--test-rule` in `main.py`. The
+`disk-cleanup` example action is unbound until UBS-129 adds `HostDiskFull`.
+The reload now runs in the real agent: on SIGHUP, and on a `rules.yaml` mtime change.
 
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 
