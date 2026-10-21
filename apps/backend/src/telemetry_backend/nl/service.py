@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -36,8 +35,6 @@ from telemetry_backend.nl.validator import (
 from telemetry_backend.services.alert_store import AlertStore
 from telemetry_backend.services.query_engine import QueryEngine
 
-logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True, slots=True)
 class NlQueryOutcome:
@@ -67,7 +64,6 @@ class NlQueryService:
         *,
         context: NlQueryContext,
         now: datetime,
-        user_id: str | None = None,
     ) -> NlQueryOutcome:
         normalized = normalize_question(
             question, max_chars=self._config.max_question_chars
@@ -168,13 +164,6 @@ class NlQueryService:
             validated.interpreted.intent,
             data=data,
             active_alerts=active_alerts,
-        )
-        logger.info(
-            "nl interpreted query user=%s intent=%s source=%s interpreted=%s",
-            user_id or "anonymous",
-            validated.interpreted.intent,
-            source,
-            validated.interpreted.model_dump(mode="json", by_alias=True),
         )
         response = NlQueryResponse(
             answer=answer_text,

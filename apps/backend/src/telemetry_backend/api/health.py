@@ -23,10 +23,13 @@ from telemetry_shared.models.health import (
     HealthCounts,
 )
 
+from telemetry_backend.api.access import read_access
 from telemetry_backend.deps import AppDeps, get_deps
 from telemetry_backend.services.agent_registry import AgentRecord, AgentRegistry
 
-router = APIRouter(prefix="/telemetry/health", tags=["health"])
+router = APIRouter(
+    prefix="/telemetry/health", tags=["health"], dependencies=[Depends(read_access)]
+)
 
 
 def _summary(

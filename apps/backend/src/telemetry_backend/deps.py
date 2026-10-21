@@ -22,6 +22,7 @@ from telemetry_backend.services.event_store import EventStore
 from telemetry_backend.services.heartbeat_monitor import HeartbeatMonitor
 from telemetry_backend.services.ingest_guard import IngestGuard
 from telemetry_backend.services.ingestion import IngestionService
+from telemetry_backend.services.question_limiter import QuestionLimiter
 from telemetry_backend.services.self_metrics import SelfMetrics
 
 Clock = Callable[[], datetime]
@@ -43,6 +44,7 @@ class AppDeps:
     heartbeat_monitor: HeartbeatMonitor = field(init=False)
     self_metrics: SelfMetrics = field(init=False)  # UBS-96
     ingest_guard: IngestGuard = field(init=False)  # UBS-85
+    question_limiter: QuestionLimiter = field(init=False)  # UBS-135
     # Set by `main.create_app`, so the internal app's `/readyz` and
     # `/metrics` read the same ingestion service and store the public app
     # writes to.
@@ -54,6 +56,9 @@ class AppDeps:
             clock=self.clock,
         )
         self.ingest_guard = IngestGuard(self.config.ingest, clock=self.clock)
+        self.question_limiter = QuestionLimiter(
+            self.nl_config.per_user_rate_limit_per_minute, clock=self.clock
+        )
         self.self_metrics = SelfMetrics(
             self.registry, clock=self.clock, ingestion=lambda: self.ingestion
         )

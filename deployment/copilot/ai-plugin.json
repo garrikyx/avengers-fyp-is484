@@ -1,0 +1,47 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/copilot/plugin/v2.2/schema.json",
+  "schema_version": "v2.2",
+  "name_for_human": "Magic Telemetry",
+  "description_for_human": "Read-only Magic trading telemetry: questions, metrics, alerts and agent health.",
+  "functions": [
+    {
+      "name": "nl_query_telemetry_nl_query_post",
+      "description": "Answer a telemetry question about Magic. Returns the answer, the interpreted query, the numbers and dataCompleteness."
+    },
+    {
+      "name": "query_metrics_telemetry_query_metrics_post",
+      "description": "Run a structured metrics query over a time range."
+    },
+    {
+      "name": "list_alerts_telemetry_alerts_get",
+      "description": "List active or resolved alerts."
+    },
+    {
+      "name": "get_alert_telemetry_alerts__alert_id__get",
+      "description": "Get one alert, including its callback delivery status."
+    },
+    {
+      "name": "list_agents_telemetry_health_agents_get",
+      "description": "List telemetry agents and their health."
+    },
+    {
+      "name": "get_agent_telemetry_health_agents__agent_id__get",
+      "description": "Get one telemetry agent's health detail."
+    }
+  ],
+  "runtimes": [
+    {
+      "type": "OpenApi",
+      "auth": { "type": "None" },
+      "spec": { "url": "openapi.json" },
+      "run_for_functions": [
+        "nl_query_telemetry_nl_query_post",
+        "query_metrics_telemetry_query_metrics_post",
+        "list_alerts_telemetry_alerts_get",
+        "get_alert_telemetry_alerts__alert_id__get",
+        "list_agents_telemetry_health_agents_get",
+        "get_agent_telemetry_health_agents__agent_id__get"
+      ]
+    }
+  ]
+}
