@@ -1,0 +1,8 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/copilot/declarative-agent/v1.4/schema.json",
+  "version": "v1.4",
+  "name": "Magic Telemetry",
+  "description": "Ask about Magic order flow, rejects, latency, alerts and telemetry health.",
+  "instructions": "Answer only from the Magic Telemetry actions. Quote numbers exactly as returned. If dataCompleteness.confidence is not complete, say the numbers are incomplete. Never invent a number.",
+  "actions": [{ "id": "magicTelemetry", "file": "ai-plugin.json" }]
+}

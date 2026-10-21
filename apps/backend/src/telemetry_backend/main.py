@@ -24,7 +24,7 @@ from typing import Literal
 from uuid import uuid4
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import Field, ValidationError
@@ -42,10 +42,11 @@ from telemetry_shared.models.metrics_query import (
     MetricsQueryRequest,
     MetricsQueryResponse,
 )
-from telemetry_shared.models.nl_query import NlQueryRequest
+from telemetry_shared.models.nl_query import NlQueryRequest, NlQueryResponse
 
 from telemetry_backend.api import health as health_api
 from telemetry_backend.api import internal as internal_api
+from telemetry_backend.api.access import rate_limit_key, read_access
 from telemetry_backend.config import (
     BackendConfigError,
     QueryConfig,
@@ -75,6 +76,7 @@ from telemetry_backend.services.request_body import (
 from telemetry_backend.services.stream_processor import StreamProcessor
 
 logger = logging.getLogger(__name__)
+audit_logger = logging.getLogger("telemetry_backend.audit")
 
 
 class ItemCounts(CamelModel):
@@ -176,6 +178,28 @@ def _error_response(
     return JSONResponse(
         status_code=status_code,
         content=body.model_dump(mode="json", by_alias=True),
+    )
+
+
+def _audit_query(
+    request: Request,
+    *,
+    actor: str,
+    kind: str,
+    interpreted: object,
+    rows: int,
+    started: float,
+) -> None:
+    """NFR-SEC-011, FR-NLQ-019: never the raw question or result values."""
+    audit_logger.info(
+        "query audit request_id=%s actor=%s kind=%s rows=%d duration_ms=%.1f "
+        "interpreted=%s",
+        request.state.request_id,
+        actor,
+        kind,
+        rows,
+        (time.perf_counter() - started) * 1000,
+        interpreted,
     )
 
 
@@ -526,11 +550,14 @@ def create_app(
         },
     )
     async def query_metrics(
-        request: Request, body: MetricsQueryRequest
+        request: Request,
+        body: MetricsQueryRequest,
+        actor: str = Depends(read_access),
     ) -> MetricsQueryResponse | JSONResponse:
+        started = time.perf_counter()
         skip_fanout = request.headers.get(REPLICA_QUERY_HEADER) == "1"
         try:
-            return await engine.query(
+            result = await engine.query(
                 body,
                 skip_fanout=skip_fanout,
                 fanout_client=fanout_client,
@@ -551,10 +578,22 @@ def create_app(
                 message="Query exceeded the server-side deadline.",
                 details=[],
             )
+        # A replica sub-query is audited once, by the coordinator that got it.
+        if not skip_fanout:
+            _audit_query(
+                request,
+                actor=actor,
+                kind="metrics",
+                interpreted=body.model_dump(mode="json", by_alias=True),
+                rows=len(result.groups),
+                started=started,
+            )
+        return result
 
     @app.get(
         "/telemetry/events",
         response_model=EventsListResponse,
+        dependencies=[Depends(read_access)],
         responses={400: {"model": ErrorEnvelope}},
     )
     async def list_events(
@@ -601,6 +640,7 @@ def create_app(
     @app.get(
         "/telemetry/events/{event_id}",
         response_model=TelemetryEvent,
+        dependencies=[Depends(read_access)],
         responses={404: {"model": ErrorEnvelope}},
     )
     async def get_event(
@@ -620,6 +660,7 @@ def create_app(
     @app.get(
         "/telemetry/alerts",
         response_model=AlertsListResponse,
+        dependencies=[Depends(read_access)],
         responses={400: {"model": ErrorEnvelope}},
     )
     async def list_alerts(
@@ -667,6 +708,7 @@ def create_app(
     @app.get(
         "/telemetry/alerts/{alert_id}",
         response_model=AlertDetailResponse,
+        dependencies=[Depends(read_access)],
         responses={404: {"model": ErrorEnvelope}},
     )
     async def get_alert(
@@ -683,7 +725,7 @@ def create_app(
             )
         return detail
 
-    @app.get("/telemetry/nl/intents")
+    @app.get("/telemetry/nl/intents", dependencies=[Depends(read_access)])
     async def nl_intents(request: Request) -> JSONResponse:
         if not app_deps.nl_config.enabled:
             return _error_response(
@@ -697,7 +739,12 @@ def create_app(
         return JSONResponse(content=body.model_dump(mode="json", by_alias=True))
 
     @app.post("/telemetry/nl/query")
-    async def nl_query(request: Request, payload: NlQueryRequest) -> JSONResponse:
+    async def nl_query(
+        request: Request,
+        payload: NlQueryRequest,
+        actor: str = Depends(read_access),
+    ) -> JSONResponse:
+        started = time.perf_counter()
         if not app_deps.nl_config.enabled or nl_service is None:
             return _error_response(
                 request,
@@ -706,10 +753,37 @@ def create_app(
                 message="Natural language queries are disabled.",
                 details=[],
             )
+        retry_after = app_deps.question_limiter.acquire(rate_limit_key(request, actor))
+        if retry_after is not None:
+            limited = _error_response(
+                request,
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                code="rate_limited",
+                message="Question rate exceeded; honour Retry-After.",
+                details=[],
+            )
+            limited.headers["Retry-After"] = str(retry_after)
+            return limited
         outcome = await nl_service.interpret_and_query(
             payload.question,
             context=payload.context,
             now=app_deps.clock(),
+        )
+        answer = outcome.answer
+        interpreted: object = None
+        rows = 0
+        if isinstance(answer, NlQueryResponse):
+            interpreted = answer.interpreted_query.model_dump(
+                mode="json", by_alias=True
+            )
+            rows = len(answer.data.groups)
+        _audit_query(
+            request,
+            actor=actor,
+            kind=f"nl:{outcome.kind}",
+            interpreted=interpreted,
+            rows=rows,
+            started=started,
         )
         return JSONResponse(
             content=outcome.answer.model_dump(mode="json", by_alias=True)
