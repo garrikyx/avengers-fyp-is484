@@ -33,6 +33,16 @@ class ValueSource(StrEnum):
     INDICATOR = "indicator"
 
 
+class RuleState(StrEnum):
+    """UBS-36: a `draft` rule is loaded and fully validated, but the running
+    agent never evaluates it. Only the test mode (`rules.backtest`) does.
+    Changing it to `active` after a test-mode run is the operator's step.
+    """
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+
+
 class AlertStatus(StrEnum):
     INACTIVE = "inactive"
     PENDING = "pending"
@@ -83,6 +93,8 @@ class RuleConfig:
     group_by: tuple[str, ...] = ()  # FR-RUL-005 default: instance-scoped only
     schedule_ref: str | None = None  # FR-RUL-007
     depends_on_log_activity: bool = True  # FR-RUL-021
+    actions: tuple[str, ...] = ()  # FR-CBK-013: names from the `actions:` block
+    state: RuleState = RuleState.ACTIVE  # UBS-36
 
 
 @dataclass(slots=True)

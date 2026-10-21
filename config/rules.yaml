@@ -9,6 +9,23 @@
 # Two conditions differing only in threshold are one rule with multiple
 # severity tiers, not two separate rules (FR-RUL-002) — `tiers` is ordered
 # least->most severe.
+#
+# A rule may also carry `state: draft` (UBS-36): loaded and validated, never
+# evaluated by the running agent, only by the test mode:
+#   uv run telemetry-agent --test-rule <name> --replay <log> [<log> ...]
+# Set it back to `active` (the default) once the test-mode run looks right.
+#
+# Actions (UBS-35, spec 005 s5, ADR 0008): a rule lists `actions: [name]`,
+# run once per occurrence on pending->firing. A `command` must also appear in
+# agent.yaml `actions.allowedCommands`; it runs with this fixed argv, no
+# shell, and the alert JSON on stdin. Everything defaults to dryRun: true.
+actions:
+  - name: disk-cleanup        # for HostDiskFull once UBS-129 adds it
+    type: command
+    command: /opt/magic/bin/cleanup-disk
+    args: ["--older-than", "7d"]
+    timeout: 60s
+    dryRun: true
 
 rules:
   - name: HighRejectRate

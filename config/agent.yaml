@@ -64,6 +64,14 @@ pipeline:
 
 rules:
   path: rules.yaml           # next to this file
+  reloadCheckInterval: 10s   # reload on mtime change (UBS-35); SIGHUP works too
+
+# --- Rule actions (UBS-35; spec 005 s5, ADR 0008) ---
+# The operator's allowlist: a rule in rules.yaml can only run a command listed
+# here. Read at startup only, so a live rules reload can't add an executable.
+actions:
+  allowedCommands:
+    - /opt/magic/bin/cleanup-disk
 
 # --- Backend Publisher (UBS-103/104; spec 010 `publish:`, spec 007 s2.1) ---
 publish:

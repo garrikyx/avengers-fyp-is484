@@ -289,3 +289,58 @@ rules:
 | `FR-CBK-015` | A `command` action MUST run an absolute-path executable from the `allowedCommands` list with a fixed argv and **no shell**. Alert data MUST be passed only as the §3.3 JSON on stdin and never interpolated into arguments.                                           |
 | `FR-CBK-016` | An action MUST run at most once per alert occurrence (on `pending→firing`, keyed by `alertId`) and never on renotify. Each action runs one at a time with its `timeout` enforced. Its exit status, duration and timeout are counted as `action_runs{action,outcome}`. |
 | `FR-CBK-017` | Actions MUST default to `dryRun: true` and log what would run. A failed or timed-out action MUST NOT affect alert state, the Magic callback or publishing.                                                                                                            |
+
+### 5.1 Implementation notes (UBS-35)
+
+Built on branch `UBS-35-36-Rule-Actions-And-Test-Mode`. It stays unmerged until the
+team accepts [ADR 0008](../adr/0008-configurable-action-hooks.md).
+
+- **Where the keys live.** The `actions:` block sits in `rules.yaml` beside `rules:`.
+  `allowedCommands` sits in `agent.yaml` under `actions:`. A live rules reload can
+  therefore change which allowlisted command a rule runs, but never adds an
+  executable; changing the allowlist needs a restart.
+- **"Absolute path".** The path must be rooted, so the OS never searches `PATH` or the
+  working directory. On Windows a drive-relative `/opt/x` counts as rooted.
+- **Counters.** `action_runs:<action>:<outcome>` and `action_run_ms:<action>` hold the
+  labels in the counter name, because `CounterRegistry` has none. Outcomes: `ok`,
+  `failed`, `timeout`, `error`, `dry_run`, `unknown` (removed by a reload while queued).
+- **Once per occurrence.** The engine emits `pending→firing` with `notificationCount: 1`.
+  Renotifies and severity changes carry higher counts and never run actions. A bounded
+  seen-set of `alertId` also covers a re-delivered first event.
+- **Callback actions** get their own dispatcher and counters, so a failing hook never
+  trips `CallbackFailing` for Magic. Each run is bounded by the action's `timeout`,
+  and the retry schedule is the §3 default.
+- **Reload.** The rules file is reloaded on SIGHUP, or when its mtime changes
+  (`rules.reloadCheckInterval`, default 10s). The mtime check gives Windows a trigger.
+  The rules and the action catalogue are validated together, and a reject keeps both
+  last-known-good.
+
+## 6. Draft rules and test mode (UBS-36)
+
+Before an SRE puts a new condition live, they replay real logs through it and check
+whether, when and with what payload it would have fired. They can do this without any
+risk of a false-positive callback to Magic.
+
+```yaml
+rules:
+  - name: VenueConnectTimeouts
+    kind: signature
+    # …
+    state: draft # active (default) | draft
+```
+
+```sh
+uv run telemetry-agent --config config/agent.yaml \
+    --test-rule VenueConnectTimeouts --replay logs/Application.log logs/Fix.log [--json]
+```
+
+| ID           | Requirement                                                                                                                                                                                                                                                       |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-RUL-031` | A rule MAY declare `state: draft`. The loader MUST validate a draft rule exactly like an active one, but the running agent MUST NOT evaluate it. Moving a firing rule back to draft resolves its alert, as removing it would (`FR-RUL-008`).                            |
+| `FR-RUL-032` | Test mode MUST replay the given log files through the agent's own parser, ingest and evaluation path on a simulated clock driven by line timestamps. It MUST apply the rule's windows, `for` and `resolveAfter`, and report each transition with its time, severity and the §3.3 payload. |
+| `FR-RUL-033` | Test mode MUST NOT publish, call back or run actions, whatever the rule's `dryRun` settings. It MUST report which actions would have run, on the occurrence's first firing only.                                                                                       |
+
+Making a draft active is the operator's edit after reviewing the report. Day-1 does not
+enforce a "validated" fingerprint. Gauge-sourced rules (host disk/memory, queue depth)
+read live process state that log lines don't carry, so the report flags them rather
+than guessing.

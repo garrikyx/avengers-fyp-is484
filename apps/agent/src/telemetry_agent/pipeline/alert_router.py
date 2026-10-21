@@ -16,6 +16,10 @@ UBS-110 adds the second consumer: the Callback Dispatcher (UBS-32/33/34),
 which notifies Magic directly. The two paths are isolated from each other
 (`NFR-REL-003`): each `enqueue` is guarded separately, so a fault in one never
 costs the other its alert.
+
+UBS-35 adds the third: the Action Runner (spec 005 §5), guarded the same way,
+so a failing action never affects the Magic callback or publishing
+(`FR-CBK-017`).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from datetime import datetime
 
 from telemetry_shared.models.alerts import AlertEvent
 
+from telemetry_agent.actions.runner import ActionRunner
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.publishing.publisher import BackendPublisher
@@ -64,11 +69,13 @@ class AlertRouter:
         agent_id: str,
         application: str,
         dispatcher: CallbackDispatcher | None = None,
+        actions: ActionRunner | None = None,
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._publisher = publisher
         self._dispatcher = dispatcher
+        self._actions = actions
         self._agent_id = agent_id
         self._application = application
         self._counters = counters or CounterRegistry()
@@ -101,6 +108,8 @@ class AlertRouter:
                 "callback", alert, self._dispatcher.enqueue
             ):
                 dispatched += 1
+            if self._actions is not None:
+                self._guarded("action", alert, self._actions.enqueue)
             if not self._identity_matches(alert):
                 self._reject(alert)
                 continue
@@ -117,7 +126,7 @@ class AlertRouter:
         return routed
 
     def _guarded(
-        self, path: str, alert: AlertEvent, enqueue: Callable[[AlertEvent], None]
+        self, path: str, alert: AlertEvent, enqueue: Callable[[AlertEvent], object]
     ) -> bool:
         """Run one path's enqueue so its failure stays on that path."""
         try:

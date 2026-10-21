@@ -29,6 +29,7 @@ from telemetry_agent.rules.types import (
     AlertStatus,
     RuleConfig,
     RuleKind,
+    RuleState,
     SeverityTier,
     Silence,
     ValueSource,
@@ -279,7 +280,10 @@ class RuleEngine:
         longer has a definition. Returns the synthetic `resolved` events
         for any such states (empty if none).
         """
-        new_names = {rule.name for rule in new_rules}
+        # A rule moved back to `draft` stops being evaluated, so its open
+        # alert is resolved like a removed rule's (UBS-36).
+        new_names = {rule.name for rule in new_rules if rule.state is RuleState.ACTIVE}
+        draft_names = {rule.name for rule in new_rules} - new_names
         resolved_events: list[AlertEvent] = []
         for key, state in list(self._states.items()):
             if state.rule_name in new_names:
@@ -295,7 +299,9 @@ class RuleEngine:
                         instance_id=self._instance_id,
                         agent_id=self._agent_id,
                         matched_condition=(
-                            f"{state.rule_name} removed from configuration"
+                            f"{state.rule_name} moved to draft"
+                            if state.rule_name in draft_names
+                            else f"{state.rule_name} removed from configuration"
                         ),
                         observed_value=None,
                         threshold=0.0,
@@ -367,6 +373,8 @@ class RuleEngine:
         changed: list[AlertEvent] = []
 
         for rule in self._rules:
+            if rule.state is RuleState.DRAFT:
+                continue  # UBS-36: only the test mode evaluates a draft
             if rule.window is not None and rule.window != snapshot.window:
                 continue
             if not _evaluates_on(rule, snapshot):
