@@ -39,9 +39,11 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from urllib.parse import urlparse
 
 import httpx
+from telemetry_shared.models.alerts import AlertEvent
 
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import DryRunCallbackSink, HttpsCallbackSink
@@ -71,6 +73,7 @@ from telemetry_agent.pipeline.monitor_adapter import (
     monitors_by_resolved_path,
 )
 from telemetry_agent.pipeline.supervisor import PipelineBridge
+from telemetry_agent.publishing.events import EventEmitter
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import DryRunPublishSink, HttpsPublishSink
 from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
@@ -146,6 +149,7 @@ def build_agent(
         list(cfg.logs.paths),
         registry_path=cfg.logs.state_dir / "offsets.json",
         commit_on_read=False,  # offsets move only once a line is ingested
+        log_stall_threshold=cfg.logs.log_stall_threshold_seconds,
     )
     reporter = HealthReporter(
         monitor.monitors, thresholds=cfg.thresholds, heartbeat=cfg.heartbeat
@@ -199,6 +203,30 @@ def build_agent(
     )
     with ingestor.lock:
         connect_reporter_to_publisher(reporter, publisher)
+    events = EventEmitter(
+        publisher,
+        agent_id=cfg.agent_id,
+        application=APPLICATION,
+        instance_id=cfg.instance_id,
+        max_events_per_minute=cfg.publish.max_events_per_minute,
+        execution_sample_every=cfg.publish.execution_sample_every,
+        bucket_seconds=cfg.publish.metrics_bucket_seconds,
+        on_drop=drop_hook(reporter, lock=ingestor.lock),
+    )
+    ingestor.event_emitter = events
+
+    def log_event(event_type: str, source_index: int) -> None:
+        with ingestor.lock:
+            events.log_lifecycle(event_type, source_index)
+
+    for source_index, file_monitor in enumerate(monitor.monitors.values()):
+        file_monitor.on_event = partial(log_event, source_index=source_index)
+
+    def callback_failed(
+        alert: AlertEvent, reason: str, attempts: int, status: int | None
+    ) -> None:
+        with ingestor.lock:
+            events.callback_failed(alert, reason, attempts, status)
 
     # --- callbacks to Magic ---------------------------------------------------------
     dispatcher: CallbackDispatcher | None = None
@@ -218,11 +246,16 @@ def build_agent(
             callback_sink,
             cfg.callbacks,
             _secret(env, _SECRET_ENV, _DEV_SECRET, local=local).encode(),
+            on_failure=callback_failed,
         )
 
     # --- rules (event loop, UBS-113) ---------------------------------------------
     router = AlertRouter(
-        publisher, agent_id=cfg.agent_id, application=APPLICATION, dispatcher=dispatcher
+        publisher,
+        agent_id=cfg.agent_id,
+        application=APPLICATION,
+        dispatcher=dispatcher,
+        on_event=ingestor.emit_alert,
     )
     engine = RuleEngine(
         cfg.rules,
@@ -246,6 +279,7 @@ def build_agent(
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
         counters=evaluator_counters,
+        event_emitter=events,
         snapshot_emitter=SnapshotEmitter(
             ingestor.aggregator,
             publisher,
@@ -284,6 +318,13 @@ async def run_agent(agent: Agent, stop: asyncio.Event) -> None:
     """Run until `stop` is set, then shut down within SHUTDOWN_GRACE_SECONDS."""
     halt = threading.Event()
     agent.bridge.start()
+    with agent.ingestor.lock:
+        if agent.ingestor.event_emitter is not None:
+            agent.ingestor.event_emitter.emit("agent.started", at=datetime.now(UTC))
+            if agent.monitor.state_reset_reason is not None:
+                agent.ingestor.event_emitter.state_reset(
+                    agent.monitor.state_reset_reason
+                )
     pipeline = asyncio.create_task(asyncio.to_thread(_pump, agent.adapter, halt))
 
     def _pipeline_died(task: asyncio.Task[None]) -> None:
@@ -310,6 +351,10 @@ async def _shutdown(
         await asyncio.wait_for(pipeline, SHUTDOWN_GRACE_SECONDS)
     agent.bridge.stop()
     with agent.ingestor.lock:
+        if agent.ingestor.event_emitter is not None:
+            now = datetime.now(UTC)
+            agent.ingestor.event_emitter.flush(now, force=True)
+            agent.ingestor.event_emitter.emit("agent.stopping", at=now)
         for log_monitor in agent.monitor.monitors.values():
             log_monitor.flush_commits()
     # One last batch so the final heartbeat and any routed alerts go out.
@@ -326,10 +371,13 @@ async def _shutdown(
                 await aclose()
     agent.monitor.close()
     logger.info(
-        "stopped: ingest %s, evaluator %s, publisher %s",
+        "stopped: ingest %s, evaluator %s, publisher %s, events %s",
         agent.ingestor.stats(),
         agent.evaluator.counters.snapshot(),
         agent.publisher.counters.snapshot(),
+        agent.ingestor.event_emitter.counters.snapshot()
+        if agent.ingestor.event_emitter is not None
+        else {},
     )
 
 

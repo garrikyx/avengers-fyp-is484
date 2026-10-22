@@ -20,9 +20,10 @@ _SCHEMA_VERSION: Literal[1] = 1
 
 @dataclass(slots=True)
 class BatchSequencer:
-    """`FR-PUB-003`: a monotonically increasing `batchSeq` per agent, and a
-    stable `batchId` (UUIDv7 — time-sortable, and available natively from
-    Python 3.14) so the backend can deduplicate retries idempotently.
+    """Create a monotonically increasing `batchSeq` and UUIDv7 `batchId`.
+
+    The current publisher rebuilds a batch after a failed attempt, so these
+    IDs are not yet stable across retries as `FR-PUB-003` requires.
     """
 
     _next_seq: int = field(default=0)

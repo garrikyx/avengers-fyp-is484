@@ -11,6 +11,12 @@ diff them against this document's values.
 
 ## 1. Agent configuration
 
+The full target schema below differs from today's executable agent config, which
+uses a `logs` mapping with `paths`, `stateDir`, and `appLogPatterns`. UBS-117 adds
+optional `logs.logStallThreshold` to that mapping (default `5m`, positive finite
+duration), applied independently to every monitored file. No configuration edit is
+required to enable the default. The per-source target schema is not introduced here.
+
 ```yaml
 agent:
   agentId: magic-agent-sg-01        # required, must match backend-registered identity
@@ -91,6 +97,8 @@ metrics:
   minSampleSize: 20
 
 publish:
+  maxEventsPerMinute: 600            # per event type per instance (FR-MET-023)
+  executionSampleEvery: 100          # 1:N fix.execution observations; metrics count all
   endpoint: https://telemetry.internal.example/telemetry/batch
   interval: 10s
   timeout: 10s

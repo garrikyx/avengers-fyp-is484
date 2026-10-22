@@ -63,7 +63,7 @@ complete order/session lifecycles require a richer FIX simulator.
 
 The main and client component conventions above are synthetic examples; the
 sponsor supplied venue examples. The simulator mixes `N`, `I`, `W`, `E`, and
-`F` records, including the two signatures configured in `config/agent.yaml`:
+`F` records, including these two alerting signatures in `config/agent.yaml`:
 
 ```text
 07:51:15.000114 <413013> [F] MAIN: java.lang.OutOfMemoryError: heap allocation failed
@@ -74,8 +74,11 @@ These match `out_of_memory` and `db_connection_lost` respectively. UBS-122's
 `AppOutOfMemory` and `AppDbConnectionLost` rules count each signature separately.
 Any successfully parsed application record contributes to `app_log_lines` and
 keeps `NoLogActivity` quiet; `E`/`F` records also increment `app_log_errors`.
-Venue timeout, connection failure, and disconnect messages match the additional
-configured signatures, without incrementing the memory or database signature.
+Venue timeout, connection failure, and disconnect messages match
+`connection_timeout`, `venue_connection_failed`, and `connection_disconnected`.
+They produce signature counters and `app.error_signature` events without requiring
+an alert rule. The W-level connection failure is therefore queryable as a named
+event even though it does not increment the E/F error counter.
 
 To inspect the counters locally, run the simulator and backend, then
 `uv run python scripts/health_monitor_demo.py`. The demo reads the same parser
@@ -83,9 +86,11 @@ patterns and signatures as `telemetry-agent` and prints totals and per-signature
 counts every publish interval. Run `uv run telemetry-agent --config config/agent.yaml`
 for the full pipeline with signature-rule evaluation and alert delivery.
 
-The full agent currently publishes alerts and heartbeats. It does not yet
-enqueue metric snapshots, so app-log counters can be inspected locally in the
-demo but are not automatically published to backend metrics.
+The full agent publishes metric snapshots, events, alerts and heartbeats. All
+N/I/W/E/F records contribute to metrics. Recognised patterns at any level become
+signature events; E/F records additionally contribute to aggregated `app.error`
+events, including errors with no configured signature. Event payloads do not
+contain the original log text, component ID or venue name.
 
 ---
 
@@ -106,5 +111,5 @@ checks rules every 10 seconds, after its 60-second startup grace. Signature
 rules enter pending on one evaluation and notify on a subsequent evaluation;
 generating an error does not guarantee an immediate alert.
 
-Venue signatures are counted but have no default signature alert rules.
-Only `out_of_memory` and `db_connection_lost` have shipped signature rules.
+Only `out_of_memory` and `db_connection_lost` have shipped signature alert rules.
+The three venue signatures provide classification for queries without firing alerts.

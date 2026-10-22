@@ -181,6 +181,7 @@ def test_unknown_event_field_is_rejected_on_events_endpoint() -> None:
 
 def test_allowlisted_event_dimension_and_field_are_accepted() -> None:
     event = _event()
+    event["eventType"] = "fix.order_reject"
     event["dimensions"] = {"session": "MAGIC->EXCH1", "symbol": "ABC"}
     event["fields"] = {"msgType": "8", "clOrdIdHash": "0123456789abcdef"}
     service = IngestionService()
@@ -195,6 +196,26 @@ def test_allowlisted_event_dimension_and_field_are_accepted() -> None:
     assert isinstance(response, BatchAccepted)
     assert response.status == "accepted"
     assert service.queue_depth == 1
+
+
+def test_fix_only_field_is_rejected_on_non_fix_event() -> None:
+    service = IngestionService()
+    app = create_app(service)
+    event = _event()
+    event["fields"] = {"msgType": "A"}
+
+    response = asyncio.run(
+        _endpoint(app, "/telemetry/events")(
+            _request(app), EventsRequest.model_validate({"events": [event]})
+        )
+    )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 400
+    body = json.loads(bytes(response.body))
+    assert body["error"]["code"] == "invalid_field"
+    assert body["error"]["details"][0]["field"] == "events.0.fields.msgType"
+    assert service.queue_depth == 0
 
 
 def test_unknown_snapshot_dimension_is_rejected_before_enqueue() -> None:

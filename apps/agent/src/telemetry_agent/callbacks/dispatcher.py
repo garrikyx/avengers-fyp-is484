@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from telemetry_shared.models.alerts import AlertEvent
@@ -36,6 +37,7 @@ class CallbackDispatcher:
         counters: CounterRegistry | None = None,
         tracker: DeliveryTracker | None = None,
         logger: logging.Logger | None = None,
+        on_failure: Callable[[AlertEvent, str, int, int | None], None] | None = None,
     ) -> None:
         self._sink = sink
         self._config = config
@@ -43,6 +45,7 @@ class CallbackDispatcher:
         self._counters = counters or CounterRegistry()
         self._tracker = tracker or DeliveryTracker()
         self._logger = logger or logging.getLogger(__name__)
+        self._on_failure = on_failure
         self._queue: DropOldestQueue[AlertEvent] = DropOldestQueue(
             config.queue_size,
             on_drop=lambda: self._counters.increment("callback_queue_dropped"),
@@ -91,6 +94,15 @@ class CallbackDispatcher:
             alert = await self._queue.get()
             await self._deliver(alert)
 
+    def _emit_failure(
+        self, alert: AlertEvent, reason: str, attempts: int, status: int | None
+    ) -> None:
+        if self._on_failure is not None:
+            try:
+                self._on_failure(alert, reason, attempts, status)
+            except Exception:
+                self._counters.increment("callback_event_errors")
+
     async def _deliver(self, alert: AlertEvent) -> None:
         """Signs and sends `alert`, retrying transient failures with
         backoff (`FR-CBK-004`/`006`) up to `maxAttempts`. A single fixed
@@ -98,9 +110,7 @@ class CallbackDispatcher:
         occurrence (`FR-CBK-003`); each attempt gets its own
         `X-Telemetry-Delivery-Id` so Magic can distinguish retries in logs.
         """
-        idempotency_key = (
-            f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
-        )
+        idempotency_key = f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
         payload = from_alert_event(alert, now=datetime.now(UTC))
         body = payload.model_dump_json(by_alias=True).encode("utf-8")
 
@@ -118,6 +128,7 @@ class CallbackDispatcher:
                 now=datetime.now(UTC),
                 error="payload_too_large",
             )
+            self._emit_failure(alert, "payload_too_large", 0, None)
             return
 
         for attempt in range(1, self._config.max_attempts + 1):
@@ -166,6 +177,9 @@ class CallbackDispatcher:
                     now=datetime.now(UTC),
                     error=failure_reason,
                 )
+                self._emit_failure(
+                    alert, "permanent_http_failure", attempt, result.status_code
+                )
                 return
 
             if attempt >= self._config.max_attempts:
@@ -183,6 +197,9 @@ class CallbackDispatcher:
                     DeliveryStatus.FAILED,
                     now=datetime.now(UTC),
                     error=failure_reason,
+                )
+                self._emit_failure(
+                    alert, "retries_exhausted", attempt, result.status_code
                 )
                 return
 

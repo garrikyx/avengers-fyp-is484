@@ -172,9 +172,7 @@ def parse_duration_seconds(value: str | int | float) -> float:
     return float(number) * _DURATION_UNIT_SECONDS[unit]
 
 
-OSS_LLM_PROVIDERS: frozenset[str] = frozenset(
-    {"openai-compatible", "ollama", "vllm"}
-)
+OSS_LLM_PROVIDERS: frozenset[str] = frozenset({"openai-compatible", "ollama", "vllm"})
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_VLLM_BASE_URL = "http://127.0.0.1:8000/v1"
 OSS_LLM_DEFAULT_TIMEOUT_SECONDS = 25.0
@@ -201,9 +199,7 @@ class LlmConfig:
             raise BackendConfigError("nl.llm.maxRetries must be >= 0")
 
 
-def resolve_llm_config(
-    config: LlmConfig, *, timeout_from_yaml: bool
-) -> LlmConfig:
+def resolve_llm_config(config: LlmConfig, *, timeout_from_yaml: bool) -> LlmConfig:
     """Apply provider-specific defaults after YAML merge."""
     provider = config.provider
     if provider not in OSS_LLM_PROVIDERS | {"azure-openai", "mock"}:
@@ -220,9 +216,7 @@ def resolve_llm_config(
         base_url = config.base_url
         if base_url is None:
             base_url = (
-                DEFAULT_VLLM_BASE_URL
-                if provider == "vllm"
-                else DEFAULT_OLLAMA_BASE_URL
+                DEFAULT_VLLM_BASE_URL if provider == "vllm" else DEFAULT_OLLAMA_BASE_URL
             )
         return replace(config, base_url=base_url, timeout_seconds=timeout)
 
@@ -272,6 +266,7 @@ class IngestGuardConfig:
     max_batches_per_minute_per_agent: int = 30
     dedupe_cache_size: int = 10_000
     dedupe_ttl_seconds: float = 1800.0
+    max_body_bytes: int = 8_388_608
 
     def __post_init__(self) -> None:
         if self.max_batches_per_minute_per_agent < 1:
@@ -280,6 +275,8 @@ class IngestGuardConfig:
             raise BackendConfigError("ingest.dedupeCacheSize must be >= 1")
         if self.dedupe_ttl_seconds <= 0:
             raise BackendConfigError("ingest.dedupeTtl must be > 0")
+        if self.max_body_bytes < 1:
+            raise BackendConfigError("ingest.maxBodyBytes must be >= 1")
 
 
 @dataclass(slots=True, frozen=True)
@@ -367,8 +364,8 @@ class _NlYaml(_Lenient):
 
 
 class _IngestYaml(_Lenient):
-    # `maxBodyBytes` and `queueSize` live in this section too but are read
-    # elsewhere (or not yet); `extra="allow"` keeps them legal.
+    # Other ingestion keys (e.g. queueSize) remain legal in this section.
+    max_body_bytes: int | None = None
     max_batches_per_minute_per_agent: int | None = None
     dedupe_cache_size: int | None = None
     dedupe_ttl: str | int | float | None = None
@@ -421,9 +418,7 @@ def load_nl_config(path: Path | str | None) -> NlConfig:
             endpoint=llm.endpoint,
             api_version=llm.api_version,
             timeout_seconds=(
-                parse_duration_seconds(llm.timeout)
-                if llm.timeout is not None
-                else None
+                parse_duration_seconds(llm.timeout) if llm.timeout is not None else None
             ),
             max_retries=llm.max_retries,
             structured_output=llm.structured_output,
@@ -469,6 +464,7 @@ def load_backend_health_config(path: Path | str | None) -> BackendHealthConfig:
                         ingest.max_batches_per_minute_per_agent
                     ),
                     dedupe_cache_size=ingest.dedupe_cache_size,
+                    max_body_bytes=ingest.max_body_bytes,
                     dedupe_ttl_seconds=(
                         parse_duration_seconds(ingest.dedupe_ttl)
                         if ingest.dedupe_ttl is not None

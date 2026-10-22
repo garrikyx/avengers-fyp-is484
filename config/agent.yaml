@@ -49,6 +49,7 @@ parsing:
       match: "OutOfMemoryError|std::bad_alloc"
     - label: db_connection_lost
       match: "connection (lost|refused).*(db|database)"
+    # These labels support event queries even without matching alert rules.
     - label: connection_disconnected
       match: "connection disconnected"
     - label: connection_timeout
@@ -69,15 +70,14 @@ rules:
 publish:
   enabled: true
   endpoint: http://127.0.0.1:8080/telemetry/batch
-  # ^ Rule Engine alerts and the heartbeat ride this same batch endpoint
-  #   (UBS-109 via pipeline.AlertRouter; UBS-114 heartbeat slot).
+  # ^ Metrics, events, alerts and the heartbeat share this batch endpoint.
   allowInsecureEndpoint: true          # LOCAL DEV ONLY (plain http)
   dryRun: false
   interval: 10s
   connectTimeout: 3s
   timeout: 10s
   maxBatchItems: 500
-  compressThreshold: 8388608           # the backend cannot gunzip yet; spec default 4096
+  compressThreshold: 4096              # gzip above 4 KiB; backend accepts gzip
   bufferBytes: 67108864                # 64 MiB, memory only (FR-PUB-008)
   bufferMaxAge: 15m
   haltProbeInterval: 5m

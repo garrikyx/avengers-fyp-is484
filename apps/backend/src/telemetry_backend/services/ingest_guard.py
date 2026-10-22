@@ -1,7 +1,8 @@
 """Batch dedupe and per-agent rate limiting (UBS-85; FR-ING-004, FR-ING-008).
 
-Agents retry a batch with the same `batchId` after a timeout or a 5xx
-(FR-PUB-003), so a batch the backend already accepted can arrive again.
+Callers that retry a batch with the same `batchId` after a timeout or a 5xx
+can be deduplicated (FR-PUB-003). The current agent publisher rebuilds batches
+with a new ID on retry; fixing that publisher gap is separate from this guard.
 The guard answers each `POST /telemetry/batch` with one of three verdicts:
 
 - `Duplicate`: this agent's `batchId` was accepted within `dedupeTtl`.

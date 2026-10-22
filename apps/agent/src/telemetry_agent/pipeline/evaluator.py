@@ -50,6 +50,7 @@ from telemetry_agent.metrics.snapshot import snapshot
 from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.parser.metrics_event import derive_heartbeat_timeout_counters
 from telemetry_agent.pipeline.alert_router import AlertRouter
+from telemetry_agent.publishing.events import EventEmitter
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
 from telemetry_agent.rules.config_loader import SighupRuleReloader
@@ -96,6 +97,7 @@ class RuleEvaluator:
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
         snapshot_emitter: SnapshotEmitter | None = None,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be > 0")
@@ -116,6 +118,7 @@ class RuleEvaluator:
         self._logger = logger or logging.getLogger(__name__)
         self._reload_requested = False
         self._snapshot_emitter = snapshot_emitter
+        self._event_emitter = event_emitter
         # One sampler per registry: `AgentCounterSampler` keeps a baseline,
         # and sharing one would diff each registry against the other's.
         self._callback_sampler = AgentCounterSampler(
@@ -157,6 +160,8 @@ class RuleEvaluator:
             self._publish_metrics_snapshot(now)
             self._ingest_session_timeouts(now, monotonic_now)
             self._sample_agent_counters(now)
+            if self._event_emitter is not None:
+                self._event_emitter.flush(now)
             changed.extend(self._evaluate(now))
 
         if changed:
@@ -200,6 +205,9 @@ class RuleEvaluator:
         if self._session_tracker is None:
             return
         timeouts = self._session_tracker.timed_out(monotonic_now)
+        if self._event_emitter is not None:
+            for timeout in timeouts:
+                self._event_emitter.session_timeout(timeout, now)
         for dims, counters in derive_heartbeat_timeout_counters(
             timeouts, instance_id=self._instance_id
         ):

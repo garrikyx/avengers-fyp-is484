@@ -36,7 +36,7 @@ every line at full throughput. Regexes are permitted only on lines already class
 | --- | --- |
 | `FR-PRS-012` | MUST support SOH (`0x01`) as the field delimiter, and the common log-safe substitutions `\|`, `^A`, and `;` — configurable per file set as `fixDelimiter: auto\|soh\|pipe\|caret\|semicolon`. `auto` sniffs the delimiter from the first 100 successfully framed messages and then locks it. |
 | `FR-PRS-013` | MUST tolerate a log prefix before `8=FIX` (timestamp, thread, level) and a suffix after the checksum field; parsing starts at `8=` and ends at the `10=` field or end of line. |
-| `FR-PRS-014` | MUST handle a FIX message split across multiple log lines by joining continuation lines until a `10=` field is seen or `maxJoinLines` (default 4) is exceeded; on exceed, emit `parse.error` reason `incomplete_message`. |
+| `FR-PRS-014` | MUST handle a FIX message split across multiple log lines by joining continuation lines until a `10=` field is seen or `maxJoinLines` (default 4) is exceeded; on exceed, count `parse.error` reason `incomplete_message` for bounded publication (FR-PRS-002). |
 | `FR-PRS-015` | MUST NOT trust `9` (BodyLength). Length mismatch is recorded as a soft validation warning, not a parse failure, because log lines are frequently altered by the logging framework. |
 | `FR-PRS-016` | Checksum (`10`) validation MUST be off by default (`validateChecksum: false`) for the same reason; when enabled, a mismatch produces reason `checksum_mismatch`. |
 
@@ -170,8 +170,9 @@ raise the `ClockSkew` rule (spec 005). Trusting a badly skewed timestamp corrupt
 ## 8. Sequence gap detection
 
 `FR-PRS-027`: Per session (`senderCompId`/`targetCompId`/direction), the parser MUST track the
-last seen `MsgSeqNum` and count gaps (`fix.seq_gap`, with gap size) and regressions
-(`fix.seq_regression`). A `SequenceReset` (35=4) or `Logon` (35=A) resets the expectation
+last seen `MsgSeqNum` and count gaps and regressions. Both publish `fix.seq_gap` with
+`isRegression` distinguishing a backward sequence from a forward gap; `gapSize` is zero
+for a regression. A `SequenceReset` (35=4) or `Logon` (35=A) resets the expectation
 without counting a gap. Gaps indicate either genuine FIX resends or that the agent missed log
 content — both are operationally interesting.
 

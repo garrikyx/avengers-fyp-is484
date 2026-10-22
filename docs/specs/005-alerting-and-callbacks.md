@@ -17,7 +17,7 @@ and a spec update; new *instances* of a kind are configuration only.
 | `threshold` | A counter sum or gauge value over a window | parse errors > 100 in 5m |
 | `latency` | An approximate percentile or max of a histogram over a window | p95 ack latency > 500ms over 5m |
 | `absence` | No occurrences of a counter for a duration | zero log lines for 5m during trading hours |
-| `signature` | Count of `app.error_signature` matches for a named pattern | 3+ `OutOfMemory` matches in 1m |
+| `signature` | Count of `app_error_signatures` metric matches for a named pattern | 3+ `OutOfMemory` matches in 1m |
 
 ### 1.1 Rule definition
 
@@ -88,14 +88,13 @@ provisional pending [Q-5](../plan/open-questions.md).
 | `AppOutOfMemory` | signature | warning @ ≥ 1 `out_of_memory` match, critical @ ≥ 3 | 1m, for 0s |
 | `AppDbConnectionLost` | signature | warning @ ≥ 1 `db_connection_lost` match, critical @ ≥ 5 | 5m, for 0s |
 | `AppLogFailure` | threshold, `level: F` | critical @ `app_log_errors` ≥ 1 | 1m, for 0s |
-| `AppLogCritical` | threshold, `level: C` | warning @ `app_log_errors` ≥ 1 | 1m, for 0s |
 | `HostDiskFull` | threshold (gauge) | warning @ `host_disk_used_ratio` > 0.85, critical @ > 0.95 | for 1m |
 | `HostMemoryHigh` | threshold (gauge) | warning @ `host_memory_used_ratio` > 0.90, critical @ > 0.95 | for 2m |
 | `ApplicationDown` | threshold (gauge) | critical @ `magic_process_up` == 0 | for 30s |
 
-The last five rules come from the 2026-10-16 sponsor call. Their **severities** follow
-the sponsor's ranking (spec 004 `FR-MET-033`): `[F]` maps to critical and `[C]` to
-warning. `[E]` lines are counted but have no default rule.
+The last four rules come from the 2026-10-16 sponsor call. `[F]` maps to critical
+(spec 004 `FR-MET-033`). `[E]` lines are counted but have no default level rule.
+UBS-127 withdrew the proposed C level and its rule; UBS-128 covers F only.
 
 Their **thresholds** are common operational defaults, not UBS values, and are provisional
 pending [Q-5](../plan/open-questions.md). `HostDiskFull`, `HostMemoryHigh` and
@@ -144,9 +143,11 @@ A `signature` rule names one label from `parsing.errorSignatures`
 The agent evaluates it against a snapshot grouped by `error_signature`, so
 other signatures in the same window never trip it, and the alert carries
 `groupBy: {errorSignature: out_of_memory}` (`FR-RUL-015`). The two shipped
-signature rules cover the two shipped signatures. Both warn on the first
-match, because one out-of-memory error or lost database connection is
-already an incident. `AppOutOfMemory`'s critical tier is §1's own example.
+signature rules cover `out_of_memory` and `db_connection_lost`; the three
+configured venue signatures provide classification without alert rules. Both
+rules warn on the first match: one out-of-memory error or lost database
+connection is already an incident. `AppOutOfMemory`'s critical tier is §1's
+own example.
 
 `FR-RUL-030` (backend-side): The backend MUST additionally raise `AgentHeartbeatMissing` when
 no heartbeat has arrived from a known agent for `missingHeartbeatThreshold` (default `60s`).

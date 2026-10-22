@@ -122,15 +122,19 @@ def test_the_agent_process_alerts_magic_and_the_backend(tmp_path: Path) -> None:
                 f.write("\n".join(_burst(stamp)) + "\n")
 
             alerts: list[dict[str, object]] = []
+            agent_health: dict[str, object] = {}
             for _ in range(150):  # up to ~15s
                 await asyncio.sleep(0.1)
                 body = (await client.get("/telemetry/alerts")).json()
                 alerts = body["alerts"]
-                if alerts and callbacks:
+                agent_health = (
+                    await client.get(f"/telemetry/health/agents/{AGENT_ID}")
+                ).json()
+                # UBS-117 publishes the reject observations too. The burst's
+                # heartbeat can truthfully report a queue above its watermark;
+                # wait for the next heartbeat after that queue has drained.
+                if alerts and callbacks and agent_health.get("status") == "healthy":
                     break
-            agent_health = (
-                await client.get(f"/telemetry/health/agents/{AGENT_ID}")
-            ).json()
         finally:
             stop.set()
             await asyncio.wait_for(running, 15)  # graceful shutdown completes
