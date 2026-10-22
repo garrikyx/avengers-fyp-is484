@@ -1,0 +1,28 @@
+exclude: ^graphify-out/
+
+repos:
+  # Lint before formatting so Ruff's fixes are formatted too.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # Use an isolated Node environment; the old Prettier mirror is archived.
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier
+        entry: prettier --write
+        language: node
+        additional_dependencies: [prettier@3.9.10]
+        types_or: [markdown, json, yaml]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.3
+    hooks:
+      - id: markdownlint-cli2
+        args: [--fix]

@@ -6,7 +6,7 @@ The repo contains four main applications:
 
 ```text
 apps/
-├── agent/       # Runs beside each Magic instance
+├── agent/       # Runs on each Magic log host; supports multiple instances
 ├── backend/     # Central telemetry API/service
 ├── teams/       # Microsoft Teams integration
 └── simulator/   # Generates synthetic Magic/FIX logs for testing
@@ -27,26 +27,40 @@ Magic / Simulator
 Telemetry Agent
       ↓
 Telemetry Backend
-      ↓
-Redis
+ (bounded in-memory stores)
       ↓
 Microsoft Teams
 
 Day 2:
-Telemetry Backend → PostgreSQL
+Telemetry Backend → approved historical store (technology TBD)
 ```
 
-Each Magic instance is paired with one Telemetry Agent. Multiple agents send structured telemetry to the central backend.
+Default to one Telemetry Agent per Magic host, with per-file-set instance IDs. Multiple
+agents send structured telemetry to the central backend.
 
-Day 1 uses Redis for temporary/shared telemetry state. Day 2 adds PostgreSQL for approved historical metrics, alerts and anomaly data.
+Day 1 deploys on a local server and uses bounded, process-local in-memory stores (6h
+default, 24h maximum); no telemetry database or Redis dependency is required
+([ADR 0005](docs/adr/0005-in-memory-metric-store.md)). Day 2 adds approved historical
+storage; its technology and retention are not yet selected. Day-2 cloud uploads require
+client-information masking in derived telemetry; raw logs/full FIX payloads remain
+prohibited.
+
+The POC uses simulator formats, mock Magic callbacks, and real queries plus
+firing/resolved notifications in one team-controlled Teams chat. Custom backend
+authentication is outside POC acceptance; platform credentials and message validation
+required to connect Teams/Copilot still apply. Historical/end-of-day reporting and
+central config distribution are Day-2. See
+[the reconciled decisions](docs/plan/open-questions.md) for POC scope and remaining
+production inputs. These are acceptance targets, not a claim that all integration
+features are implemented.
 
 Raw Magic logs and full FIX payloads must not be persisted.
 
 ---
 
-# Where should I work?
+## Where should I work?
 
-## Telemetry Agent
+### Telemetry Agent
 
 ```text
 apps/agent/src/telemetry_agent/
@@ -69,7 +83,7 @@ If your Jira story relates to processing Magic logs, you are probably working he
 
 ---
 
-## Telemetry Backend
+### Telemetry Backend
 
 ```text
 apps/backend/src/telemetry_backend/
@@ -80,22 +94,22 @@ Main areas:
 ```text
 api/           # FastAPI endpoints
 services/      # Business logic
-repositories/  # Redis / PostgreSQL access
+repositories/  # Store abstractions
 anomaly/       # Day-2 anomaly detection
-persistence/   # Day-2 PostgreSQL
+persistence/   # Day-2 historical storage (technology TBD)
 ```
 
 Backend flow should generally be:
 
 ```text
-API → Service → Repository → Redis/PostgreSQL
+API → Service / Repository → bounded in-memory store (Day 1)
 ```
 
-Do not call Redis directly from FastAPI route handlers.
+Keep storage access behind service/repository abstractions.
 
 ---
 
-## Microsoft Teams
+### Microsoft Teams
 
 ```text
 apps/teams/src/teams_agent/
@@ -103,26 +117,27 @@ apps/teams/src/teams_agent/
 
 Used for:
 
-* sending alerts to Teams
-* receiving user questions
-* calling backend APIs
-* formatting responses
+- sending alerts to Teams
+- receiving user questions
+- calling backend APIs
+- formatting responses
 
-Teams should communicate with the backend, not directly with Redis or PostgreSQL.
+Teams communicates through backend APIs; it does not access telemetry stores directly.
 
 ---
 
-## Magic Simulator
+### Magic Simulator
 
 ```text
 apps/simulator/src/magic_simulator/
 ```
 
-Used to generate synthetic FIX/log activity for development because we do not have access to the real UBS production Magic environment.
+Used to generate synthetic FIX/log activity for development because we do not have
+access to the real UBS production Magic environment.
 
 ---
 
-# Shared Schemas
+## Shared Schemas
 
 Before creating your own request/event dictionaries, check:
 
@@ -148,11 +163,12 @@ If your feature requires a new field or event type:
 3. Inform the team if the change affects another component.
 4. Add/update tests.
 
-Do not independently create different versions of the same telemetry object inside Agent, Backend and Teams.
+Do not independently create different versions of the same telemetry object inside
+Agent, Backend and Teams.
 
 ---
 
-# Python Folder Structure
+## Python Folder Structure
 
 We use Python's `src` layout.
 
@@ -166,11 +182,11 @@ apps/agent/
         └── main.py
 ```
 
-* `apps/agent` = deployable application
-* `src` = source-code directory
-* `telemetry_agent` = actual Python package
-* `__init__.py` = marks the package
-* `main.py` = application entry point
+- `apps/agent` = deployable application
+- `src` = source-code directory
+- `telemetry_agent` = actual Python package
+- `__init__.py` = marks the package
+- `main.py` = application entry point
 
 Imports should look like:
 
@@ -186,7 +202,7 @@ from src.telemetry_agent.parsers.fix import FixParser
 
 ---
 
-# Before Starting Your Jira Story
+## Before Starting Your Jira Story
 
 1. Pull the latest branch.
 2. Read `CLAUDE.md`.
@@ -201,7 +217,7 @@ from src.telemetry_agent.parsers.fix import FixParser
 
 ---
 
-# Local Tools
+## Local Tools
 
 Current stack:
 
@@ -209,8 +225,8 @@ Current stack:
 Python 3.14+
 FastAPI
 Pydantic
-Redis
-PostgreSQL (Day 2)
+Bounded in-memory telemetry stores (Day 1)
+Historical storage (Day 2; technology TBD)
 pytest
 Ruff
 mypy
@@ -221,20 +237,24 @@ Useful commands will be added as the project setup matures.
 
 ---
 
-# Important Design Rules
+## Important Design Rules
 
-* Agent must remain lightweight.
-* Target Agent resource usage: **<2% CPU and <500 MB memory**.
-* Backend should be stateless and horizontally scalable.
-* Shared state belongs in Redis.
-* Historical Day-2 data belongs in PostgreSQL.
-* Raw logs/full FIX payloads must not be persisted, only sanitised logs
-* Teams only communicates through Backend APIs.
-* Day-1 rules use configured thresholds.
-* Day-2 anomaly detection compares current behaviour against historical/rolling baselines.
+- Agent must remain lightweight.
+- Target Agent resource usage: **<2% CPU and <500 MB memory**.
+- Backend supports horizontal scaling; Day-1 replica state is process-local and queries
+  must preserve completeness.
+- Day-1 telemetry state uses bounded in-memory stores (ADR 0005).
+- Historical Day-2 data belongs behind storage abstractions; retention and technology
+  remain undecided.
+- Raw logs/full FIX payloads must not be persisted or transmitted; publish only
+  allowlisted derived/sanitised telemetry.
+- Teams only communicates through Backend APIs.
+- Day-1 rules use configured thresholds.
+- Day-2 anomaly detection compares current behaviour against historical/rolling
+  baselines.
 
-If you are unsure where your feature belongs, check the folder responsibilities above before creating new modules.
-
+If you are unsure where your feature belongs, check the folder responsibilities above
+before creating new modules.
 
 ## Quick start
 
@@ -277,17 +297,15 @@ uv run python -m telemetry_agent.parser.cli \
 
 ---
 
-# Run the full stack locally (agent + backend + health monitor)
+## Run the full stack locally (agent + backend + health monitor)
 
-> **Tentative** — local development only. `config/agent.yaml` points at
-> localhost over plain http; the production deployment of the agent is
-> not set up yet.
+> **Tentative** — local development only. `config/agent.yaml` points at localhost over
+> plain http; the production deployment of the agent is not set up yet.
 
-`telemetry-agent` is the real agent (UBS-114): one process that tails the
-logs, parses them, updates metrics and agent health, evaluates the rules and
-publishes alerts + heartbeats to the backend (and signed callbacks to Magic).
-It replaces the old `telemetry-agent-heartbeat` and
-`scripts/health_monitor_demo.py` demos.
+`telemetry-agent` is the real agent (UBS-114): one process that tails the logs, parses
+them, updates metrics and agent health, evaluates the rules and publishes alerts +
+heartbeats to the backend (and signed callbacks to Magic). It replaces the old
+`telemetry-agent-heartbeat` and `scripts/health_monitor_demo.py` demos.
 
 Four terminals, all from the repo root:
 
@@ -300,9 +318,9 @@ uv run telemetry-agent --config config/agent.yaml          # 3. the agent
 # 4. optional: anything listening on 127.0.0.1:9000 receives the Magic callbacks
 ```
 
-Check config only: `uv run telemetry-agent --check-config`.
-Secrets come from the environment (see `.env.example`); on localhost the
-agent falls back to dev values with a warning.
+Check config only: `uv run telemetry-agent --check-config`. Secrets come from the
+environment (see `.env.example`); on localhost the agent falls back to dev values with a
+warning.
 
 What to look at:
 
@@ -314,8 +332,8 @@ curl http://127.0.0.1:8081/metrics                                    # backend 
 curl -i http://127.0.0.1:8081/readyz                                  # backend readiness
 ```
 
-Ctrl-C stops the agent cleanly (offsets saved, final batch sent); about 60s
-later the backend reports it `missing`.
+Ctrl-C stops the agent cleanly (offsets saved, final batch sent); about 60s later the
+backend reports it `missing`.
 
 The same path is covered automatically, no processes needed:
 
@@ -325,6 +343,6 @@ uv run pytest tests/integration/test_UBS_114_agent_end_to_end.py \
               tests/integration/test_health_monitor_e2e.py -q
 ```
 
-Known (Windows only): while the agent runs, the simulator's log rotation can
-fail with `WinError 32` because the agent holds the log open. Run the
-simulator with `--max-bytes 50000000` to avoid rotating during a demo.
+Known (Windows only): while the agent runs, the simulator's log rotation can fail with
+`WinError 32` because the agent holds the log open. Run the simulator with
+`--max-bytes 50000000` to avoid rotating during a demo.

@@ -1,33 +1,40 @@
 # 007 — API Contracts
 
-Status: Draft · Owner: TBD · Last updated: 2026-07-31
+Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
-Base path: `/telemetry`. All requests and responses are JSON, UTF-8. All timestamps are UTC
-ISO-8601 with milliseconds. This spec is the source for the OpenAPI document generated from
-FastAPI; where they disagree, this spec is wrong and MUST be corrected.
+Base path: `/telemetry`. All requests and responses are JSON, UTF-8. All timestamps are
+UTC ISO-8601 with milliseconds. This spec is the source for the OpenAPI document
+generated from FastAPI; where they disagree, this spec is wrong and MUST be corrected.
 
 ## 1. Conventions
 
-| ID | Requirement |
-| --- | --- |
-| `FR-QRY-030` | Every request MUST accept an optional `X-Request-Id`; if absent the backend generates one. It MUST be echoed in the response and in logs. |
-| `FR-QRY-031` | Errors MUST use one shape (§7). No endpoint returns a bare string or a stack trace. |
+| ID           | Requirement                                                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-QRY-030` | Every request MUST accept an optional `X-Request-Id`; if absent the backend generates one. It MUST be echoed in the response and in logs.               |
+| `FR-QRY-031` | Errors MUST use one shape (§7). No endpoint returns a bare string or a stack trace.                                                                     |
 | `FR-QRY-032` | Unknown top-level request fields MUST be rejected with `400 invalid_field` (strict models), so typos in a query never silently return the wrong answer. |
-| `FR-QRY-033` | All list responses MUST be explicitly bounded and MUST report `truncated: true` when a cap was applied. |
+| `FR-QRY-033` | All list responses MUST be explicitly bounded and MUST report `truncated: true` when a cap was applied.                                                 |
 
-Authentication:
+Production authentication target (final identity/tenant arrangements remain Q-3):
 
 - Agent → backend: `Authorization: Bearer <agent token>` or mutual TLS. `FR-ING-002`.
 - Human/tool → backend: OAuth 2.0 bearer token from Entra ID, scope `Telemetry.Read`.
-- Copilot/Teams → backend: same, via the app registration in [Q-3](../plan/open-questions.md).
+- Copilot/Teams → backend: same, via the app registration in
+  [Q-3](../plan/open-questions.md).
+
+For the local synthetic-data POC, custom backend token enforcement is deferred (spec 009
+§3.3). The Teams/Copilot adapter may call these APIs without a backend user token. The
+selected Microsoft integration still requires its platform registration, credentials and
+incoming-message validation. Platform setup and local-server reachability are part of
+the real Teams demonstration; they do not imply per-user backend Entra enforcement.
 
 ## 2. Ingestion
 
 ### 2.1 `POST /telemetry/batch` (primary agent path)
 
-Ingestion accepts `Content-Encoding: gzip` (`FR-PUB-002`) as well as uncompressed
-JSON. `ingest.maxBodyBytes` (default 8 MiB) bounds both wire bytes and decompressed
-bytes; either overflow returns `413 body_too_large`. Invalid/truncated gzip returns
+Ingestion accepts `Content-Encoding: gzip` (`FR-PUB-002`) as well as uncompressed JSON.
+`ingest.maxBodyBytes` (default 8 MiB) bounds both wire bytes and decompressed bytes;
+either overflow returns `413 body_too_large`. Invalid/truncated gzip returns
 `400 invalid_encoding`. Unsupported content encodings return `415 unsupported_encoding`.
 
 ```json
@@ -38,10 +45,10 @@ bytes; either overflow returns `413 body_too_large`. Invalid/truncated gzip retu
   "agentId": "magic-agent-sg-01",
   "application": "Magic",
   "sentAtUtc": "2026-06-12T04:00:10.000Z",
-  "snapshots": [ /* spec 004 §3 */ ],
-  "events":    [ /* spec 004 §2 */ ],
-  "alerts":    [ /* spec 005 §2 */ ],
-  "heartbeat": { /* spec 004 §6 */ }
+  "snapshots": [/* spec 004 §3 */],
+  "events": [/* spec 004 §2 */],
+  "alerts": [/* spec 005 §2 */],
+  "heartbeat": {/* spec 004 §6 */}
 }
 ```
 
@@ -71,14 +78,14 @@ Partial rejection:
 }
 ```
 
-| Status | Meaning | Agent behaviour |
-| --- | --- | --- |
-| 202 | Accepted (possibly partial) | Drop batch from buffer |
-| 400 | Schema invalid for the whole batch | Drop, count `publish.rejected`, log once |
-| 401 / 403 | Auth failure or agentId mismatch | Stop publishing, alert `BackendUnreachable`, retry slowly |
-| 413 | Body too large | Split batch, halve `maxBatchItems` |
-| 429 | Rate limited | Honour `Retry-After` |
-| 503 | Ingest queue full | Back off and buffer |
+| Status    | Meaning                            | Agent behaviour                                           |
+| --------- | ---------------------------------- | --------------------------------------------------------- |
+| 202       | Accepted (possibly partial)        | Drop batch from buffer                                    |
+| 400       | Schema invalid for the whole batch | Drop, count `publish.rejected`, log once                  |
+| 401 / 403 | Auth failure or agentId mismatch   | Stop publishing, alert `BackendUnreachable`, retry slowly |
+| 413       | Body too large                     | Split batch, halve `maxBatchItems`                        |
+| 429       | Rate limited                       | Honour `Retry-After`                                      |
+| 503       | Ingest queue full                  | Back off and buffer                                       |
 
 ### 2.2 `POST /telemetry/events`
 
@@ -87,8 +94,8 @@ Retained because it matches the original design sketch and is convenient for tes
 
 ### 2.3 `POST /telemetry/heartbeat`
 
-Accepts one heartbeat document (spec 004 §6) for heartbeat-only callers. The
-configured agent uses `POST /telemetry/batch` even for a heartbeat-only publish.
+Accepts one heartbeat document (spec 004 §6) for heartbeat-only callers. The configured
+agent uses `POST /telemetry/batch` even for a heartbeat-only publish.
 
 ## 3. `POST /telemetry/query/metrics`
 
@@ -112,9 +119,9 @@ Request:
 ```
 
 - `timeRange` MAY instead be `{ "last": "30m" }`. Exactly one form is allowed.
-- Metric aliases accepted for convenience: `orders` → `orders_submitted`,
-  `rejections` → `orders_rejected`, `executions` → `executions`. Aliases MUST be resolved in
-  one shared table and echoed back under `interpretation`. `FR-QRY-034`
+- Metric aliases accepted for convenience: `orders` → `orders_submitted`, `rejections` →
+  `orders_rejected`, `executions` → `executions`. Aliases MUST be resolved in one shared
+  table and echoed back under `interpretation`. `FR-QRY-034`
 
 Response:
 
@@ -162,15 +169,16 @@ With `series: true`, `groups[].points` is added:
 ]
 ```
 
-`FR-QRY-035`: `null` means "no data for this step", `0` means "data present, count zero".
-Conflating the two is a defect.
+`FR-QRY-035`: `null` means "no data for this step", `0` means "data present, count
+zero". Conflating the two is a defect.
 
 ## 4. Alerts
 
 ### 4.1 `GET /telemetry/alerts`
 
-Query parameters: `status` (`active` | `resolved` | `all`, default `active`), `application`,
-`instanceId`, `ruleName`, `severity`, `since`, `limit` (default 100, max 500).
+Query parameters: `status` (`active` | `resolved` | `all`, default `active`),
+`application`, `instanceId`, `ruleName`, `severity`, `since`, `limit` (default 100, max
+500).
 
 ```json
 200 OK
@@ -206,8 +214,8 @@ Query parameters: `status` (`active` | `resolved` | `all`, default `active`), `a
 
 ### 4.2 `GET /telemetry/alerts/{alertId}`
 
-Returns one alert plus its state transition history (bounded to the last 50 transitions).
-`404` with `code: "not_found"` if unknown or evicted.
+Returns one alert plus its state transition history (bounded to the last 50
+transitions). `404` with `code: "not_found"` if unknown or evicted.
 
 ## 5. Health
 
@@ -248,22 +256,24 @@ Returns one alert plus its state transition history (bounded to the last 50 tran
 }
 ```
 
-`FR-HLT-011`: File paths are the only path-like data the API returns. They are configured
-values, never user input, and MUST NOT be interpolated into any filesystem operation on the
-backend.
+`FR-HLT-011`: File paths are the only path-like data the API returns. They are
+configured values, never user input, and MUST NOT be interpolated into any filesystem
+operation on the backend.
 
 ### 5.3 `GET /healthz`, `GET /readyz`, `GET /metrics`
 
-Unauthenticated on the internal listener only (`FR-HLT-012`); `/metrics` MUST NOT be exposed
-on a public listener.
+Unauthenticated on the internal listener only (`FR-HLT-012`); `/metrics` MUST NOT be
+exposed on a public listener.
 
 ## 6. Natural language
 
 ### 6.1 `POST /telemetry/nl/query`
 
 ```json
-{ "question": "Why are Magic orders rejecting in the last 30 minutes?",
-  "context": { "defaultApplication": "Magic", "userTimezone": "Asia/Singapore" } }
+{
+  "question": "Why are Magic orders rejecting in the last 30 minutes?",
+  "context": { "defaultApplication": "Magic", "userTimezone": "Asia/Singapore" }
+}
 ```
 
 ```json
@@ -288,8 +298,8 @@ on a public listener.
 }
 ```
 
-`FR-NLQ-020`: The response MUST always include `interpretedQuery` and `data`. An answer the
-user cannot verify against numbers is not acceptable for operational use.
+`FR-NLQ-020`: The response MUST always include `interpretedQuery` and `data`. An answer
+the user cannot verify against numbers is not acceptable for operational use.
 
 ### 6.2 `GET /telemetry/nl/intents`
 
@@ -313,13 +323,13 @@ prompt grounding and to keep documentation honest.
 Closed set of codes: `invalid_field`, `invalid_time_range`, `invalid_filter`,
 `unknown_metric`, `unknown_dimension`, `unsupported_schema_version`, `bucket_too_old`,
 `cardinality_exceeded`, `rate_limited`, `queue_full`, `unauthorized`, `forbidden`,
-`agent_id_mismatch`, `not_found`, `query_timeout`, `internal_error`,
-`body_too_large`, `invalid_encoding`, `unsupported_encoding`.
+`agent_id_mismatch`, `not_found`, `query_timeout`, `internal_error`, `body_too_large`,
+`invalid_encoding`, `unsupported_encoding`.
 
-| ID | Requirement |
-| --- | --- |
-| `FR-QRY-036` | Error messages MUST NOT echo raw request content beyond the field name and a bounded, escaped excerpt (max 100 chars). |
-| `FR-QRY-037` | `internal_error` MUST return `requestId` and nothing else about the failure; details go to server logs. |
+| ID           | Requirement                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-QRY-036` | Error messages MUST NOT echo raw request content beyond the field name and a bounded, escaped excerpt (max 100 chars).                      |
+| `FR-QRY-037` | `internal_error` MUST return `requestId` and nothing else about the failure; details go to server logs.                                     |
 | `FR-QRY-038` | Any string from a request that appears in an error message or is rendered into HTML/Markdown/Teams output MUST be escaped for that context. |
 
 ## 8. Versioning

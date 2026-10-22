@@ -7,7 +7,8 @@ this, only demos and tests did that by hand.
 
 Each tick, in order:
 
-1. a SIGHUP-requested rule reload, whose `resolved` events must be routed;
+1. a rule reload, requested by SIGHUP or (UBS-35) by the rules file's mtime
+   changing, whose `resolved` events must be routed;
 2. aging — `MetricsAggregator.tick` / `LatencyCorrelator.tick` — so an idle
    agent's counters decay and stale orders expire;
 3. absence signals: FIX sessions that went silent (UBS-106), which no parsed
@@ -58,6 +59,7 @@ from telemetry_agent.rules.engine import RuleEngine
 from telemetry_agent.rules.types import SIGNATURE_DIMENSION, RuleKind
 
 DEFAULT_EVALUATION_INTERVAL_SECONDS = 10.0
+DEFAULT_RELOAD_CHECK_SECONDS = 10.0
 
 
 def _utc_now() -> datetime:
@@ -91,6 +93,7 @@ class RuleEvaluator:
         dispatcher: CallbackDispatcher | None = None,
         reloader: SighupRuleReloader | None = None,
         interval_seconds: float = DEFAULT_EVALUATION_INTERVAL_SECONDS,
+        reload_check_seconds: float = DEFAULT_RELOAD_CHECK_SECONDS,
         clock: Callable[[], datetime] = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         lock: AbstractContextManager[Any] | None = None,
@@ -117,6 +120,8 @@ class RuleEvaluator:
         self._counters = counters or CounterRegistry()
         self._logger = logger or logging.getLogger(__name__)
         self._reload_requested = False
+        self._reload_check_seconds = reload_check_seconds
+        self._next_reload_check: float | None = None
         self._snapshot_emitter = snapshot_emitter
         self._event_emitter = event_emitter
         # One sampler per registry: `AgentCounterSampler` keeps a baseline,
@@ -155,7 +160,7 @@ class RuleEvaluator:
         monotonic_now = self._monotonic() if monotonic_now is None else monotonic_now
 
         with self._lock:
-            changed = self._reload(now)
+            changed = self._reload(now, monotonic_now)
             self._age(now)
             self._publish_metrics_snapshot(now)
             self._ingest_session_timeouts(now, monotonic_now)
@@ -185,11 +190,28 @@ class RuleEvaluator:
             except TimeoutError:
                 continue
 
-    def _reload(self, now: datetime) -> list[AlertEvent]:
-        if not self._reload_requested or self._reloader is None:
+    def _reload(self, now: datetime, monotonic_now: float) -> list[AlertEvent]:
+        if self._reloader is None:
+            return []
+        if not self._reload_requested and self._reload_check_due(monotonic_now):
+            self._reload_requested = self._reloader.changed_on_disk()
+        if not self._reload_requested:
             return []
         self._reload_requested = False
         return self._reloader.reload(now=now)
+
+    def _reload_check_due(self, monotonic_now: float) -> bool:
+        """Cheap (one `stat`), but still rate-limited to
+        `reload_check_seconds`; 0 disables the file check (SIGHUP only)."""
+        if self._reload_check_seconds <= 0:
+            return False
+        if (
+            self._next_reload_check is not None
+            and monotonic_now < self._next_reload_check
+        ):
+            return False
+        self._next_reload_check = monotonic_now + self._reload_check_seconds
+        return True
 
     def _age(self, now: datetime) -> None:
         self._aggregator.tick(now.timestamp())

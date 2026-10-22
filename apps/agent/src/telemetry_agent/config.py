@@ -7,7 +7,9 @@ the two sections nothing else reads yet (`logs:`, `pipeline:`):
     agent: / heartbeat: / health:   -> health.config.load_health_config
     publish:                        -> publishing.config.parse_publish_config
     callbacks:                      -> callbacks.config.parse_callbacks_config
-    rules: {path: rules.yaml}       -> rules.config_loader.load_rules
+    rules: {path, reloadCheckInterval} -> rules.config_loader.load_rules
+    actions: {allowedCommands}      -> actions.config (the `actions:` block
+                                       itself lives in the rules file)
     logs: {paths, stateDir, appLogPatterns}
     parsing: {errorSignatures, maxDynamicSignatureLabels}
     pipeline: {parseWorkers, evaluationInterval}
@@ -23,7 +25,7 @@ hash key come from the environment (see `.env.example`).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
 
+from telemetry_agent.actions.config import (
+    ActionDef,
+    load_action_catalogue,
+    parse_allowed_commands,
+)
 from telemetry_agent.callbacks.config import CallbacksConfig, parse_callbacks_config
 from telemetry_agent.health.config import (
     HealthThresholds,
@@ -84,6 +91,14 @@ class _PipelineYaml(_Section):
 
 class _RulesYaml(_Section):
     path: str = "rules.yaml"
+    # UBS-35: how often the evaluator checks the file's mtime and reloads it
+    # on change (SIGHUP doesn't exist on Windows). 0 turns the check off.
+    reload_check_interval: str | float = "10s"
+
+
+class _ActionsYaml(_Section):
+    # ADR 0008: the operator's allowlist; read at startup only.
+    allowed_commands: list[str] = []
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +128,9 @@ class AgentConfig:
     parsing: ParsingConfig
     parse_workers: int
     evaluation_interval_seconds: float
+    actions: dict[str, ActionDef] = field(default_factory=dict)
+    allowed_commands: tuple[Path, ...] = ()
+    rules_reload_check_seconds: float = 10.0
 
     @property
     def agent_id(self) -> str:
@@ -164,7 +182,21 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     rules_section: _RulesYaml = _section(raw, "rules", _RulesYaml)
     rules_path = (file.parent / rules_section.path).resolve()
     try:
+        reload_check = parse_duration_seconds(rules_section.reload_check_interval)
+    except Exception as exc:
+        raise AgentConfigError(f"rules: reloadCheckInterval: {exc}") from exc
+    if reload_check < 0:
+        raise AgentConfigError("rules: reloadCheckInterval must be >= 0")
+
+    actions_section: _ActionsYaml = _section(raw, "actions", _ActionsYaml)
+    try:
+        allowed_commands = parse_allowed_commands(actions_section.allowed_commands)
+    except Exception as exc:
+        raise AgentConfigError(f"actions: {exc}") from exc
+
+    try:
         rules = load_rules(rules_path)
+        actions = load_action_catalogue(rules_path, allowed_commands=allowed_commands)
     except Exception as exc:
         raise AgentConfigError(f"rules: {exc}") from exc
 
@@ -223,4 +255,7 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
         ),
         parse_workers=pipeline.parse_workers,
         evaluation_interval_seconds=interval,
+        actions=actions,
+        allowed_commands=allowed_commands,
+        rules_reload_check_seconds=reload_check,
     )

@@ -1,329 +1,225 @@
 # Open Questions and Decisions Required
 
-Status: Live document · Last updated: 2026-09-27
-
-Each question records why it matters, what the specs currently assume so work is not blocked,
-and what has to change once it is answered. When a question is resolved, record the answer here,
-update the affected specs, and add an ADR if the answer is a design decision rather than a value.
-
-| ID | Question | Blocks | Status |
-| --- | --- | --- | --- |
-| Q-1 | Expected FIX throughput and peak log volume per instance | Performance targets, buffer sizing | Open |
-| Q-2 | Callback protocol Magic will support | Callback dispatcher implementation | Open |
-| Q-3 | Auth model for backend APIs and Copilot/Teams | Backend auth, Copilot registration | Open |
-| Q-4 | Deployment topology | Packaging, config shape | Open — assumption is safe |
-| Q-5 | Initial alert thresholds | Default rule set credibility | Open — provisional values in use |
-| Q-6 | Mandatory query dimensions | Cardinality budget | Open — assumption is safe |
-| Q-7 | Day-2 retention requirement | ADR 0005 reversal timing | Open — not needed for Day-1 |
-| Q-8 | Log format and FIX version reality | Parser correctness | **Open — highest risk** |
-| Q-9 | Trading hours and timezone per instance | Absence rules, `today` semantics | Open |
-| Q-10 | Who receives alerts besides Magic | Notification design | Open |
-| Q-11 | Scope of "Callback audit" under Integration Service | UBS-102, spec 008 §6/§7 shape | Open |
-| Q-12 | Config/control push from backend to agent (thresholds, rules) | Day-1 vs Day-2 scope boundary | Open |
-| Q-13 | Production deployment topology (local vs cloud, DB requirement) | Hosting plan, persistence design, FYP demo vs production target | **Open — raised 2026-09-23 sponsor call** |
-
----
-
-## Q-1 — Expected FIX throughput and peak log volume per Magic instance
-
-**Why it matters.** Nearly every provisional number depends on it: `NFR-PERF-001` (5 000
-lines/sec), agent memory ceiling, `publish.bufferBytes` (and therefore how long a backend outage
-is survivable), `maxSeriesPerBucket`, and backend capacity per replica.
-
-**Current assumption.** 5 000 log lines/sec sustained per host, 20 000/sec peak, average line
-250 bytes. Specs mark these provisional.
-
-**What is needed.** Peak messages/sec per session and per instance, average and p99 log line
-size, total daily log volume, and number of instances per host.
-
-**On resolution.** Re-run the load test at the real figures; recompute the survivable outage
-duration and state it in the runbook (spec 011 §3); adjust `NFR-PERF-001`, `NFR-PERF-003` and
-`publish.bufferBytes`. If sustained throughput is above roughly 20 000 lines/sec per host, revisit
-ADR 0003 (publish interval and transport).
-
----
-
-## Q-2 — What callback protocol should Magic support for Day-1?
-
-**Why it matters.** Determines the entire Callback Dispatcher: transport, auth, retry semantics,
-and whether delivery is push or pull.
-
-**Current assumption.** HTTPS POST with HMAC-SHA256 request signing, exponential backoff, 5
-attempts, idempotency key (spec 005 §3). The dispatcher sits behind a `CallbackSink` interface so
-another transport is an implementation, not a rewrite.
-
-**What is needed from Magic's team.** Endpoint URL and path; auth scheme (shared secret HMAC,
-mTLS, bearer token, or IP allowlist); expected payload contract and whether ours is acceptable;
-acknowledgement semantics; idempotency and deduplication behaviour on their side; whether a
-message queue is preferred over HTTP; whether resolution notifications are wanted or only firing.
-
-**On resolution.** Confirm or replace spec 005 §3.3; if a queue is chosen, write an ADR and add a
-second `CallbackSink` implementation. Until then, `callbacks.dryRun: true` allows everything else
-to be validated.
-
----
-
-## Q-3 — Which authentication and authorization model for backend APIs and Teams/Copilot access?
-
-**Why it matters.** Agent identity spoofing would let anyone inject telemetry
-(`FR-ING-002`); unauthenticated query access would expose trading activity aggregates.
-
-**Current assumption.** Agents use bearer tokens or mTLS; users use Entra ID OAuth 2.0 with scope
-`Telemetry.Read`; all access is read-only (`NFR-SEC-009`).
-
-**What is needed.** Tenant and app registration ownership; whether mTLS is available for agents
-and how certificates are issued and rotated; whether authorisation must be scoped per
-`instanceId` or per team (this changes the query API, so it matters early); token lifetime and
-rotation procedure; audit logging requirements.
-
-**On resolution.** If per-instance authorisation is required, add a filter-injection layer to the
-query engine and an ADR — retrofitting row-level authorisation later is expensive.
-
----
-
-## Q-4 — Preferred deployment topology
-
-**Why it matters.** Affects config shape, packaging and failure domains.
-
-**Current assumption.** One agent per host, monitoring multiple instances via per-file-set
-`instanceId` (spec 001 §4). The agent supports all three topologies, so this is a deployment
-choice rather than a code choice.
-
-**What is needed.** Whether trading hosts permit a shared observer process; whether per-instance
-resource isolation is mandated; whether log files are host-local or on a share.
-
-**Risk if wrong.** Low. This is the safest question to leave open.
-
----
-
-## Q-5 — Which alert thresholds should be configured initially?
-
-**Why it matters.** Wrong thresholds are the fastest way to make the system ignored. Too
-sensitive and the alerts are noise; too loose and the system adds nothing.
-
-**Current assumption.** The provisional set in spec 005 §1.2 — reject rate 5% over 5m, p95 ack
-latency 500ms/2000ms, parse error rate 1%/25%, no log activity 5m.
-
-**What is needed.** Normal and abnormal reject rates from historical experience; acceptable ack
-latency for this venue set; which conditions genuinely warrant paging versus a dashboard.
-
-**On resolution.** Update spec 005 §1.2 defaults. **Recommended approach:** run in
-`callbacks.dryRun: true` for one to two weeks first, then set thresholds from the observed
-distribution rather than from guesses. Note this explicitly in the M5 exit review.
-
----
-
-## Q-6 — Which telemetry dimensions are mandatory for filtering and aggregation?
-
-**Why it matters.** Dimensions drive the cardinality budget, and therefore memory in both
-components (spec 004 §5). Adding a dimension later is easy; adding a high-cardinality one is not.
-
-**Current assumption.** `application`, `instanceId`, `session`, `symbol` (capped at 200 with
-top-N folding), `side`, `ordType`, `msgType`, `rejectReason`, `sessionRejectReason`.
-
-**What is needed.** Confirmation that symbol-level drill-down is required (it is the main
-cardinality risk); whether venue/exchange, trader/desk, or strategy dimensions are needed — noting
-that trader and account identifiers conflict with ADR 0004 and would need their own ADR.
-
----
-
-## Q-7 — What data retention approach is required for Day-2 historical analysis?
-
-**Why it matters.** Determines when ADR 0005 is reversed and what replaces the in-memory store.
-
-**Current assumption.** None needed for Day-1; 6h in-memory, 24h maximum.
-
-**What is needed.** Required retention duration for derived metrics; whether alert history must be
-retained for audit (this is the most likely near-term need and is a much smaller change than
-metric persistence); any regulatory retention obligation. Note that raw log retention is out of
-scope permanently unless ADR 0004 is revisited with a data-protection review.
-
----
-
-## Q-8 — What do Magic's logs actually look like? *(highest technical risk)*
-
-**Why it matters.** The parser is specified against assumptions about FIX version, delimiter,
-line prefixes and multi-line behaviour. If those assumptions are wrong, the parser produces either
-`unsupported_lines` or, worse, plausible but incorrect metrics. Every downstream number depends
-on this being right.
-
-**Current assumption.** FIX 4.2/4.4 tag=value, SOH or pipe delimited, one message per line,
-possibly with a log framework prefix, in files that rotate daily or by size.
-
-**What is needed.** Sanitised sample lines from each log file (`Application.log`, `Fix.log`,
-`Order.log`, `Execution.log` per the architecture diagram); FIX version and dictionary, including
-custom tags; which files contain FIX versus application text; the rotation scheme and naming; the
-encoding; whether inbound and outbound messages are distinguishable and how; and whether any
-custom tags carry the rejection reason instead of tags 103/58.
-
-**On resolution.** Update spec 003 §§2, 6 and the corpus in spec 012 §3. **This should be answered
-before M2 starts**, and ideally before M1. Obtaining samples requires a redaction agreement — do
-not accept unredacted production lines.
-
----
-
-## Q-9 — Trading hours, calendar and timezone per instance
-
-**Why it matters.** Absence rules (`NoLogActivity`, `NoExecutions`) fire on quiet periods, so
-without correct schedules they either page every evening or are switched off entirely. Also
-determines what `today` means in NL queries (`FR-NLQ-013`).
-
-**Current assumption.** `Asia/Singapore`, Monday–Friday, 08:30–17:30, one schedule for all
-instances (spec 010 §1).
-
-**What is needed.** Per-instance or per-venue trading sessions, timezone, holiday calendar source,
-and whether pre-open and post-close activity is expected.
-
----
-
-## Q-10 — Who receives alerts besides Magic?
-
-**Why it matters.** The design pushes callbacks to Magic and exposes alerts via query. If humans
-are expected to be paged directly, a notification channel is missing from Day-1 scope.
-
-**Current assumption.** Magic's callback endpoint is the only push destination; humans discover
-alerts through Teams or Copilot queries, or through Magic's own onward routing.
-
-**What is needed.** Whether the telemetry system must notify a Teams channel, email, or a paging
-tool directly; if so, who owns escalation policy and quiet hours. If direct paging is required,
-add a second `CallbackSink` implementation and expand spec 005 §3.
-
----
-
-## Q-11 — Scope of "Callback audit" under Integration Service
-
-**Why it matters.** The client's own architecture diagram (`docs/assets/architecture-overview.png`)
-labels "Callback audit" as part of the Integration Service box, alongside the Copilot/Teams
-connector and other external integrations. Specs 006, 007 and 008 don't currently define this as
-a requirement anywhere — there is no `FR-ID` for it. UBS-102 was created as a draft placeholder
-story referencing this question rather than guessing at scope.
-
-**Current assumption.** Alert query responses already carry a `delivery` block (status, attempts,
-last attempt time, `correlationId` — spec 007 §4.1). The open part is whether/how the Integration
-Service is expected to additionally surface that delivery status through NL answers and Adaptive
-Cards (a UX/audit feature), versus this being satisfied entirely by the existing alert API and
-needing no NL/Teams-specific work at all.
-
-**What is needed.** Confirm with the client whether "callback audit" means (a) nothing beyond the
-existing per-alert `delivery` block already in spec 007, (b) a dedicated audit view/report
-surfaced through Copilot/Teams, or (c) a separate audit log/export feature. Whichever it is,
-give it an `FR-ID` in spec 008 (or a new spec) before committing an estimate.
-
-**On resolution.** Update spec 008 with the relevant `FR-NLQ-*` (or new) requirements; replace
-UBS-102's draft AC with the confirmed shape; remove the "needs spec clarification" note from that
-ticket.
-
----
-
-## Q-12 — Config/control push from backend to agent (thresholds, rules)
-
-**Why it matters.** The client's architecture diagram shows a dashed "Config / Control
-(Thresholds, Rules, etc.)" line running from the backend's Stream Processor box back to the
-agent's Parser Engine. This reads as centralized configuration distribution — the backend pushing
-threshold/rule changes down to agents at runtime. `docs/plan/scaffold.md` explicitly defers this:
-central config distribution is called out as Day-2 scope, with Day-1 agents reading their
-thresholds and rules from local config (`config/rules.yaml` and friends) only. This is a direct
-Day-1/Day-2 discrepancy between what the client's own diagram depicts and what the team's spec
-and milestone plan commit to building first.
-
-**Current assumption.** No backend-to-agent config push exists in any Day-1 spec (001, 002, 003,
-005, 006) or in any Jira epic created so far. Agents remain fully local-config-driven through M7.
-
-**What is needed.** Confirm with the client (or by re-reading the requirements docx's Day-1/Day-2
-roadmap table, which does not mention this explicitly either) whether the dashed line in the
-diagram is: (a) aspirational/Day-2 and safe to leave out of Day-1 scope entirely, (b) a
-misunderstanding of the diagram (e.g. it actually represents the agent's own local config file,
-not a backend push), or (c) an actual Day-1 requirement that was missed. Do not build a
-config-push mechanism speculatively based on the diagram alone.
-
-**On resolution.** If confirmed Day-2 (most likely, per scaffold.md): add an explicit note to
-spec 001 §1's diagram caption saying so, so future readers don't assume it's implemented. If
-confirmed Day-1: this needs its own epic (agent-side config-fetch/apply, backend-side
-config-distribution API) and is a scope addition, not something already covered by the epics
-created in this pass.
-
----
-
-## Q-13 — Production deployment topology (local vs cloud, DB requirement)
-
-**Why it matters.** The team planned a sprint to "host everything to cloud" because no UBS
-server is available for FYP development. In the 2026-09-23 sponsor call, Avinash clarified
-that cloud is acceptable for test/demo purposes, but **actual client data in production
-cannot sit on public cloud** due to sensitive/shared information; **local is preferable**,
-with local filesystem or MongoDB/Postgres on a **local/on-prem server** acceptable. This
-question separates three things that are easy to conflate: (1) where the **backend service
-runs**, (2) whether **derived telemetry** (not raw logs) may be stored centrally, and (3)
-whether a **database** is required at all. It also resolves tension between the formal Day-1
-design ([ADR 0005](../adr/0005-in-memory-metric-store.md): in-memory ring buffer, no DB) and
-stale README/scaffold language that mentions Redis (Day-1) and PostgreSQL (Day-2).
-
-**Current assumption.**
-
-- **Agent:** colocated on the Magic host; read-only log access; never persists or transmits
-  raw log content ([ADR 0004](../adr/0004-no-raw-log-persistence.md)).
-- **Backend Day-1:** process-local in-memory metric and alert stores, 6h default retention
-  (24h max); no database deployed ([ADR 0005](../adr/0005-in-memory-metric-store.md)).
-- **FYP/demo:** student-managed cloud or local Docker is acceptable with simulator data only.
-- **Production (provisional, from sponsor call):** backend on local/on-prem server; optional
-  local MongoDB or Postgres if persistence is needed; public cloud not for client data.
-
-**What is needed from the sponsor.**
-
-1. Confirm the **production target topology**: agent on Magic host + backend on
-   **UBS/on-prem local server** (not public cloud)?
-2. Confirm whether **public cloud is FYP/demo-only** — i.e. we should not treat cloud
-   hosting as the final production architecture.
-3. Confirm whether **in-memory backend retention (6–24h)** is acceptable for Day-1/FYP
-   delivery, or whether a **local MongoDB/Postgres** is **required** for derived metrics
-   and/or alert history.
-4. If a local DB is required: **MongoDB vs Postgres preference**, and what must be
-   persisted (metrics, alert history, agent registry/audit)?
-5. Clarify whether the "no cloud" rule applies to **derived aggregates** (reject rates,
-   session metrics, hashed identifiers) or only to raw/sensitive log content — our design
-   already excludes raw logs everywhere.
-6. Will UBS provide a **local VM/server** for integration/UAT, or should the team
-   self-host locally until handover?
-7. Is a **single backend instance** acceptable for production/UAT initially, or is
-   multi-replica HA/failover in scope for FYP delivery?
-
-**On resolution.**
-
-- Update spec 001 §§3–5 (technology stack, deployment topology, scaling) with the confirmed
-  production profile (`fyp-local`, `fyp-cloud-demo`, `ubs-onprem`, etc.).
-- If local DB is required: add an ADR reversing or extending ADR 0005 (scope: derived data
-  only; no raw logs; local/on-prem placement).
-- If cloud is FYP-only: remove or deprioritise "cloud hosting sprint" work; align M7
-  `docker-compose` demo path to the production-local model.
-- Reconcile stale README/compose Redis/Postgres language with the decided storage model.
-- If single-server is confirmed: document that scatter-gather / consistent-hash routing
-  (spec 006 `NFR-SCA-003`/`004`) is deferred until HA is required.
-
-**Related:** [Q-4](#q-4--preferred-deployment-topology) (agent placement),
-[Q-7](#q-7--what-data-retention-approach-is-required-for-day-2-historical-analysis)
-(retention drives DB need). Sponsor email draft:
-[sponsor-email-deployment-clarifications.md](./sponsor-email-deployment-clarifications.md).
-
----
-
-## Resolved
-
-
-*Record answers here with the date, the decision, and the specs updated.*
+Status: Reconciled with team decisions · Last updated: 2026-10-16
+
+This document distinguishes **settled Day-1 POC scope** from **unconfirmed production
+inputs** and **deferred Day-2 decisions**. A POC decision is a team decision, not
+evidence of sponsor approval or production compatibility. Resolved scope does not mean
+implemented or tested. The original requirements document leaves the authentication
+model open; custom backend authentication is not a POC acceptance requirement.
+
+| ID   | Question                         | POC status                                                        | Remaining work outside the settled POC scope                                                                  |
+| ---- | -------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Q-1  | Throughput and log volume        | Resolved — synthetic benchmark                                    | Measure production workload before capacity sign-off                                                          |
+| Q-2  | Magic callback contract          | Resolved — mock endpoint                                          | Agree real Magic transport, credentials and acknowledgement contract                                          |
+| Q-3  | Authentication and authorisation | Resolved — custom backend auth deferred                           | Teams/Copilot platform setup is required for the demo; production backend identity/access policy remains open |
+| Q-4  | Agent deployment topology        | Resolved — co-located, one agent per host                         | Validate real host access and isolation constraints                                                           |
+| Q-5  | Initial alert thresholds         | Resolved — confirmed tiers plus configurable provisional defaults | Calibrate remaining thresholds for production                                                                 |
+| Q-6  | Query dimensions                 | Resolved — current spec 004 catalogue                             | Extra dimensions require an explicit scope change                                                             |
+| Q-7  | Historical retention             | Deferred — Day-2                                                  | Decide retention, durability and store before historical reporting                                            |
+| Q-8  | Parser/log formats               | Resolved — simulator acceptance and extensible parsers            | Validate additional production formats before onboarding                                                      |
+| Q-9  | Trading calendar                 | Resolved — demo schedule only                                     | Obtain production schedules/timezones/holidays                                                                |
+| Q-10 | Human notifications              | Resolved — real Teams chat demo                                   | Production routing, quiet hours and escalation remain unconfirmed                                             |
+| Q-11 | Callback audit                   | Resolved — per-alert delivery details                             | Durable audit/export is separate future scope                                                                 |
+| Q-12 | Central config/control           | Deferred — Day-2; local config for Day-1                          | Specify distribution only if commissioned                                                                     |
+| Q-13 | Hosting and persistence          | Resolved — local Day-1 server, no DB                              | Day-2 cloud requires client-info masking; production infrastructure/access and HA remain unconfirmed          |
+
+## Q-1 — Throughput and log volume
+
+**Decision (team, 2026-10-16).** Use 5,000 lines/sec sustained and 20,000 lines/sec peak
+per host as synthetic POC load targets. These are acceptance benchmarks, not
+measurements of Magic. The existing 250-byte average line size is a sizing assumption,
+not a confirmed production value. Record test hardware, line sizes and achieved rates in
+the load report.
+
+**Production follow-up.** Measure sustained/peak rates, average/p99 line size, daily
+volume and instances per host. Recompute buffer/outage capacity and resource limits
+before production capacity sign-off. References: spec 009 §1, spec 012 §5, spec 011 §3.
+
+## Q-2 — Magic callback contract
+
+**Decision (team, 2026-10-16).** A mock Magic endpoint is sufficient for POC acceptance.
+Exercise the existing signed HTTP callback contract, retry, idempotency and
+firing/resolved handling against that mock. The configurable `CallbackSink` remains the
+transport seam. No real Magic endpoint is required to complete the POC.
+
+**Production follow-up.** Agree endpoint ownership, transport, authentication, payload,
+acknowledgement/deduplication behaviour and resolution notifications with Magic's team.
+The current HTTP/HMAC contract is not yet their confirmed production contract.
+References: spec 005 §3, spec 012 POC acceptance.
+
+## Q-3 — Authentication and authorisation
+
+**Decision (team, 2026-10-16).** Custom telemetry-backend authentication, agent identity
+binding and per-user Entra token enforcement are outside the local synthetic-data POC.
+Separate ingestion/query bearer tokens are not an additional POC requirement.
+
+**Teams/Copilot remains a real integration.** Keep the app registration, credentials and
+incoming-message validation required by the selected Microsoft platform connection. A
+user can ask in Teams, the adapter can call the local telemetry backend without custom
+backend auth, and the adapter can render the result. Platform authentication and backend
+authentication are separate. Connectivity to the local service must be demonstrated.
+
+**Production follow-up.** Choose agent credentials/rotation, tenant/app ownership, and
+application/instance read permissions. The team accepted restricted production
+visibility; the exact grants and implementation remain unconfirmed. Backend request logs
+in the POC must not claim an unverified identity is authenticated. Production
+requirements remain in specs 006–009, with an explicit POC exception in spec 009 §3.3.
+
+## Q-4 — Agent deployment topology
+
+**Decision (team, 2026-10-16).** Default to one agent on each log host, with
+per-file-set `instanceId` for multiple Magic instances. Day-1 reads host-local logs.
+Remote fetching is a separate spike, not an already supported POC topology. Backend
+placement is Q-13.
+
+**Production follow-up.** Validate host permissions, isolation requirements and real
+file paths. Sponsor permission to explore remote reading does not waive ADR 0004's
+prohibition on transmitting raw logs. References: spec 001 §4, spec 002 §2.
+
+## Q-5 — Initial alert thresholds
+
+**Decision (team, 2026-10-16).** Keep the client-confirmed warning/critical tiers:
+
+- reject rate: >3% / >5%;
+- p95 acknowledgement latency: >500 ms / >1,000 ms;
+- parse error rate: >1% / >25%.
+
+Use the remaining spec 005 §1.2 values as configurable, provisional demo defaults.
+`NoLogActivity` is 60 seconds within the configured schedule, not the stale five-minute
+value. Host, application and other unconfirmed thresholds need production calibration;
+they are not all sponsor-approved. Do not add automatic paging to the POC.
+
+## Q-6 — Mandatory query dimensions
+
+**Decision (team, 2026-10-16).** Use the current spec 004 §5 catalogue and its
+per-metric allowlists/caps: `application`, `instanceId`, `session`, `symbol`, `side`,
+`ordType`, `msgType`, `rejectReason`, `sessionRejectReason`, `reason`, `severity`,
+`level`, `mount`, `component`, and `errorSignature`. Symbol drilldown is already an
+intent in spec 008. Do not add desk/trader/strategy dimensions without a new explicit
+requirement and any necessary data-minimisation review. This settles POC scope, not
+future production needs.
+
+## Q-7 — Historical retention
+
+**Decision (team, 2026-10-16).** Day-1 uses bounded in-memory stores, 6h default and 24h
+maximum, with restart loss reported. No durable telemetry database is required for the
+POC (ADR 0005). Historical business reporting and end-of-day summaries are Day-2 and are
+not final Day-1 POC acceptance criteria.
+
+**Day-2 follow-up.** End-of-day totals, alert summaries and previous-trading-day
+comparison are specified in `FR-NLQ-028`. Decide retention duration, restart durability,
+alert history and storage technology before implementation. Weekends/holidays mean a
+previous trading day cannot be assumed to fit inside a 24h window. Retain only approved
+derived/sanitised telemetry; raw-log retention remains prohibited. Cloud placement also
+depends on Q-13.
+
+## Q-8 — Parser/log formats
+
+**Decision (team, 2026-10-16).** The parser is a configurable module, selected per file
+set, with a shared interface and registry so other text or binary formats can be added
+without changing the pipeline (`FR-PRS-030`–`032`). POC FIX telemetry uses the
+simulator's FIX records; its Application.log records remain the application-health
+input.
+
+The team confirms the simulator format is based on sponsor samples, extended with
+synthetic examples. Its verified application level set is `NWEIF`. The
+extra-critical-level interpretation is withdrawn; UBS-127 was withdrawn and UBS-128
+narrowed to F-level alerts. Spec 004 `FR-MET-033` retains E/F error counting and a
+five-value `level` dimension.
+
+**Production follow-up.** Validate additional files, FIX versions/dictionaries/custom
+tags, direction markers, encoding and rotation before onboarding. Simulator
+compatibility is POC acceptance, not proof of full production compatibility. References:
+specs 003, 004, 005 and apps/simulator/log_specifications.md.
+
+## Q-9 — Trading hours, calendar and timezones
+
+**Decision (team, 2026-10-16).** Singapore weekdays 08:30–17:30 are a demo schedule
+only. Production inactivity alerts require explicitly configured, verified schedules and
+holiday calendars. The schedule configuration example does not prove runtime gating;
+calendar enforcement must be verified before claiming schedule-aware alerting works.
+
+NL relative dates use the user's timezone from Teams (default `Asia/Singapore`), which
+is separate from an instance's trading calendar (`FR-NLQ-012`–`014`).
+
+**Production follow-up.** Obtain per-instance/venue trading sessions, timezones,
+holidays, and pre-open/post-close activity expectations. References: specs 005 and 010.
+
+## Q-10 — Human alert notifications
+
+**Decision (team, 2026-10-16, following sponsor request).** Day-1 demonstrates real
+queries and firing/resolved notifications in one configurable, team-controlled Teams
+group chat. Only the Magic callback endpoint is mocked. No automated email/pager
+escalation, per-team routing or quiet-hours policy is required for the POC. The chat and
+platform credentials are setup inputs, not unresolved feature scope.
+
+**Production follow-up.** Agree recipients/routing, quiet hours and escalation
+ownership. References: spec 000 §3.1, spec 008 §6, UBS-120.
+
+## Q-11 — Callback audit
+
+**Decision (team, 2026-10-16).** Show the existing per-alert `delivery` data in the
+technical Teams/Copilot alert detail view: status, attempts, last attempt time and
+`correlationId`. Read it through backend APIs; do not invent success when the data is
+absent. This is a visibility feature, not a new durable audit store or export. Spec 008
+`FR-NLQ-029` defines the scope for UBS-102; spec 007 §4.1 defines the existing payload.
+
+**Future follow-up.** Durable attempt history/export requires a separate retention and
+storage decision under Q-7.
+
+## Q-12 — Config/control distribution
+
+**Decision (team, 2026-10-16).** Day-1 uses local configuration and the specified reload
+mechanism. Backend-to-agent central configuration push is deferred to Day-2. The dashed
+control line in the client diagram is not a Day-1 implementation commitment.
+Configurable Day-2 remediation hooks are a separate feature and do not imply config
+distribution. References: spec 001 §1, spec 010, ADR 0003 and ADR 0008.
+
+## Q-13 — Hosting and persistence
+
+**Decision (team, 2026-10-16).** Day-1 deploys on a local server, with the co-located
+agent from Q-4 and bounded in-memory backend storage from Q-7. Cloud deployment is
+Day-2; client information must be masked before any cloud upload. Raw Magic logs/full
+FIX payloads still cannot leave the host or be uploaded (ADR 0004). Masking is a
+requirement for approved derived telemetry, not permission to upload raw logs.
+
+**Still unconfirmed.** Local server ownership/access, availability of a UBS
+integration/UAT host, production HA/failover requirements, and the exact masking policy
+for Day-2 cloud. The earlier single-backend recommendation was not explicitly confirmed
+when the team corrected the hosting choice; do not mark production HA requirements
+resolved. No database vendor is selected by this decision. Preserve scalable interfaces
+and query completeness requirements; do not silently remove existing multi-replica
+behaviour. References: spec 001 §4–5, spec 009 §3.1 and ADR 0005.
+
+## Source evidence and decision history
 
 ### 2026-10-16 sponsor call (Avinash Gopal)
 
-- **Q-10 (partly answered):** People must be notified, not only Magic. Push events reach end
-  users "in the group chat" through Copilot/Teams. This is UBS-120 (Teams notification),
-  raised to High. Escalation policy and quiet hours remain open. Updated: spec 000 §3.1.
-- **Q-8 (new fact):** Application.log has a `[C]` critical level as well as `[E]` and `[F]`.
-  The severities rank F > C > E. Updated: spec 004 `FR-MET-033`, §5 `level`; spec 005
-  `AppLogFailure` and `AppLogCritical`.
-- **Q-13 (partly answered):** The telemetry server may run remotely and connect to the log
-  host, or co-located "if it is within the metrics, not consuming more memory". Day-1 keeps
-  the agent co-located; remote fetching is a spike. Updated: spec 002 §2.
+- **Q-10 (sponsor evidence; POC policy settled below):** People must be notified, not
+  only Magic. Push events reach end users "in the group chat" through Copilot/Teams.
+  This is UBS-120 (Teams notification), raised to High. The team subsequently chose no
+  automated escalation or quiet-hours policy for the POC. Updated: spec 000 §3.1.
+- **Q-8 (corrected by the team on 2026-10-16):** The simulator's sponsor-format samples
+  use `NWEIF`. The earlier extra-critical-level interpretation is withdrawn. Spec 004
+  `FR-MET-033` keeps E/F error counting and a five-value `level` dimension; spec 005
+  keeps `AppLogFailure`. The parser stays extensible; POC acceptance uses the simulator
+  format.
+- **Q-13 (sponsor evidence; deployment decision settled below):** The telemetry server
+  may run remotely and connect to the log host, or co-located "if it is within the
+  metrics, not consuming more memory". Day-1 keeps the agent co-located; remote fetching
+  is a spike. Updated: spec 002 §2.
 - **New scope from the same call:**
   - host/system events (disk, memory, Magic process): spec 002 §7.1, spec 005 §1.2;
   - an MCP server for M365 Copilot: ADR 0007, spec 008 `FR-NLQ-026`;
   - technical vs executive answers by audience: spec 008 `FR-NLQ-027`;
   - end-of-day business summaries: `FR-NLQ-028`, Day-2;
   - configurable action hooks: ADR 0008, spec 005 §5, Day-2.
+
+### 2026-10-16 team scope review
+
+The decisions in Q-1–Q-13 above reconcile the subsequent team discussion. In particular,
+they supersede the previous "Magic only" notification assumption, all-provisional
+threshold wording, blanket POC Entra/backend-auth requirements, and cloud-first Day-1
+hosting questions. The source DOCX remains unmodified. Open production details must not
+be reintroduced as blockers to the agreed synthetic-data POC.

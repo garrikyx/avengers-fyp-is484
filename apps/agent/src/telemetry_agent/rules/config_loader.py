@@ -1,4 +1,4 @@
-"""RE-05: `config/rules.yaml` loading and SIGHUP reload (`FR-RUL-008`/`009`).
+"""RE-05: `config/rules.yaml` loading and live reload (`FR-RUL-008`/`009`).
 
 `config/rules.yaml` is the live source of rules; `defaults.DEFAULT_RULES`
 is the fallback used only when that file doesn't exist. A malformed
@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import signal
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -33,7 +34,13 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 from telemetry_agent.rules.defaults import DEFAULT_RULES
 from telemetry_agent.rules.engine import _OPERATORS, RuleEngine
-from telemetry_agent.rules.types import RuleConfig, RuleKind, SeverityTier, ValueSource
+from telemetry_agent.rules.types import (
+    RuleConfig,
+    RuleKind,
+    RuleState,
+    SeverityTier,
+    ValueSource,
+)
 from telemetry_shared.models.alerts import AlertEvent
 
 _DURATION_RE = re.compile(r"^(\d+)([smh])$")
@@ -83,6 +90,8 @@ class _RuleYaml(BaseModel):
     group_by: tuple[str, ...] = ()
     schedule_ref: str | None = None
     depends_on_log_activity: bool = True
+    actions: tuple[str, ...] = ()
+    state: RuleState = RuleState.ACTIVE
 
     @field_validator("operator")
     @classmethod
@@ -122,6 +131,8 @@ def _to_rule_config(parsed: _RuleYaml) -> RuleConfig:
         group_by=parsed.group_by,
         schedule_ref=parsed.schedule_ref,
         depends_on_log_activity=parsed.depends_on_log_activity,
+        actions=parsed.actions,
+        state=parsed.state,
     )
 
 
@@ -133,18 +144,42 @@ def _rule_label(entry: Any, index: int) -> str:
     return f"<rule #{index}>"
 
 
+def read_rules_file(path: Path) -> dict[str, Any]:
+    """The parsed top level of a rules file: `rules:` plus, optionally, the
+    `actions:` block (spec 005 §5) that `telemetry_agent.actions.config`
+    validates in full."""
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise RuleConfigError(f"{path}: invalid YAML: {exc}") from exc
+    return raw if isinstance(raw, dict) else {}
+
+
+def _defined_action_names(raw: dict[str, Any]) -> set[str]:
+    entries = raw.get("actions") or []
+    if not isinstance(entries, list):
+        return set()
+    return {
+        entry["name"]
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+
+
 def load_rules_from_yaml(path: Path) -> tuple[RuleConfig, ...]:
     """Parses and validates `path` fully; raises `RuleConfigError` naming
     the offending rule on any problem. Never partially applies a file.
-    """
-    try:
-        raw = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as exc:
-        raise RuleConfigError(f"{path}: invalid YAML: {exc}") from exc
 
-    entries = (raw or {}).get("rules", []) if isinstance(raw, dict) else []
+    `FR-CBK-013`: every name in a rule's `actions` must be defined in the
+    same file's `actions:` block. Only names are checked here; what each
+    action is (and whether its command is allowlisted) is checked by
+    `telemetry_agent.actions.config.load_action_catalogue`.
+    """
+    raw = read_rules_file(path)
+    entries = raw.get("rules", [])
     if not entries:
         raise RuleConfigError(f"{path}: no rules defined")
+    action_names = _defined_action_names(raw)
 
     rules: list[RuleConfig] = []
     seen_names: set[str] = set()
@@ -157,6 +192,12 @@ def load_rules_from_yaml(path: Path) -> tuple[RuleConfig, ...]:
         if parsed.name in seen_names:
             raise RuleConfigError(f"duplicate rule name {parsed.name!r}")
         seen_names.add(parsed.name)
+        unknown = [name for name in parsed.actions if name not in action_names]
+        if unknown:
+            raise RuleConfigError(
+                f"rule {parsed.name!r} references undefined action(s) {unknown}; "
+                f"defined actions: {sorted(action_names)}"
+            )
         rules.append(_to_rule_config(parsed))
 
     return tuple(rules)
@@ -172,10 +213,18 @@ def load_rules(path: Path) -> tuple[RuleConfig, ...]:
     return load_rules_from_yaml(path)
 
 
+# Stage the non-rule parts of a reload (the action catalogue) before the new
+# rules are applied: called with the rules file path, it raises
+# `RuleConfigError` to reject the whole reload, or returns the step that
+# commits them once the rules are in.
+ReloadStage = Callable[[Path], Callable[[], None]]
+
+
 class SighupRuleReloader:
-    """Wires `config/rules.yaml` reloading to SIGHUP for a live
-    `RuleEngine`. `install()` is the call a future agent supervisor loop
-    makes once one exists — nothing in this repo runs continuously yet.
+    """Reloads `config/rules.yaml` into a live `RuleEngine`, on SIGHUP or
+    (UBS-35, so Windows has a trigger too) when `changed_on_disk()` sees a
+    new modification time. A rejected reload keeps every last-known-good
+    piece: rules and, through `stage`, the action catalogue.
     """
 
     def __init__(
@@ -183,25 +232,43 @@ class SighupRuleReloader:
         engine: RuleEngine,
         path: Path,
         *,
+        stage: ReloadStage | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._engine = engine
         self._path = path
+        self._stage = stage
         self._logger = logger or logging.getLogger(__name__)
+        self._mtime = self._read_mtime()
+
+    def _read_mtime(self) -> float | None:
+        try:
+            return self._path.stat().st_mtime
+        except OSError:
+            return None
+
+    def changed_on_disk(self) -> bool:
+        """True when the file's mtime differs from the one last loaded (or
+        last rejected, so a broken file isn't re-parsed every tick)."""
+        return self._read_mtime() != self._mtime
 
     def reload(self, *, now: datetime | None = None) -> list[AlertEvent]:
         """Returns the `resolved` events `apply_rules()` emits for alerts
         whose rule was removed, so a caller can route them (UBS-113). Empty
         when the new file is rejected and the last-known-good set stays.
         """
+        self._mtime = self._read_mtime()
         try:
             new_rules = load_rules(self._path)
+            commit = self._stage(self._path) if self._stage is not None else None
         except RuleConfigError as exc:
             self._logger.error(
                 "rules reload rejected, keeping last-known-good: %s", exc
             )
             return []
         resolved = self._engine.apply_rules(new_rules, now=now or datetime.now(UTC))
+        if commit is not None:
+            commit()
         self._logger.info(
             "rules reloaded: %d rules from %s", len(new_rules), self._path
         )
