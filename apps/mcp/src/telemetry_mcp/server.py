@@ -22,6 +22,7 @@ from urllib.parse import quote
 import httpx
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from telemetry_shared.models.metrics_query import MetricsQueryRequest
 
@@ -157,11 +158,28 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8090)
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="public hostname a tunnel forwards to this server (repeatable)",
+    )
     args = parser.parse_args()
     if args.transport == "stdio":
         mcp.run()
-    else:
-        mcp.run("streamable-http", host=args.host, port=args.port)
+        return
+    # Keep the SDK's DNS-rebinding check, but also accept the tunnel's Host.
+    local = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    security = TransportSecuritySettings(
+        allowed_hosts=local + args.allowed_host,
+        allowed_origins=[f"https://{h}" for h in args.allowed_host],
+    )
+    mcp.run(
+        "streamable-http",
+        host=args.host,
+        port=args.port,
+        transport_security=security,
+    )
 
 
 if __name__ == "__main__":
