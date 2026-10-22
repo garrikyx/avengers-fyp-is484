@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,7 +29,7 @@ class ReadLine:
 
 
 class Harvester:
-    """Reads lines from a single open file descriptor bound to a specific OS inode fingerprint."""
+    """Reads lines from a descriptor bound to a specific OS inode fingerprint."""
 
     handle: TextIO
     ino: int
@@ -37,7 +37,9 @@ class Harvester:
     offset: int
     last_read_at: datetime | None
 
-    def __init__(self, handle: TextIO, ino: int, dev: int, start_offset: int = 0):
+    def __init__(
+        self, handle: TextIO, ino: int, dev: int, start_offset: int = 0
+    ) -> None:
         self.handle = handle
         self.ino = ino
         self.dev = dev
@@ -97,11 +99,16 @@ class LogMonitor:
         checkpoint_interval: float = 5.0,
         rotation_drain_timeout: float = 5.0,
         commit_on_read: bool = True,
-    ):
+        log_stall_threshold: float = 300.0,
+        monotonic: Callable[[], float] = time.monotonic,
+        on_event: Callable[[str], None] | None = None,
+    ) -> None:
         if checkpoint_interval <= 0:
             raise ValueError("checkpoint_interval must be greater than zero")
         if rotation_drain_timeout < 0:
             raise ValueError("rotation_drain_timeout cannot be negative")
+        if log_stall_threshold <= 0:
+            raise ValueError("log_stall_threshold must be greater than zero")
 
         self.file_path = Path(file_path)
         self.offset_tracker = offset_tracker or OffsetTracker()
@@ -114,6 +121,27 @@ class LogMonitor:
         self._state_dirty = False
         self._startup_recovery_pending = True
         self._startup_backfill_harvesters: list[Harvester] = []
+        self.on_event = on_event
+        self._monotonic = monotonic
+        self._log_stall_threshold = log_stall_threshold
+        self._last_activity = monotonic()
+        self._stall_reported = False
+
+    def _emit(self, event_type: str) -> None:
+        if self.on_event is not None:
+            try:
+                self.on_event(event_type)
+            except Exception:
+                # An observation must never interrupt log consumption.
+                logger.warning("log lifecycle event hook failed")
+
+    def _check_stall(self) -> None:
+        if (
+            not self._stall_reported
+            and self._monotonic() - self._last_activity >= self._log_stall_threshold
+        ):
+            self._stall_reported = True
+            self._emit("log.stalled")
 
     def _get_file_stat(self) -> os.stat_result | None:
         try:
@@ -238,6 +266,8 @@ class LogMonitor:
 
     def _read_harvester(self, harvester: Harvester) -> Generator[ReadLine]:
         for read_line in harvester.read_lines():
+            self._last_activity = self._monotonic()
+            self._stall_reported = False
             if self._commit_on_read:
                 self._sync_harvester(harvester)
                 self._checkpoint_if_due()
@@ -280,20 +310,24 @@ class LogMonitor:
             self._start_harvester()
 
         # 2. Rotation Detected (Inode / Device Mismatch)
-        elif stat_res and active_harvester and (
-            (stat_res.st_ino != active_harvester.ino)
-            or (stat_res.st_dev != active_harvester.dev)
-        ):
-            self._retire_harvester()
-            self._start_harvester(offset=0)
-
-        # 3. Truncation Detected (File size shrank below stored offset)
         elif (
             stat_res
             and active_harvester
-            and stat_res.st_size < active_harvester.offset
+            and (
+                (stat_res.st_ino != active_harvester.ino)
+                or (stat_res.st_dev != active_harvester.dev)
+            )
+        ):
+            self._retire_harvester()
+            self._start_harvester(offset=0)
+            self._emit("log.rotated")
+
+        # 3. Truncation Detected (File size shrank below stored offset)
+        elif (
+            stat_res and active_harvester and stat_res.st_size < active_harvester.offset
         ):
             active_harvester.seek(0)
+            self._emit("log.truncated")
             if self._commit_on_read:
                 self._sync_harvester(active_harvester)
 
@@ -301,10 +335,12 @@ class LogMonitor:
 
         # Stream lines from active harvester
         if self._harvester is None:
+            self._check_stall()
             self._checkpoint_if_due()
             return
 
         yield from self._read_harvester(self._harvester)
+        self._check_stall()
         self._checkpoint_if_due()
 
     def ack_line(self, end_offset: int) -> None:

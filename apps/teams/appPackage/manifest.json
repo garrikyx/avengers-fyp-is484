@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "0.1.0",
+  "id": "<APP_ID>",
+  "developer": {
+    "name": "Team Avengers (SMU IS484)",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "name": {
+    "short": "Magic Telemetry",
+    "full": "Magic Telemetry Assistant"
+  },
+  "description": {
+    "short": "Ask questions about Magic's telemetry.",
+    "full": "Ask in plain English how Magic is doing: rejected orders, latency, FIX sessions, agent health and open alerts. Answers come from the telemetry backend and are read-only."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#0B5FFF",
+  "bots": [
+    {
+      "botId": "<APP_ID>",
+      "scopes": ["personal", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

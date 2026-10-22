@@ -4,41 +4,56 @@ Status: Draft · Owner: TBD · Last updated: 2026-10-16
 
 Precedence: command-line flag > environment variable > config file > built-in default
 (`FR-CFG-001`). Environment variables are prefixed `MAGIC_TELEMETRY_` and map to keys by
-upper-snake-casing the path (`agent.publishInterval` → `MAGIC_TELEMETRY_AGENT_PUBLISHINTERVAL`).
+upper-snake-casing the path (`agent.publishInterval` →
+`MAGIC_TELEMETRY_AGENT_PUBLISHINTERVAL`).
 
-`NFR-CFG-004`: the defaults below are normative. A test MUST render the built-in defaults and
-diff them against this document's values.
+`NFR-CFG-004`: the defaults below are normative. A test MUST render the built-in
+defaults and diff them against this document's values.
 
 ## 1. Agent configuration
 
+The full target schema below differs from today's executable agent config, which uses a
+`logs` mapping with `paths`, `stateDir`, and `appLogPatterns`. UBS-117 adds optional
+`logs.logStallThreshold` to that mapping (default `5m`, positive finite duration),
+applied independently to every monitored file. No configuration edit is required to
+enable the default. The per-source target schema is not introduced here.
+
+The POC uses local configuration and the specified reload mechanism. Central
+distribution is Day-2 (Q-12). The `trading-hours` schedule below is a demo example, not
+a confirmed production calendar; verify runtime schedule gating before claiming
+schedule-aware alerts. NL query dates use the user's timezone separately (spec 008
+`FR-NLQ-012`). Backend-token and identity-registration settings are production targets
+under spec 009 §3.3's POC exception; Microsoft platform credentials needed for the real
+Teams demo still apply.
+
 ```yaml
 agent:
-  agentId: magic-agent-sg-01        # required, must match backend-registered identity
+  agentId: magic-agent-sg-01 # required, must match backend-registered identity
   application: Magic
   stateDir: /var/lib/magic-telemetry # offsets + alert state only
   memoryLimitMb: 150
-  metricsListen: 127.0.0.1:9464      # local /metrics; loopback only by default
-  logLevel: info                     # debug | info | warn | error
+  metricsListen: 127.0.0.1:9464 # local /metrics; loopback only by default
+  logLevel: info # debug | info | warn | error
   shutdownGrace: 5s
   startupGrace: 60s
 
 logs:
   - name: fix
     instanceId: magic-prod-01
-    paths: ["/var/log/magic/fix*.log"]     # globs allowed
-    allowedRoots: ["/var/log/magic"]       # NFR-SEC-015
+    paths: ["/var/log/magic/fix*.log"] # globs allowed
+    allowedRoots: ["/var/log/magic"] # NFR-SEC-015
     logType: fix
     parsers: [fix]
-    mode: tail                              # tail | interval
-    pollInterval: 1s                        # interval mode, and tail fallback poll
+    mode: tail # tail | interval
+    pollInterval: 1s # interval mode, and tail fallback poll
     discoveryInterval: 30s
-    startAt: end                            # end | beginning (first run only)
-    encoding: utf-8                         # utf-8 | latin-1
-    fixDelimiter: auto                      # auto | soh | pipe | caret | semicolon
+    startAt: end # end | beginning (first run only)
+    encoding: utf-8 # utf-8 | latin-1
+    fixDelimiter: auto # auto | soh | pipe | caret | semicolon
     validateChecksum: false
     maxJoinLines: 4
     maxLineBytes: 65536
-    partialLineTimeout: 2s           # default is max(2s, 2 x pollInterval), see §1.1
+    partialLineTimeout: 2s # default is max(2s, 2 x pollInterval), see §1.1
     rotationDrainTimeout: 5s
     logStallThreshold: 5m
   - name: application
@@ -53,7 +68,7 @@ logs:
 parsing:
   maxClockSkew: 5m
   maxRejectReasonLabels: 50
-  rejectReasonPatterns:              # FR-PRS-022, applied to normalised tag 58
+  rejectReasonPatterns: # FR-PRS-022, applied to normalised tag 58
     - label: price_exceeds_limit
       match: "price.*(exceeds|outside).*limit"
     - label: unknown_symbol
@@ -66,23 +81,23 @@ parsing:
       match: "duplicate (order|clordid)"
     - label: throttled
       match: "throttl|rate limit|too many"
-  errorSignatures:                   # FR-RUL-001 signature rules, app logs only
+  errorSignatures: # FR-RUL-001 signature rules, app logs only
     - label: out_of_memory
       match: "OutOfMemoryError|std::bad_alloc"
     - label: db_connection_lost
       match: "connection (lost|refused).*(db|database)"
 
 pipeline:
-  lineQueueSize: 2048                # monitor → parser; larger — parser is CPU-bound (FR-PIP-002)
-  eventQueueSize: 256                # parser → aggregator (FR-PIP-004)
-  parseWorkers: 0                    # 0 => min(2, cpu_count) (FR-PIP-003)
-  overflowPolicy: block              # block | drop_oldest (FR-PIP-001/004); default: no loss
-  dedupeCapacity: 100000             # FR-PIP-007: suppress double-count on re-read
-  dedupeTtl: 1h                      # FR-PIP-007: TTL for processed-line cache
+  lineQueueSize: 2048 # monitor → parser; larger — parser is CPU-bound (FR-PIP-002)
+  eventQueueSize: 256 # parser → aggregator (FR-PIP-004)
+  parseWorkers: 0 # 0 => min(2, cpu_count) (FR-PIP-003)
+  overflowPolicy: block # block | drop_oldest (FR-PIP-001/004); default: no loss
+  dedupeCapacity: 100000 # FR-PIP-007: suppress double-count on re-read
+  dedupeTtl: 1h # FR-PIP-007: TTL for processed-line cache
 
 metrics:
   bucketSeconds: 10
-  localRetentionBuckets: 360         # 1h
+  localRetentionBuckets: 360 # 1h
   maxSeriesPerBucket: 2000
   maxSymbols: 200
   maxPendingOrders: 100000
@@ -91,12 +106,14 @@ metrics:
   minSampleSize: 20
 
 publish:
+  maxEventsPerMinute: 600 # per event type per instance (FR-MET-023)
+  executionSampleEvery: 100 # 1:N fix.execution observations; metrics count all
   endpoint: https://telemetry.internal.example/telemetry/batch
   interval: 10s
   timeout: 10s
   maxBatchItems: 500
   compressThreshold: 4096
-  bufferBytes: 67108864              # 64 MiB, memory only
+  bufferBytes: 67108864 # 64 MiB, memory only
   bufferMaxAge: 15m
   retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
   tls: { minVersion: "1.2", caFile: "", clientCertFile: "", clientKeyFile: "" }
@@ -105,13 +122,13 @@ publish:
 heartbeat:
   interval: 10s
 
-host:                                # Host Monitor, spec 002 §7.1
+host: # Host Monitor, spec 002 §7.1
   enabled: true
-  sampleInterval: 30s                # FR-HLT-013
-  diskPaths: ["/var/log/magic"]      # one host_disk_used_ratio per filesystem (FR-MET-034)
-  memory: true                       # host_memory_used_ratio
+  sampleInterval: 30s # FR-HLT-013
+  diskPaths: ["/var/log/magic"] # one host_disk_used_ratio per filesystem (FR-MET-034)
+  memory: true # host_memory_used_ratio
   process:
-    name: ""                         # exact executable name; empty disables magic_process_up (FR-HLT-014)
+    name: "" # exact executable name; empty disables magic_process_up (FR-HLT-014)
 
 callbacks:
   enabled: true
@@ -141,49 +158,51 @@ alerting:
       from: "08:30"
       to: "17:30"
   silences: []
-  rules: []                          # see spec 005 §1.2 for the shipped defaults
+  rules: [] # see spec 005 §1.2 for the shipped defaults
 ```
 
 ### 1.1 Notes on selected keys
 
-| Key | Why it matters |
-| --- | --- |
-| `logs[].startAt` | `beginning` on a large existing file will replay it; only use for backfill testing. |
-| `logs[].allowedRoots` | Enforces `NFR-SEC-015`; a glob resolving outside these roots is a startup error. |
-| `parsing.rejectReasonPatterns` | The only way rejection text becomes a queryable label. Order matters: first match wins. |
-| `publish.bufferBytes` | Directly bounds how long a backend outage is survivable at a given rate. Document the implied minutes in the runbook. |
-| `metrics.minSampleSize` | Prevents low-volume periods from producing 100% reject rates. |
-| `logs[].partialLineTimeout` | Defaults to `max(2s, 2 × pollInterval)` and MUST exceed `pollInterval` (`FR-CFG-004`). A timeout shorter than a poll cycle flushes *every* line that spans two writes as two lines, turning a correct log into a stream of malformed ones. The flat 2s default is correct for tail mode but not for interval mode's slower poll, hence the derivation. |
-| `pipeline.lineQueueSize` | Sized for parser lag. With default `overflowPolicy: block`, a full queue stalls the monitor (read lag grows) rather than dropping lines. |
-| `pipeline.eventQueueSize` | Smaller than `lineQueueSize` because events are post-parse and downstream aggregation is cheaper. Default policy blocks rather than drops. |
-| `pipeline.parseWorkers` | Caps CPU used by FIX parsing on a trading host (`NFR-PERF-005`). `0` resolves to `min(2, cpu_count)`. |
-| `pipeline.overflowPolicy` | `block` (default): zero loss, backpressure via read lag. `drop_oldest`: legacy shed-load mode; increments drop counters. |
-| `pipeline.dedupeCapacity` / `dedupeTtl` | Bounds the processed-line LRU used for idempotent re-ingest after restart (`FR-PIP-007`). |
-| `callbacks.dryRun` | Required for pre-production validation before Magic's endpoint exists. |
-| `host.process.name` | Empty by default, because the Magic executable name is UBS-specific and is not invented here. `ApplicationDown` stays inactive until it is set. |
-| `host.diskPaths` | Paths, not devices. Each resolves to its filesystem, so the log volume is watched even when it is a separate mount. |
-| `actions` / `allowedCommands` | Day-2 (spec 005 §5). Not part of the Day-1 schema; listed here only so the key names are reserved. |
+| Key                                     | Why it matters                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `logs[].startAt`                        | `beginning` on a large existing file will replay it; only use for backfill testing.                                                                                                                                                                                                                                                                    |
+| `logs[].allowedRoots`                   | Enforces `NFR-SEC-015`; a glob resolving outside these roots is a startup error.                                                                                                                                                                                                                                                                       |
+| `parsing.rejectReasonPatterns`          | The only way rejection text becomes a queryable label. Order matters: first match wins.                                                                                                                                                                                                                                                                |
+| `publish.bufferBytes`                   | Directly bounds how long a backend outage is survivable at a given rate. Document the implied minutes in the runbook.                                                                                                                                                                                                                                  |
+| `metrics.minSampleSize`                 | Prevents low-volume periods from producing 100% reject rates.                                                                                                                                                                                                                                                                                          |
+| `logs[].partialLineTimeout`             | Defaults to `max(2s, 2 × pollInterval)` and MUST exceed `pollInterval` (`FR-CFG-004`). A timeout shorter than a poll cycle flushes _every_ line that spans two writes as two lines, turning a correct log into a stream of malformed ones. The flat 2s default is correct for tail mode but not for interval mode's slower poll, hence the derivation. |
+| `pipeline.lineQueueSize`                | Sized for parser lag. With default `overflowPolicy: block`, a full queue stalls the monitor (read lag grows) rather than dropping lines.                                                                                                                                                                                                               |
+| `pipeline.eventQueueSize`               | Smaller than `lineQueueSize` because events are post-parse and downstream aggregation is cheaper. Default policy blocks rather than drops.                                                                                                                                                                                                             |
+| `pipeline.parseWorkers`                 | Caps CPU used by FIX parsing on a trading host (`NFR-PERF-005`). `0` resolves to `min(2, cpu_count)`.                                                                                                                                                                                                                                                  |
+| `pipeline.overflowPolicy`               | `block` (default): zero loss, backpressure via read lag. `drop_oldest`: legacy shed-load mode; increments drop counters.                                                                                                                                                                                                                               |
+| `pipeline.dedupeCapacity` / `dedupeTtl` | Bounds the processed-line LRU used for idempotent re-ingest after restart (`FR-PIP-007`).                                                                                                                                                                                                                                                              |
+| `callbacks.dryRun`                      | Required for pre-production validation before Magic's endpoint exists.                                                                                                                                                                                                                                                                                 |
+| `host.process.name`                     | Empty by default, because the Magic executable name is UBS-specific and is not invented here. `ApplicationDown` stays inactive until it is set.                                                                                                                                                                                                        |
+| `host.diskPaths`                        | Paths, not devices. Each resolves to its filesystem, so the log volume is watched even when it is a separate mount.                                                                                                                                                                                                                                    |
+| `actions` / `allowedCommands`           | spec 005 §5. `actions:` lives in `rules.yaml` and reloads with it; `actions.allowedCommands` lives in `agent.yaml` and is read at startup only (ADR 0008). Every action defaults to `dryRun: true`.                                                                                                                                                    |
+| `rules[].state`                         | `active` (default) or `draft` (spec 005 §6). A draft is validated but evaluated only by `--test-rule`.                                                                                                                                                                                                                                                 |
+| `rules.reloadCheckInterval`             | How often the agent stats `rules.yaml` and reloads it on an mtime change (default `10s`, `0` = SIGHUP only). SIGHUP doesn't exist on Windows.                                                                                                                                                                                                          |
 
 ## 2. Backend configuration
 
 ```yaml
 backend:
   listen: 0.0.0.0:8080
-  internalListen: 127.0.0.1:8081     # /metrics, /healthz, /readyz  (FR-HLT-012)
+  internalListen: 127.0.0.1:8081 # /metrics, /healthz, /readyz  (FR-HLT-012)
   logLevel: info
   workers: 4
 
 ingest:
-  maxBodyBytes: 8388608              # 8 MiB
+  maxBodyBytes: 8388608 # 8 MiB
   maxBatchesPerMinutePerAgent: 30
   dedupeCacheSize: 10000
   dedupeTtl: 30m
-  queueSize: 10000                   # 503 when full (FR-ING-009)
+  queueSize: 10000 # 503 when full (FR-ING-009)
   maxBucketAge: 1h
   schemaVersions: [1]
 
 store:
-  retentionWindow: 6h                # max 24h
+  retentionWindow: 6h # max 24h
   rollups: ["1m", "5m"]
   memoryLimitMb: 4096
   memoryWarnPercent: 75
@@ -198,8 +217,8 @@ query:
   maxGroups: 500
   maxSeriesPoints: 1500
   minSampleSize: 20
-  mode: fanout                       # fanout | colocated  (NFR-SCA-004)
-  replicaRegistry: []                # peer URLs when mode=fanout
+  mode: fanout # fanout | colocated  (NFR-SCA-004)
+  replicaRegistry: [] # peer URLs when mode=fanout
   fanoutTimeout: 1500ms
 
 alerting:
@@ -210,47 +229,48 @@ nl:
   maxQuestionChars: 500
   perUserRateLimitPerMinute: 20
   llm:
-    provider: ollama                 # mock | openai-compatible | ollama | vllm | azure-openai
+    provider: ollama # mock | openai-compatible | ollama | vllm | azure-openai
     baseUrl: http://127.0.0.1:11434/v1
-    model: llama3.2                 # must match `ollama pull` / vLLM served model
-    timeout: 30s                    # OSS defaults ~25s; azure-openai default 2s (FR-NLQ-021)
+    model: llama3.2 # must match `ollama pull` / vLLM served model
+    timeout: 30s # OSS defaults ~25s; azure-openai default 2s (FR-NLQ-021)
     maxRetries: 1
-    structuredOutput: true          # FR-NLQ-007
-    requireApiKey: false            # true for authenticated vLLM / LiteLLM / OpenAI-compat
-    deployment: gpt-4o-mini       # azure-openai only
-    endpoint: ""                    # azure-openai resource URL
+    structuredOutput: true # FR-NLQ-007
+    requireApiKey: false # true for authenticated vLLM / LiteLLM / OpenAI-compat
+    deployment: gpt-4o-mini # azure-openai only
+    endpoint: "" # azure-openai resource URL
   defaultTimezone: Asia/Singapore
   defaultTimeRange: 30m
 
 auth:
-  agentAuth: bearer                  # bearer | mtls
+  agentAuth: bearer # bearer | mtls
   userAuth: entra
   entra: { tenantId: "", audience: "", requiredScope: "Telemetry.Read" }
 ```
 
 ## 3. Required environment variables
 
-| Variable | Component | Purpose |
-| --- | --- | --- |
-| `MAGIC_TELEMETRY_PUBLISH_TOKEN` | Agent | Bearer token for backend ingestion (when `agentAuth: bearer`) |
-| `MAGIC_TELEMETRY_CALLBACK_SECRET` | Agent | HMAC-SHA256 key for callback signing |
-| `MAGIC_TELEMETRY_ID_HASH_KEY` | Agent | HMAC key for identifier hashing (`FR-PRS-021`) |
-| `MAGIC_TELEMETRY_AGENT_TOKENS` | Backend | Agent token store reference or secret manager path |
-| `MAGIC_TELEMETRY_LLM_API_KEY` | Backend | LLM credential: required for `azure-openai`; optional for local Ollama; required when `nl.llm.requireApiKey` is true (Bearer on OpenAI-compatible clients) |
-| `MAGIC_TELEMETRY_ENTRA_CLIENT_SECRET` | Backend | Entra app credential |
+| Variable                              | Component | Purpose                                                                                                                                                    |
+| ------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAGIC_TELEMETRY_PUBLISH_TOKEN`       | Agent     | Bearer token for backend ingestion (when `agentAuth: bearer`)                                                                                              |
+| `MAGIC_TELEMETRY_CALLBACK_SECRET`     | Agent     | HMAC-SHA256 key for callback signing                                                                                                                       |
+| `MAGIC_TELEMETRY_ID_HASH_KEY`         | Agent     | HMAC key for identifier hashing (`FR-PRS-021`)                                                                                                             |
+| `MAGIC_TELEMETRY_AGENT_TOKENS`        | Backend   | Agent token store reference or secret manager path                                                                                                         |
+| `MAGIC_TELEMETRY_LLM_API_KEY`         | Backend   | LLM credential: required for `azure-openai`; optional for local Ollama; required when `nl.llm.requireApiKey` is true (Bearer on OpenAI-compatible clients) |
+| `MAGIC_TELEMETRY_ENTRA_CLIENT_SECRET` | Backend   | Entra app credential                                                                                                                                       |
 
-`NFR-SEC-004`: the process MUST fail to start if a required secret is missing, rather than
-falling back to an insecure default. The `ID_HASH_KEY` MUST be identical across agents that
-need comparable hashes, and rotating it is a documented, deliberate operation.
+`NFR-SEC-004`: the process MUST fail to start if a required secret is missing, rather
+than falling back to an insecure default. The `ID_HASH_KEY` MUST be identical across
+agents that need comparable hashes, and rotating it is a documented, deliberate
+operation.
 
 ## 4. Validation rules at load
 
-| ID | Rule |
-| --- | --- |
-| `FR-CFG-002` | Unknown keys are a startup error, not a warning — a typo'd threshold silently doing nothing is unacceptable. |
+| ID           | Rule                                                                                                                                                            |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-CFG-002` | Unknown keys are a startup error, not a warning — a typo'd threshold silently doing nothing is unacceptable.                                                    |
 | `FR-CFG-003` | Every `logs[]` entry MUST have a unique `name`, a non-empty `instanceId`, and at least one path; overlapping globs across entries MUST be reported as an error. |
-| `FR-CFG-004` | Durations MUST parse; `pollInterval` MUST be ≥ `100ms`; `bucketSeconds` MUST be one of 5, 10, 15, 30, 60. |
-| `FR-CFG-005` | `callbacks.endpoint` MUST be `https://` unless `allowInsecureCallback: true`. |
-| `FR-CFG-006` | `store.retentionWindow` MUST be ≤ 24h and `query.maxRangeSeconds` MUST be ≤ `retentionWindow`. |
-| `FR-CFG-007` | Rule definitions MUST reference existing metrics and existing schedules; a dangling `scheduleRef` is a startup error. |
-| `FR-CFG-020` | `--check-config` MUST perform all of the above plus glob resolution and print the effective configuration with secrets redacted. |
+| `FR-CFG-004` | Durations MUST parse; `pollInterval` MUST be ≥ `100ms`; `bucketSeconds` MUST be one of 5, 10, 15, 30, 60.                                                       |
+| `FR-CFG-005` | `callbacks.endpoint` MUST be `https://` unless `allowInsecureCallback: true`.                                                                                   |
+| `FR-CFG-006` | `store.retentionWindow` MUST be ≤ 24h and `query.maxRangeSeconds` MUST be ≤ `retentionWindow`.                                                                  |
+| `FR-CFG-007` | Rule definitions MUST reference existing metrics and existing schedules; a dangling `scheduleRef` is a startup error.                                           |
+| `FR-CFG-020` | `--check-config` MUST perform all of the above plus glob resolution and print the effective configuration with secrets redacted.                                |

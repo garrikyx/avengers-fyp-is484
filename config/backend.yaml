@@ -1,0 +1,15 @@
+# Telemetry Backend config - LOCAL DEV ONLY.
+#
+#   uv run telemetry-backend --config config/backend.yaml     (from the repo root)
+#
+# Everything not listed here uses the defaults in spec 010. This file only turns on
+# the natural-language query API (POST /telemetry/nl/query) for the Teams bot, with
+# the mock LLM so no model or API key is needed. Rule-matched questions never reach
+# the LLM; questions the rules cannot match get a clarification response.
+#
+# For a real LLM, switch `provider` (ollama | vllm | openai-compatible | azure-openai)
+# and see spec 010 §nl and the MAGIC_TELEMETRY_LLM_API_KEY env var.
+nl:
+  enabled: true
+  llm:
+    provider: mock

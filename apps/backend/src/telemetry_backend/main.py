@@ -68,6 +68,10 @@ from telemetry_backend.services.replica_fanout import (
     REPLICA_QUERY_HEADER,
     HttpxFanoutClient,
 )
+from telemetry_backend.services.request_body import (
+    IngestionBodyError,
+    read_ingestion_body,
+)
 from telemetry_backend.services.stream_processor import StreamProcessor
 
 logger = logging.getLogger(__name__)
@@ -175,9 +179,7 @@ def _error_response(
     )
 
 
-def _notify_heartbeat(
-    ingestion: IngestionService, agent_id: str
-) -> None:
+def _notify_heartbeat(ingestion: IngestionService, agent_id: str) -> None:
     if ingestion.heartbeat_monitor is not None:
         ingestion.heartbeat_monitor.on_heartbeat(agent_id)
 
@@ -310,6 +312,38 @@ def create_app(
             self_metrics.query_latency.labels(route=template).observe(
                 time.perf_counter() - started
             )
+
+    @app.middleware("http")
+    async def ingestion_body(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        if request.method == "POST" and request.url.path in {
+            "/telemetry/batch",
+            "/telemetry/events",
+            "/telemetry/heartbeat",
+        }:
+            try:
+                body = await read_ingestion_body(
+                    request, app_deps.config.ingest.max_body_bytes
+                )
+            except IngestionBodyError as exc:
+                ingestion.record_rejection()
+                return _error_response(
+                    request,
+                    status_code=exc.status,
+                    code=exc.code,
+                    message=str(exc),
+                    details=[],
+                )
+            # Starlette's cached middleware request replays _body downstream.
+            # Read it with a size cap first, rather than unbounded request.body().
+            request._body = body
+            request.scope["headers"] = [
+                (key, value)
+                for key, value in request.scope["headers"]
+                if key.lower() not in {b"content-encoding", b"content-length"}
+            ] + [(b"content-length", str(len(body)).encode())]
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_id(
@@ -761,8 +795,6 @@ def main() -> None:
         print(f"config ok: {config}, nl={nl_config}")
         return
     try:
-        asyncio.run(
-            _serve(AppDeps(config=config, nl_config=nl_config), args.log_level)
-        )
+        asyncio.run(_serve(AppDeps(config=config, nl_config=nl_config), args.log_level))
     except KeyboardInterrupt:
         pass

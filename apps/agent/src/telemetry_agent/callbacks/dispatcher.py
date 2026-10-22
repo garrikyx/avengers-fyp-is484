@@ -39,6 +39,7 @@ class CallbackDispatcher:
         tracker: DeliveryTracker | None = None,
         on_delivery_settled: Callable[[AlertEvent], None] | None = None,
         logger: logging.Logger | None = None,
+        on_failure: Callable[[AlertEvent, str, int, int | None], None] | None = None,
     ) -> None:
         self._sink = sink
         self._config = config
@@ -48,6 +49,7 @@ class CallbackDispatcher:
         self._on_delivery_settled = on_delivery_settled
         self._logger = logger or logging.getLogger(__name__)
         self._last_delivery_ids: dict[str, str] = {}
+        self._on_failure = on_failure
         self._queue: DropOldestQueue[AlertEvent] = DropOldestQueue(
             config.queue_size,
             on_drop=lambda: self._counters.increment("callback_queue_dropped"),
@@ -77,6 +79,19 @@ class CallbackDispatcher:
         )
         self._queue.put_dropping_oldest(alert)
 
+    async def deliver(self, alert: AlertEvent) -> DeliveryStatus:
+        """Deliver one alert now, bypassing the queue and the workers, and
+        return its final status. For a caller that runs its own serial queue
+        with its own timeout: a `callback` action (UBS-35, `FR-CBK-014`)
+        reuses signing, retry and tracking this way, one run at a time.
+        """
+        self._tracker.record(
+            alert.alert_id, DeliveryStatus.PENDING, now=datetime.now(UTC)
+        )
+        await self._deliver(alert)
+        record = self._tracker.status_of(alert.alert_id)
+        return record.status if record is not None else DeliveryStatus.FAILED
+
     async def run(self) -> None:
         """Spawns `maxInflight` workers pulling from the queue. Runs until
         cancelled by the caller.
@@ -96,6 +111,15 @@ class CallbackDispatcher:
             alert = await self._queue.get()
             await self._deliver(alert)
 
+    def _emit_failure(
+        self, alert: AlertEvent, reason: str, attempts: int, status: int | None
+    ) -> None:
+        if self._on_failure is not None:
+            try:
+                self._on_failure(alert, reason, attempts, status)
+            except Exception:
+                self._counters.increment("callback_event_errors")
+
     async def _deliver(self, alert: AlertEvent) -> None:
         """Signs and sends `alert`, retrying transient failures with
         backoff (`FR-CBK-004`/`006`) up to `maxAttempts`. A single fixed
@@ -103,9 +127,7 @@ class CallbackDispatcher:
         occurrence (`FR-CBK-003`); each attempt gets its own
         `X-Telemetry-Delivery-Id` so Magic can distinguish retries in logs.
         """
-        idempotency_key = (
-            f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
-        )
+        idempotency_key = f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
         payload = from_alert_event(alert, now=datetime.now(UTC))
         body = payload.model_dump_json(by_alias=True).encode("utf-8")
 
@@ -123,6 +145,7 @@ class CallbackDispatcher:
                 now=datetime.now(UTC),
                 error="payload_too_large",
             )
+            self._emit_failure(alert, "payload_too_large", 0, None)
             self._notify_delivery_settled(alert)
             return
 
@@ -175,6 +198,9 @@ class CallbackDispatcher:
                     now=datetime.now(UTC),
                     error=failure_reason,
                 )
+                self._emit_failure(
+                    alert, "permanent_http_failure", attempt, result.status_code
+                )
                 self._notify_delivery_settled(alert)
                 return
 
@@ -193,6 +219,9 @@ class CallbackDispatcher:
                     DeliveryStatus.FAILED,
                     now=datetime.now(UTC),
                     error=failure_reason,
+                )
+                self._emit_failure(
+                    alert, "retries_exhausted", attempt, result.status_code
                 )
                 self._notify_delivery_settled(alert)
                 return

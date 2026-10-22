@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from telemetry_shared.events import FIX_EVENT_FIELD_KEYS, allowed_event_fields
 from telemetry_shared.metrics.dimensions import ALLOWED_DIMENSION_KEYS
 from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.ingestion import Heartbeat, TelemetryEvent
@@ -25,35 +26,7 @@ _CardinalityBucketKey = tuple[str, int]
 
 # spec 003 §4 is the security allowlist for values that may leave an agent.
 # The backend repeats that allowlist at its own trust boundary (NFR-SEC-002).
-ALLOWED_EVENT_FIELD_KEYS: frozenset[str] = frozenset(
-    {
-        "fixVersion",
-        "msgType",
-        "seqNum",
-        "senderCompId",
-        "targetCompId",
-        "sendingTime",
-        "transactTime",
-        "clOrdIdHash",
-        "origClOrdIdHash",
-        "orderIdHash",
-        "execIdHash",
-        "execType",
-        "ordStatus",
-        "symbol",
-        "side",
-        "ordType",
-        "orderQty",
-        "lastQty",
-        "cumQty",
-        "leavesQty",
-        "ordRejReason",
-        "rejectReasonText",
-        "refSeqNum",
-        "refMsgType",
-        "sessionRejectReason",
-    }
-)
+ALLOWED_EVENT_FIELD_KEYS = FIX_EVENT_FIELD_KEYS  # backwards-compatible import
 
 
 @dataclass(slots=True, frozen=True)
@@ -147,7 +120,9 @@ class IngestionService:
                         issue="dimension key is not allowlisted",
                     )
                 )
-            for key in sorted(set(event.fields) - ALLOWED_EVENT_FIELD_KEYS):
+            for key in sorted(
+                set(event.fields) - allowed_event_fields(event.event_type)
+            ):
                 issues.append(
                     IngestionValidationIssue(
                         code="invalid_field",
@@ -293,9 +268,7 @@ class IngestionService:
             finally:
                 self._queue.task_done()
 
-    def _process_alerts(
-        self, alerts: list[AlertEvent], now: datetime
-    ) -> None:
+    def _process_alerts(self, alerts: list[AlertEvent], now: datetime) -> None:
         for alert in alerts:
             self.alert_store.merge(alert, source="agent", now=now)
 

@@ -118,7 +118,7 @@ contract:
 | ID | Requirement |
 | --- | --- |
 | `FR-PRS-001` | Each line MUST be classified as `fix`, `app_log`, or `unsupported` before parsing. |
-| `FR-PRS-002` | A parse failure MUST produce a `parse.error` event with reason code and MUST NOT stop the pipeline or be retried. |
+| `FR-PRS-002` | A parse failure MUST increment the `parse.error` count for its reason code; the agent publishes a bounded per-reason, per-bucket summary rather than one event per failed line. It MUST NOT stop the pipeline or be retried. |
 | `FR-PRS-003` | Parsing MUST be pure and allocation-bounded; no network or disk access. |
 
 ## 4. Metrics Aggregator
@@ -200,8 +200,9 @@ Alerting on these gauges is configuration: `HostDiskFull`, `HostMemoryHigh` and
    splits complete lines, and enqueues each with `{instanceId, path, logType, readAt}` on the
    per-file-set line queue without blocking (`FR-PIP-001`).
 3. A parser worker dequeues the line and classifies it. For FIX, it extracts allowlisted tags
-   and emits a `fix.*` event on the event queue; on failure it emits `parse.error`
-   (`FR-PIP-003`, `FR-PIP-004`).
+   and hands the parsed result to the downstream pipeline. Parse failures increment a
+   reason-coded count; the Event Emitter later publishes bounded `parse.error` summaries
+   (`FR-PIP-003`, `FR-PIP-004`, `FR-PRS-002`).
 4. Metrics Aggregator updates counters for the event's bucket and dimension set, and updates
    latency histograms via `ClOrdID` correlation.
 5. Every `5s` the Rule Engine evaluates completed buckets and may transition alert state.
