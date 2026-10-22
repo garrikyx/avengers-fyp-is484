@@ -16,6 +16,7 @@ anything newer.
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -73,11 +74,14 @@ class PublishBuffer:
         self._items: deque[PendingItem] = deque()
         self._total_bytes = 0
         self._on_drop = on_drop
+        self._lock = threading.RLock()
 
     def append(self, item: PendingItem) -> None:
-        self._items.append(item)
-        self._total_bytes += item.size_bytes
-        self._evict_overflow()
+        with self._lock:
+            self._items.append(item)
+            self._total_bytes += item.size_bytes
+            dropped = self._evict_overflow()
+        self._notify_drops(dropped)
 
     def expire(self, now: datetime) -> int:
         """Drop items older than `max_age_seconds`. The deque is strictly
@@ -86,18 +90,23 @@ class PublishBuffer:
         Returns the number of items dropped.
         """
         dropped = 0
-        while self._items and (
-            now - self._items[0].enqueued_at
-        ).total_seconds() > self._max_age_seconds:
-            self._evict_one()
-            dropped += 1
+        with self._lock:
+            while (
+                self._items
+                and (now - self._items[0].enqueued_at).total_seconds()
+                > self._max_age_seconds
+            ):
+                self._evict_one()
+                dropped += 1
+        self._notify_drops(dropped)
         return dropped
 
     def take(self, max_items: int) -> list[PendingItem]:
         """Remove and return up to `max_items` from the front."""
-        count = min(max_items, len(self._items))
-        taken = [self._items.popleft() for _ in range(count)]
-        self._total_bytes -= sum(item.size_bytes for item in taken)
+        with self._lock:
+            count = min(max_items, len(self._items))
+            taken = [self._items.popleft() for _ in range(count)]
+            self._total_bytes -= sum(item.size_bytes for item in taken)
         return taken
 
     def requeue_front(self, items: list[PendingItem]) -> None:
@@ -106,34 +115,47 @@ class PublishBuffer:
         retried before, and evicted before, anything that arrived while
         they were in flight.
         """
-        self._items.extendleft(reversed(items))
-        self._total_bytes += sum(item.size_bytes for item in items)
-        self._evict_overflow()
+        with self._lock:
+            self._items.extendleft(reversed(items))
+            self._total_bytes += sum(item.size_bytes for item in items)
+            dropped = self._evict_overflow()
+        self._notify_drops(dropped)
 
     def depth(self) -> int:
-        return len(self._items)
+        with self._lock:
+            return len(self._items)
 
     def total_bytes(self) -> int:
-        return self._total_bytes
+        with self._lock:
+            return self._total_bytes
 
     def oldest_age_seconds(self, now: datetime) -> float | None:
-        if not self._items:
-            return None
-        return (now - self._items[0].enqueued_at).total_seconds()
+        with self._lock:
+            if not self._items:
+                return None
+            return (now - self._items[0].enqueued_at).total_seconds()
 
-    def _evict_overflow(self) -> None:
+    def _evict_overflow(self) -> int:
         # `len > 1` guards a single item larger than the whole cap: it
         # stays (over cap) rather than self-evicting into an infinite
         # loop, and the next append evicts it normally once something
         # else exists to make room for.
+        dropped = 0
         while self._total_bytes > self._max_bytes and len(self._items) > 1:
             self._evict_one()
+            dropped += 1
+        return dropped
 
     def _evict_one(self) -> None:
         evicted = self._items.popleft()
         self._total_bytes -= evicted.size_bytes
+
+    def _notify_drops(self, count: int) -> None:
+        # Hooks can acquire the ingest lock. Never call under the buffer lock:
+        # the pipeline thread acquires those locks in the opposite order.
         if self._on_drop is not None:
-            self._on_drop()
+            for _ in range(count):
+                self._on_drop()
 
     def __len__(self) -> int:
-        return len(self._items)
+        return self.depth()

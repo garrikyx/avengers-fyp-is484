@@ -18,8 +18,8 @@ Consumers get telemetry two ways. **Pull**: they ask, through the query APIs or 
 and Teams. **Push**: the agent publishes events as they happen, and they reach Magic as
 callbacks and people as chat notifications. Events are either **system events** (the
 host or a process: disk full, memory pressure, Magic not running, agent lifecycle) or
-**application events** (what Magic logs or trades: FIX activity, Application.log `[F]`
-lines, error signatures). Spec 004 §2.2 holds the catalogue.
+**application events** (what Magic logs or trades: FIX activity, Application.log
+`[E]`/`[F]` lines, error signatures). Spec 004 §2.2 holds the catalogue.
 
 ## 2. Problem statement
 
@@ -49,8 +49,9 @@ lines, error signatures). Spec 004 §2.2 holds the catalogue.
 - Push notification of firing and resolved alerts to a Teams chat.
 - System events: host disk and memory pressure and Magic process liveness, alerted with
   configurable thresholds (spec 002 §7.1, spec 005 §1.2).
-- Application.log severity: `[F]` failure lines raise alerts; `[E]` is counted only
-  (spec 004 `FR-MET-033`).
+- Application.log severity: `[F]` failure lines raise alerts; `[E]` errors have no
+  default level-based alert. Both are counted and summarised as events (spec 004
+  `FR-MET-033`); the proposed C level was withdrawn in UBS-127.
 - Self-monitoring: heartbeat, parse error counts, queue depth, callback failures.
 
 ### 3.2 Out of scope (Day-2 or later)

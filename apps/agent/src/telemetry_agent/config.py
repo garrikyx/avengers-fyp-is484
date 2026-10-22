@@ -66,6 +66,7 @@ class _LogsYaml(_Section):
     paths: list[str]
     state_dir: str = ".agent-state"
     app_log_patterns: list[str] = []
+    log_stall_threshold: str | float = "5m"
 
 
 class _SignatureYaml(_Section):
@@ -105,6 +106,7 @@ class LogsConfig:
     paths: tuple[Path, ...]
     state_dir: Path
     app_log_patterns: tuple[str, ...]
+    log_stall_threshold_seconds: float = 300.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +205,12 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     logs_section: _LogsYaml = _section(raw, "logs", _LogsYaml)
     if not logs_section.paths:
         raise AgentConfigError("logs: paths must list at least one file")
+    try:
+        stall_threshold = parse_duration_seconds(logs_section.log_stall_threshold)
+        if not 0 < stall_threshold < float("inf"):
+            raise ValueError("must be finite and greater than zero")
+    except Exception as exc:
+        raise AgentConfigError(f"logs: logStallThreshold: {exc}") from exc
 
     parsing: _ParsingYaml = _section(raw, "parsing", _ParsingYaml)
     for signature in parsing.error_signatures:
@@ -237,6 +245,7 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
             paths=tuple(Path(p) for p in logs_section.paths),
             state_dir=Path(logs_section.state_dir),
             app_log_patterns=tuple(logs_section.app_log_patterns),
+            log_stall_threshold_seconds=stall_threshold,
         ),
         parsing=ParsingConfig(
             error_signatures=tuple(

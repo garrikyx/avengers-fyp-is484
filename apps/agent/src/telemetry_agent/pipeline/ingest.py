@@ -45,6 +45,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from telemetry_shared.models.alerts import AlertEvent
+
 from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregator
 from telemetry_agent.metrics.correlation import LATENCY_DIMENSIONS, LatencyCorrelator
 from telemetry_agent.metrics.counters import (
@@ -63,6 +65,7 @@ from telemetry_agent.parser.metrics_event import (
 )
 from telemetry_agent.parser.protocol import ParseResult, SourceMeta
 from telemetry_agent.pipeline.types import ParsedEvent
+from telemetry_agent.publishing.events import EventEmitter
 
 if TYPE_CHECKING:
     from telemetry_agent.health.reporter import HealthReporter
@@ -97,6 +100,7 @@ class MetricsIngestor:
         self._events_built = 0
         self._ingest_errors = 0
         self._error_logged = False
+        self.event_emitter: EventEmitter | None = None
 
     @classmethod
     def build_default(
@@ -187,6 +191,17 @@ class MetricsIngestor:
         # 7. The heartbeat's parse-error count (UBS-59).
         if self.health_reporter is not None:
             self.health_reporter.record_parse_result(result, now=meta.read_at)
+        if self.event_emitter is not None:
+            # Metrics/health are already updated even if event construction fails.
+            try:
+                self.event_emitter.observe(result, meta)
+            except Exception:
+                self.event_emitter.counters.increment("event_build_errors")
+
+    def emit_alert(self, alert: AlertEvent) -> None:
+        with self.lock:
+            if self.event_emitter is not None:
+                self.event_emitter.alert(alert)
 
     def stats(self) -> dict[str, int]:
         return {

@@ -3,10 +3,9 @@ it to the backend's Ingestion Service every `interval_seconds` (spec 002
 §6, `FR-PUB-001`), buffering through an outage and backing off on
 transient failures (`FR-PUB-004`/`005`).
 
-`enqueue_snapshot()`/`enqueue_event()`/`enqueue_alert()` are the entry
-points a future supervisor/pipeline-wiring step calls with each completed
-`Snapshot`/`TelemetryEvent`/`AlertEvent` the Metrics Aggregator and Rule
-Engine produce; alerts arrive via `pipeline.AlertRouter` (UBS-109). Every
+`enqueue_snapshot()`/`enqueue_event()`/`enqueue_alert()` receive completed
+`Snapshot`/`TelemetryEvent`/`AlertEvent` items from the pipeline; alerts
+arrive via `pipeline.AlertRouter` (UBS-109). Every
 `enqueue_*` is a synchronous, non-blocking deque append (`FR-PUB-007`) --
 publishing can never stall aggregation or rule evaluation, and it never
 blocks the Callback Dispatcher either, since the two share no state
@@ -124,14 +123,10 @@ class BackendPublisher:
     def enqueue_event(
         self, event: TelemetryEvent, *, now: datetime | None = None
     ) -> None:
-        self._buffer.append(
-            make_pending_item("event", event, now or datetime.now(UTC))
-        )
+        self._buffer.append(make_pending_item("event", event, now or datetime.now(UTC)))
 
     def enqueue_alert(self, alert: AlertEvent, *, now: datetime | None = None) -> None:
-        self._buffer.append(
-            make_pending_item("alert", alert, now or datetime.now(UTC))
-        )
+        self._buffer.append(make_pending_item("alert", alert, now or datetime.now(UTC)))
 
     def queue_depth(self) -> int:
         return self._buffer.depth()

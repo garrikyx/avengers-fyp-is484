@@ -72,6 +72,7 @@ class AlertRouter:
         actions: ActionRunner | None = None,
         counters: CounterRegistry | None = None,
         logger: logging.Logger | None = None,
+        on_event: Callable[[AlertEvent], None] | None = None,
     ) -> None:
         self._publisher = publisher
         self._dispatcher = dispatcher
@@ -81,6 +82,7 @@ class AlertRouter:
         self._counters = counters or CounterRegistry()
         self._logger = logger or logging.getLogger(__name__)
         self._logged_identity_mismatch = False
+        self._on_event = on_event
 
     @property
     def counters(self) -> CounterRegistry:
@@ -119,6 +121,8 @@ class AlertRouter:
                 lambda a: self._publisher.enqueue_alert(a, now=now),
             ):
                 routed += 1
+            if self._on_event is not None:
+                self._guarded("event", alert, self._on_event)
         if routed:
             self._counters.increment("alerts_routed", routed)
         if dispatched:

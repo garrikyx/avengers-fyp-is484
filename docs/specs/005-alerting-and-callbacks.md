@@ -11,13 +11,13 @@ summarisation but is not in the decision path.
 `FR-RUL-001`: Day-1 supports exactly these five rule kinds. A new kind requires a code
 change and a spec update; new _instances_ of a kind are configuration only.
 
-| Kind        | Evaluates                                                         | Example                                    |
-| ----------- | ----------------------------------------------------------------- | ------------------------------------------ |
-| `rate`      | A ratio of two counters over a window, with a minimum denominator | reject rate > 5% over 5m with ≥ 20 orders  |
-| `threshold` | A counter sum or gauge value over a window                        | parse errors > 100 in 5m                   |
-| `latency`   | An approximate percentile or max of a histogram over a window     | p95 ack latency > 500ms over 5m            |
-| `absence`   | No occurrences of a counter for a duration                        | zero log lines for 5m during trading hours |
-| `signature` | Count of `app.error_signature` matches for a named pattern        | 3+ `OutOfMemory` matches in 1m             |
+| Kind        | Evaluates                                                          | Example                                    |
+| ----------- | ------------------------------------------------------------------ | ------------------------------------------ |
+| `rate`      | A ratio of two counters over a window, with a minimum denominator  | reject rate > 5% over 5m with ≥ 20 orders  |
+| `threshold` | A counter sum or gauge value over a window                         | parse errors > 100 in 5m                   |
+| `latency`   | An approximate percentile or max of a histogram over a window      | p95 ack latency > 500ms over 5m            |
+| `absence`   | No occurrences of a counter for a duration                         | zero log lines for 5m during trading hours |
+| `signature` | Count of `app_error_signatures` metric matches for a named pattern | 3+ `OutOfMemory` matches in 1m             |
 
 ### 1.1 Rule definition
 
@@ -90,10 +90,9 @@ placeholders. Remaining values are provisional pending [Q-5](../plan/open-questi
 | `HostMemoryHigh`      | threshold (gauge)     | warning @ `host_memory_used_ratio` > 0.90, critical @ > 0.95     | for 2m                            |
 | `ApplicationDown`     | threshold (gauge)     | critical @ `magic_process_up` == 0                               | for 30s                           |
 
-The last four rules cover application failure and host/system events discussed in the
-2026-10-16 sponsor call. `AppLogFailure` maps `[F]` to critical. `[E]` lines are counted
-but have no default level-based rule. The POC level set follows the simulator samples
-(spec 004 `FR-MET-033`).
+The last four rules come from the 2026-10-16 sponsor call. `[F]` maps to critical (spec
+004 `FR-MET-033`). `[E]` lines are counted but have no default level rule. UBS-127
+withdrew the proposed C level and its rule; UBS-128 covers F only.
 
 Their **thresholds** are common operational defaults, not UBS values, and are
 provisional pending [Q-5](../plan/open-questions.md). `HostDiskFull`, `HostMemoryHigh`
@@ -140,8 +139,9 @@ only matches of that pattern:
 The agent evaluates it against a snapshot grouped by `error_signature`, so other
 signatures in the same window never trip it, and the alert carries
 `groupBy: {errorSignature: out_of_memory}` (`FR-RUL-015`). The two shipped signature
-rules cover the two shipped signatures. Both warn on the first match, because one
-out-of-memory error or lost database connection is already an incident.
+rules cover `out_of_memory` and `db_connection_lost`; the three configured venue
+signatures provide classification without alert rules. Both rules warn on the first
+match: one out-of-memory error or lost database connection is already an incident.
 `AppOutOfMemory`'s critical tier is §1's own example.
 
 `FR-RUL-030` (backend-side): The backend MUST additionally raise `AgentHeartbeatMissing`
@@ -292,24 +292,24 @@ rules:
 
 ### 5.1 Implementation notes (UBS-35)
 
-Built on branch `UBS-35-36-Rule-Actions-And-Test-Mode`. It stays unmerged until the
-team accepts [ADR 0008](../adr/0008-configurable-action-hooks.md).
+Built on branch `UBS-35-36-Rule-Actions-And-Test-Mode`. It stays unmerged until the team
+accepts [ADR 0008](../adr/0008-configurable-action-hooks.md).
 
 - **Where the keys live.** The `actions:` block sits in `rules.yaml` beside `rules:`.
   `allowedCommands` sits in `agent.yaml` under `actions:`. A live rules reload can
-  therefore change which allowlisted command a rule runs, but never adds an
-  executable; changing the allowlist needs a restart.
+  therefore change which allowlisted command a rule runs, but never adds an executable;
+  changing the allowlist needs a restart.
 - **"Absolute path".** The path must be rooted, so the OS never searches `PATH` or the
   working directory. On Windows a drive-relative `/opt/x` counts as rooted.
 - **Counters.** `action_runs:<action>:<outcome>` and `action_run_ms:<action>` hold the
   labels in the counter name, because `CounterRegistry` has none. Outcomes: `ok`,
   `failed`, `timeout`, `error`, `dry_run`, `unknown` (removed by a reload while queued).
-- **Once per occurrence.** The engine emits `pending→firing` with `notificationCount: 1`.
-  Renotifies and severity changes carry higher counts and never run actions. A bounded
-  seen-set of `alertId` also covers a re-delivered first event.
+- **Once per occurrence.** The engine emits `pending→firing` with
+  `notificationCount: 1`. Renotifies and severity changes carry higher counts and never
+  run actions. A bounded seen-set of `alertId` also covers a re-delivered first event.
 - **Callback actions** get their own dispatcher and counters, so a failing hook never
-  trips `CallbackFailing` for Magic. Each run is bounded by the action's `timeout`,
-  and the retry schedule is the §3 default.
+  trips `CallbackFailing` for Magic. Each run is bounded by the action's `timeout`, and
+  the retry schedule is the §3 default.
 - **Reload.** The rules file is reloaded on SIGHUP, or when its mtime changes
   (`rules.reloadCheckInterval`, default 10s). The mtime check gives Windows a trigger.
   The rules and the action catalogue are validated together, and a reject keeps both
@@ -334,13 +334,13 @@ uv run telemetry-agent --config config/agent.yaml \
     --test-rule VenueConnectTimeouts --replay logs/Application.log logs/Fix.log [--json]
 ```
 
-| ID           | Requirement                                                                                                                                                                                                                                                       |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FR-RUL-031` | A rule MAY declare `state: draft`. The loader MUST validate a draft rule exactly like an active one, but the running agent MUST NOT evaluate it. Moving a firing rule back to draft resolves its alert, as removing it would (`FR-RUL-008`).                            |
+| ID           | Requirement                                                                                                                                                                                                                                                                               |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-RUL-031` | A rule MAY declare `state: draft`. The loader MUST validate a draft rule exactly like an active one, but the running agent MUST NOT evaluate it. Moving a firing rule back to draft resolves its alert, as removing it would (`FR-RUL-008`).                                              |
 | `FR-RUL-032` | Test mode MUST replay the given log files through the agent's own parser, ingest and evaluation path on a simulated clock driven by line timestamps. It MUST apply the rule's windows, `for` and `resolveAfter`, and report each transition with its time, severity and the §3.3 payload. |
-| `FR-RUL-033` | Test mode MUST NOT publish, call back or run actions, whatever the rule's `dryRun` settings. It MUST report which actions would have run, on the occurrence's first firing only.                                                                                       |
+| `FR-RUL-033` | Test mode MUST NOT publish, call back or run actions, whatever the rule's `dryRun` settings. It MUST report which actions would have run, on the occurrence's first firing only.                                                                                                          |
 
 Making a draft active is the operator's edit after reviewing the report. Day-1 does not
 enforce a "validated" fingerprint. Gauge-sourced rules (host disk/memory, queue depth)
-read live process state that log lines don't carry, so the report flags them rather
-than guessing.
+read live process state that log lines don't carry, so the report flags them rather than
+guessing.

@@ -12,6 +12,12 @@ defaults and diff them against this document's values.
 
 ## 1. Agent configuration
 
+The full target schema below differs from today's executable agent config, which uses a
+`logs` mapping with `paths`, `stateDir`, and `appLogPatterns`. UBS-117 adds optional
+`logs.logStallThreshold` to that mapping (default `5m`, positive finite duration),
+applied independently to every monitored file. No configuration edit is required to
+enable the default. The per-source target schema is not introduced here.
+
 The POC uses local configuration and the specified reload mechanism. Central
 distribution is Day-2 (Q-12). The `trading-hours` schedule below is a demo example, not
 a confirmed production calendar; verify runtime schedule gating before claiming
@@ -100,6 +106,8 @@ metrics:
   minSampleSize: 20
 
 publish:
+  maxEventsPerMinute: 600 # per event type per instance (FR-MET-023)
+  executionSampleEvery: 100 # 1:N fix.execution observations; metrics count all
   endpoint: https://telemetry.internal.example/telemetry/batch
   interval: 10s
   timeout: 10s
@@ -171,9 +179,9 @@ alerting:
 | `callbacks.dryRun`                      | Required for pre-production validation before Magic's endpoint exists.                                                                                                                                                                                                                                                                                 |
 | `host.process.name`                     | Empty by default, because the Magic executable name is UBS-specific and is not invented here. `ApplicationDown` stays inactive until it is set.                                                                                                                                                                                                        |
 | `host.diskPaths`                        | Paths, not devices. Each resolves to its filesystem, so the log volume is watched even when it is a separate mount.                                                                                                                                                                                                                                    |
-| `actions` / `allowedCommands`           | spec 005 §5. `actions:` lives in `rules.yaml` and reloads with it; `actions.allowedCommands` lives in `agent.yaml` and is read at startup only (ADR 0008). Every action defaults to `dryRun: true`. |
-| `rules[].state`                         | `active` (default) or `draft` (spec 005 §6). A draft is validated but evaluated only by `--test-rule`. |
-| `rules.reloadCheckInterval`             | How often the agent stats `rules.yaml` and reloads it on an mtime change (default `10s`, `0` = SIGHUP only). SIGHUP doesn't exist on Windows. |
+| `actions` / `allowedCommands`           | spec 005 §5. `actions:` lives in `rules.yaml` and reloads with it; `actions.allowedCommands` lives in `agent.yaml` and is read at startup only (ADR 0008). Every action defaults to `dryRun: true`.                                                                                                                                                    |
+| `rules[].state`                         | `active` (default) or `draft` (spec 005 §6). A draft is validated but evaluated only by `--test-rule`.                                                                                                                                                                                                                                                 |
+| `rules.reloadCheckInterval`             | How often the agent stats `rules.yaml` and reloads it on an mtime change (default `10s`, `0` = SIGHUP only). SIGHUP doesn't exist on Windows.                                                                                                                                                                                                          |
 
 ## 2. Backend configuration
 
