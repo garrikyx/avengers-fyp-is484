@@ -432,22 +432,22 @@
     "semantic_hash": "45263f6ea1ca5dacd32ff0b228b6c6b5"
   },
   "apps/simulator/src/simulator/main.py": {
-    "mtime": 1789994127.8935766,
-    "seen": 1791724864.3842108,
-    "ast_hash": "d94fd9f081b839ebba5d7d28c7cf9a25",
-    "semantic_hash": "d94fd9f081b839ebba5d7d28c7cf9a25"
+    "mtime": 1792680506.742335,
+    "seen": 1792680512.803523,
+    "ast_hash": "1cc3694c75a5abd7c77951f026b75619",
+    "semantic_hash": ""
   },
   "apps/simulator/src/simulator/mock_logger.py": {
-    "mtime": 1791724860.0567155,
-    "seen": 1791724864.3842108,
-    "ast_hash": "99105150fe11130470efced9de650157",
+    "mtime": 1792680506.7425692,
+    "seen": 1792680512.803524,
+    "ast_hash": "53a4638da83e1892ba2ebdb34da6986c",
     "semantic_hash": ""
   },
   "apps/teams/pyproject.toml": {
-    "mtime": 1787563190.1645107,
-    "seen": 1791724864.384212,
-    "ast_hash": "4d17697a3d57a85d7b3a4d2d1cba1e79",
-    "semantic_hash": "4d17697a3d57a85d7b3a4d2d1cba1e79"
+    "mtime": 1792680506.743279,
+    "seen": 1792680512.8035269,
+    "ast_hash": "fd7040bf8f6219e282302822bb991b8b",
+    "semantic_hash": ""
   },
   "apps/teams/src/teams_agent/__init__.py": {
     "mtime": 1787563190.6688826,
@@ -456,16 +456,16 @@
     "semantic_hash": "d93ccf57043ef9fab44fa8d7a0e8abf5"
   },
   "apps/teams/src/teams_agent/config.py": {
-    "mtime": 1787565464.6323893,
-    "seen": 1791724864.384213,
-    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
-    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+    "mtime": 1792680506.743649,
+    "seen": 1792680512.80353,
+    "ast_hash": "bfed34a229de314e650551204ac8792e",
+    "semantic_hash": ""
   },
   "apps/teams/src/teams_agent/main.py": {
-    "mtime": 1787565460.625769,
-    "seen": 1791724864.384214,
-    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
-    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+    "mtime": 1792680506.743842,
+    "seen": 1792680512.803531,
+    "ast_hash": "65887986e32886c7aa14a51fee952101",
+    "semantic_hash": ""
   },
   "packages/telemetry_shared/pyproject.toml": {
     "mtime": 1788359877.9272227,
@@ -552,9 +552,9 @@
     "semantic_hash": "3d762ea7dfd93ad4583e68449586bb43"
   },
   "pyproject.toml": {
-    "mtime": 1792380864.0675046,
-    "seen": 1792654899.058951,
-    "ast_hash": "e2a1ce3f22e9ab8a504dfdc1373bc208",
+    "mtime": 1792680506.7444556,
+    "seen": 1792680512.8035462,
+    "ast_hash": "3838d6e1d2b548aa0fa6d7c1f6d7064d",
     "semantic_hash": ""
   },
   "tests/integration/agent/test_FR_PIP_backpressure.py": {
@@ -2190,9 +2190,9 @@
     "semantic_hash": ""
   },
   "apps/backend/src/telemetry_backend/nl/service.py": {
-    "mtime": 1792380864.0307,
-    "seen": 1792654899.05892,
-    "ast_hash": "628f709c51ddc925af897cd83e31ebc2",
+    "mtime": 1792680506.7419608,
+    "seen": 1792680512.803509,
+    "ast_hash": "f4b80413ef733eeb16f9c0b10ea7287a",
     "semantic_hash": ""
   },
   "apps/backend/src/telemetry_backend/nl/time.py": {
@@ -2328,9 +2328,9 @@
     "semantic_hash": ""
   },
   "tests/unit/backend/nl/test_nl_query_service.py": {
-    "mtime": 1792380864.0682614,
-    "seen": 1792654899.0590332,
-    "ast_hash": "8ff10723a1b6b667d3440b6e6a470f37",
+    "mtime": 1792680506.7448294,
+    "seen": 1792680512.8036292,
+    "ast_hash": "61ba9b88d8313ca32e6a6600819a5443",
     "semantic_hash": ""
   },
   "tests/unit/backend/nl/test_openai_compatible.py": {
@@ -2361,6 +2361,114 @@
     "mtime": 1792654893.626394,
     "seen": 1792654899.059072,
     "ast_hash": "c685b06e614722bf6a7317c2f0410e6d",
+    "semantic_hash": ""
+  },
+  "apps/teams/appPackage/build.sh": {
+    "mtime": 1792680506.7427866,
+    "seen": 1792680512.803526,
+    "ast_hash": "5160cafefb27679a0ae9bdf95a8c7f20",
+    "semantic_hash": ""
+  },
+  "apps/teams/appPackage/manifest.json": {
+    "mtime": 1792680506.7429366,
+    "seen": 1792680512.803526,
+    "ast_hash": "adb87bbd590228623a2afdac3e046e76",
+    "semantic_hash": ""
+  },
+  "apps/teams/src/teams_agent/backend_client.py": {
+    "mtime": 1792680506.7433598,
+    "seen": 1792680512.8035278,
+    "ast_hash": "481a3c88b8e2ac0cbd7d0e4e347fe261",
+    "semantic_hash": ""
+  },
+  "apps/teams/src/teams_agent/bot.py": {
+    "mtime": 1792680506.7434378,
+    "seen": 1792680512.803529,
+    "ast_hash": "1ca62d1aad0c3f88d4a690b714d9ce31",
+    "semantic_hash": ""
+  },
+  "apps/teams/src/teams_agent/cards.py": {
+    "mtime": 1792680506.7435336,
+    "seen": 1792680512.80353,
+    "ast_hash": "06143c55c9ace6d8dc2c45001c96e51b",
+    "semantic_hash": ""
+  },
+  "apps/teams/src/teams_agent/escape.py": {
+    "mtime": 1792680506.7437356,
+    "seen": 1792680512.803531,
+    "ast_hash": "627ffc4218ab355f6b87483f9932c3ad",
+    "semantic_hash": ""
+  },
+  "tests/integration/test_UBS_100_teams_bot_to_backend.py": {
+    "mtime": 1792680506.7445588,
+    "seen": 1792680512.803561,
+    "ast_hash": "ddeacfb5312749761abcb93f68021d7a",
+    "semantic_hash": ""
+  },
+  "tests/unit/simulator/test_mock_logger_fix_orders.py": {
+    "mtime": 1792680506.7449276,
+    "seen": 1792680512.8036458,
+    "ast_hash": "c9c256f58b1d060cf85d0d397202f17c",
+    "semantic_hash": ""
+  },
+  "tests/unit/teams/__init__.py": {
+    "mtime": 1792680506.745121,
+    "seen": 1792680512.803648,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "tests/unit/teams/fixtures.py": {
+    "mtime": 1792680506.74544,
+    "seen": 1792680512.803648,
+    "ast_hash": "64f095d356a0714939ddb60e995cee7a",
+    "semantic_hash": ""
+  },
+  "tests/unit/teams/test_bot_replies.py": {
+    "mtime": 1792680506.745589,
+    "seen": 1792680512.803649,
+    "ast_hash": "e8009eeb5f028099749d772d128e15b1",
+    "semantic_hash": ""
+  },
+  "tests/unit/teams/test_config.py": {
+    "mtime": 1792680506.7456822,
+    "seen": 1792680512.803649,
+    "ast_hash": "2289b5b7dc37449cbdb835b24ece81d1",
+    "semantic_hash": ""
+  },
+  "apps/teams/README.md": {
+    "mtime": 1792680506.7426696,
+    "seen": 1792680512.8036559,
+    "ast_hash": "a8038f9ae8dcf22d613751cdfe8e70b3",
+    "semantic_hash": ""
+  },
+  "config/backend.yaml": {
+    "mtime": 1792680506.7439115,
+    "seen": 1792680512.803659,
+    "ast_hash": "3fc1833bff47d1fb398c2de877ee0bfc",
+    "semantic_hash": ""
+  },
+  "docs/adr/0009-m365-agents-sdk-for-teams-bot.md": {
+    "mtime": 1792680506.7439919,
+    "seen": 1792680512.803665,
+    "ast_hash": "778f2355a633531e9b0d7461e9b5bb13",
+    "semantic_hash": ""
+  },
+  "docs/plan/ubs100-teams-bot-spec.md": {
+    "mtime": 1792680506.744134,
+    "seen": 1792680512.803679,
+    "ast_hash": "fd95d5532dfb5c392673d07bc59b1567",
+    "semantic_hash": ""
+  },
+  "apps/teams/appPackage/color.png": {
+    "mtime": 1792680506.742862,
+    "seen": 1792680512.8036969,
+    "ast_hash": "f3ff22baa3a5ff2146d9a988ea499e22",
+    "semantic_hash": ""
+  },
+  "apps/teams/appPackage/outline.png": {
+    "mtime": 1792680506.7430055,
+    "seen": 1792680512.8036969,
+    "ast_hash": "ced11032f5cb71935818e6ad9f4d6f65",
     "semantic_hash": ""
   }
 }
