@@ -1,6 +1,7 @@
 import argparse
 import random
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ LOG_DIR = Path("./logs")
 DEFAULT_MAX_BYTES = 5 * 1024  # 5 KB limit for rapid testing
 DEFAULT_INTERVAL = 0.2  # Writes every 200ms
 DEFAULT_KEEP_ROTATED_FILES = 5
+DEFAULT_REJECT_RATE = 0.2  # share of orders Magic rejects
 
 SYMBOLS = [
     "AAPL",
@@ -50,6 +52,38 @@ VENUE_EVENTS = (
 def get_timestamps() -> tuple[str, str]:
     now = datetime.now()
     return now.strftime("%H:%M:%S.%f"), now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def generate_fix_order_messages(
+    order_id: str,
+    symbol: str,
+    reject_rate: float = DEFAULT_REJECT_RATE,
+) -> list[str]:
+    """One order's FIX lifecycle as message bodies: NewOrderSingle, then a reject or
+    an ack followed by a full fill.
+
+    Gives the agent real order flow: `orders_submitted`, `orders_acked`, `executions`
+    and `orders_rejected` all need these tags (35=D, ExecType 150, OrdStatus 39).
+    """
+    execution = f"35=8|49=MAGIC|56=CLIENT|11={order_id}|37=O{order_id}|55={symbol}|54=1"
+    messages = [
+        f"35=D|49=CLIENT|56=MAGIC|11={order_id}|55={symbol}|54=1|38=100|40=2|44=150.50"
+    ]
+    if random.random() < reject_rate:
+        messages.append(
+            f"{execution}|17=E{order_id}r|150=8|39=8|103=3"
+            f"|58=Price exceeds limit for symbol {symbol}"
+        )
+    else:
+        messages.append(f"{execution}|17=E{order_id}a|150=0|39=0|151=100|14=0")
+        messages.append(
+            f"{execution}|17=E{order_id}f|150=F|39=2|32=100|31=150.50|151=0|14=100"
+        )
+    return messages
+
+
+def format_fix_line(timestamp: str, message: str) -> str:
+    return f"{timestamp} : 8=FIX.4.2|9=140|{message}|10=112|"
 
 
 def generate_application_log(
@@ -131,6 +165,7 @@ def run_harness(
     max_bytes: int,
     interval: float,
     keep_rotated_files: int = DEFAULT_KEEP_ROTATED_FILES,
+    reject_rate: float = DEFAULT_REJECT_RATE,
 ) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     log_files = {
@@ -145,6 +180,7 @@ def run_harness(
     )
 
     seq = 1000
+    fix_backlog: deque[str] = deque()  # the current order's remaining messages
     while True:
         seq += 1
         category = random.choice(list(log_files.keys()))
@@ -157,15 +193,17 @@ def run_harness(
         symbol = random.choice(SYMBOLS)
 
         if category == "Application":
-            line = generate_application_log(app_ts)
-        elif category == "Fix":
-            line = (
-                f"{fix_ts} : 8=FIX.4.2|9=140|35=8|49=MAGIC|56=CLIENT|"
-                f"11=ORD{seq}|55={symbol}|54=1|38=100|44=150.50|10=112|"
-            )
+            lines = [generate_application_log(app_ts)]
+        else:
+            if not fix_backlog:
+                fix_backlog.extend(
+                    generate_fix_order_messages(f"ORD{seq}", symbol, reject_rate)
+                )
+            lines = [format_fix_line(fix_ts, fix_backlog.popleft())]
 
         with file_path.open("a", encoding="utf-8", newline="\n") as f:
-            f.write(f"{line}\n")
+            for line in lines:
+                f.write(f"{line}\n")
             f.flush()
 
         print(f"[Write] [{category}] -> {file_path.name}")
@@ -176,6 +214,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
+    parser.add_argument(
+        "--reject-rate",
+        type=float,
+        default=DEFAULT_REJECT_RATE,
+        help="Share of FIX orders that Magic rejects (0 to 1)",
+    )
     parser.add_argument(
         "--keep-rotated-files",
         type=int,
@@ -189,6 +233,7 @@ if __name__ == "__main__":
             args.max_bytes,
             args.interval,
             keep_rotated_files=args.keep_rotated_files,
+            reject_rate=args.reject_rate,
         )
     except KeyboardInterrupt:
         print("\n[LOGGER] Stopped.")

@@ -155,6 +155,7 @@ class NlQueryService:
         caveats = list(time_caveats) + list(validated.caveats)
         data = await self._engine.query(validated.metrics_request, now=now)
         active_alerts = 0
+        alert_citations: list[NlCitation] = []
         if validated.interpreted.intent == "alert_status":
             alerts = self._alert_store.list_alerts(
                 status="active",
@@ -163,6 +164,10 @@ class NlQueryService:
                 instance_id=_filter_instance(validated.interpreted.filters),
             )
             active_alerts = len(alerts.alerts)
+            alert_citations = [
+                NlCitation(type="alert", alert_id=alert.alert_id)
+                for alert in alerts.alerts
+            ]
 
         answer_text = render_stub_answer(
             validated.interpreted.intent,
@@ -183,7 +188,10 @@ class NlQueryService:
             source=source,
             interpreted_query=validated.interpreted,
             data=data,
-            citations=[NlCitation(type="metrics_query", query_id=data.query_id)],
+            citations=[
+                NlCitation(type="metrics_query", query_id=data.query_id),
+                *alert_citations,
+            ],
             caveats=caveats,
         )
         return NlQueryOutcome(kind="answer", answer=response)

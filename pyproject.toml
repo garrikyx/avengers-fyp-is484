@@ -12,6 +12,7 @@ dev = [
     "telemetry-agent",
     "telemetry-backend",
     "telemetry-simulator",
+    "telemetry-teams",
     "types-pyyaml",
     "httpx>=0.27",
 ]
@@ -20,6 +21,7 @@ dev = [
 telemetry-agent = { workspace = true }
 telemetry-backend = { workspace = true }
 telemetry-simulator = { workspace = true }
+telemetry-teams = { workspace = true }
 
 [tool.uv.workspace]
 members = [

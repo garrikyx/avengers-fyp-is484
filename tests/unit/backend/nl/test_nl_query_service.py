@@ -15,10 +15,11 @@ from telemetry_backend.services.query_engine import QueryEngine
 from telemetry_backend.services.stream_processor import StreamProcessor
 from telemetry_shared.models.nl_query import NlQueryContext
 
+from tests.unit.backend.services.alert_fixtures import make_alert_event
 from tests.unit.backend.services.query_fixtures import BASE_TIME, NOW, make_snapshot
 
 
-def _service() -> NlQueryService:
+def _service(alert_store: AlertStore | None = None) -> NlQueryService:
     store = MetricStore(StreamProcessorConfig())
     store.merge(
         make_snapshot(
@@ -37,7 +38,7 @@ def _service() -> NlQueryService:
     return NlQueryService(
         config=config,
         query_engine=engine,
-        alert_store=AlertStore(),
+        alert_store=alert_store or AlertStore(),
         llm=MockLlmSlotFiller({}),
         max_range_seconds=21_600,
     )
@@ -66,3 +67,36 @@ def test_rule_path_skips_llm_and_matches_direct_query() -> None:
     assert response.data.totals.get("orders_rejected") == direct.totals.get(
         "orders_rejected"
     )
+
+
+def test_alert_status_answer_cites_each_active_alert() -> None:
+    store = AlertStore()
+    store.merge(make_alert_event(alert_id="active-1"))
+    store.merge(make_alert_event(alert_id="active-2", instance_id="magic-prod-02"))
+    outcome = asyncio.run(
+        _service(store).interpret_and_query(
+            "Any alerts open for Magic?",
+            context=NlQueryContext(default_application="Magic"),
+            now=NOW,
+        )
+    )
+    assert outcome.kind == "answer"
+    response = outcome.answer  # type: ignore[union-attr]
+    assert response.intent == "alert_status"
+    cited = {c.alert_id for c in response.citations if c.type == "alert"}
+    assert cited == {"active-1", "active-2"}
+    assert any(c.type == "metrics_query" for c in response.citations)
+
+
+def test_non_alert_answer_has_no_alert_citations() -> None:
+    store = AlertStore()
+    store.merge(make_alert_event(alert_id="active-1"))
+    outcome = asyncio.run(
+        _service(store).interpret_and_query(
+            "Why are orders rejecting in the last 30 minutes?",
+            context=NlQueryContext(default_application="Magic"),
+            now=NOW,
+        )
+    )
+    response = outcome.answer  # type: ignore[union-attr]
+    assert not [c for c in response.citations if c.type == "alert"]
