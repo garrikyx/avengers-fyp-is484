@@ -7,7 +7,10 @@ from typing import Literal
 from pydantic import Field
 
 from telemetry_shared.models._base import CamelModel
+from telemetry_shared.models.alerts_query import AlertDelivery
 from telemetry_shared.models.metrics_query import MetricsQueryResponse, QueryTimeRange
+
+Audience = Literal["technical", "executive"]
 
 IntentId = Literal[
     "rejection_summary",
@@ -28,6 +31,7 @@ InterpretationSource = Literal["rule", "llm"]
 class NlQueryContext(CamelModel):
     default_application: str = "Magic"
     user_timezone: str = "Asia/Singapore"
+    audience: Audience = "technical"
 
 
 class InterpretedQuery(CamelModel):
@@ -53,6 +57,20 @@ class NlCitation(CamelModel):
     alert_id: str | None = None
 
 
+class NlChartRow(CamelModel):
+    name: str
+    value: str | float | int
+
+
+class NlAlertSummary(CamelModel):
+    alert_id: str
+    rule_name: str
+    severity: str
+    status: str
+    instance_id: str
+    delivery: AlertDelivery
+
+
 class NlQueryResponse(CamelModel):
     kind: Literal["answer"] = "answer"
     answer: str
@@ -63,6 +81,8 @@ class NlQueryResponse(CamelModel):
     data: MetricsQueryResponse
     citations: list[NlCitation] = Field(default_factory=list)
     caveats: list[str] = Field(default_factory=list)
+    chart_rows: list[NlChartRow] = Field(default_factory=list)
+    alert_summaries: list[NlAlertSummary] = Field(default_factory=list)
 
 
 class IntentCatalogueEntry(CamelModel):

@@ -1,4 +1,4 @@
-.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo lint
+.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval lint
 
 sync:
 	uv sync
@@ -57,6 +57,9 @@ rules-reload-demo:
 
 stream-processor-quickstart:
 	uv run python -m telemetry_backend.services.demo_quickstart
+
+nl-eval: sync
+	uv run pytest tests/unit/backend/nl/test_nl_eval_fixtures.py -v
 
 lint:
 	uv run ruff check .

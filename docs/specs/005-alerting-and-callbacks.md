@@ -190,7 +190,7 @@ inactive ─────────────► pending ──────�
 | `FR-CBK-006` | HTTP 2xx = delivered. 408, 429, 5xx and transport errors = retry (honouring `Retry-After` when present). Other 4xx = permanent failure, no retry, count `callback_failures` and emit `callback.failed`. |
 | `FR-CBK-007` | Per-endpoint concurrency MUST be capped (`maxInflightCallbacks`, default 4) and the pending queue bounded (`callbackQueueSize`, default 256, drop-oldest with counter). |
 | `FR-CBK-008` | Timeouts: connect `3s`, total `10s`, both configurable. A slow Magic endpoint MUST NOT stall the pipeline. |
-| `FR-CBK-009` | Delivery outcome per attempt (status code, latency, attempt number, error class) MUST be recorded as metrics and included in the next backend publish. Response bodies MUST NOT be logged beyond the first 200 characters, and MUST be scrubbed of anything resembling a token. |
+| `FR-CBK-009` | Delivery outcome per attempt (status code, latency, attempt number, error class) MUST be recorded as metrics and included in the next backend publish. Agent `AlertEvent` payloads MAY carry optional `callbackDelivery` (same shape as spec 007 §4.1) so the Alert Store can surface delivery in queries and NL answers (`FR-NLQ-029`). Response bodies MUST NOT be logged beyond the first 200 characters, and MUST be scrubbed of anything resembling a token. |
 | `FR-CBK-010` | Callback failure MUST NOT prevent the alert from reaching the backend; the two paths are independent. |
 | `FR-CBK-011` | A `dryRun: true` mode MUST log intended callbacks without sending, for pre-production validation. |
 

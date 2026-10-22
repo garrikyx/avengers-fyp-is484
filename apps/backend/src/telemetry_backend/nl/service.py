@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from telemetry_shared.models.alerts_query import AlertRecord
+from telemetry_shared.models.metrics_query import (
+    MetricsQueryRequest,
+    MetricsQueryResponse,
+)
 from telemetry_shared.models.nl_query import (
     InterpretedQuery,
     NlCitation,
@@ -23,12 +28,13 @@ from telemetry_backend.nl.compiler import merge_interpreted_query
 from telemetry_backend.nl.intents import catalogue_summary_for_prompt
 from telemetry_backend.nl.llm.protocol import LlmSlotFiller, LlmSlotFillError
 from telemetry_backend.nl.normalize import normalize_question
-from telemetry_backend.nl.render_stub import render_stub_answer
+from telemetry_backend.nl.render import RenderInput, render_answer
 from telemetry_backend.nl.rule_matcher import (
     HIGH_CONFIDENCE,
     match_rules,
     rule_match_to_interpreted,
 )
+from telemetry_backend.nl.time import baseline_time_range_before
 from telemetry_backend.nl.validator import (
     InterpretedValidationError,
     validate_interpreted_query,
@@ -153,22 +159,42 @@ class NlQueryService:
             )
 
         caveats = list(time_caveats) + list(validated.caveats)
-        data = await self._engine.query(validated.metrics_request, now=now)
-        active_alerts = 0
-        if validated.interpreted.intent == "alert_status":
-            alerts = self._alert_store.list_alerts(
-                status="active",
-                application=str(validated.interpreted.filters.get("application", ""))
-                or None,
-                instance_id=_filter_instance(validated.interpreted.filters),
-            )
-            active_alerts = len(alerts.alerts)
+        intent = validated.interpreted.intent
+        metrics_request = validated.metrics_request
 
-        answer_text = render_stub_answer(
-            validated.interpreted.intent,
+        baseline_data: MetricsQueryResponse | None = None
+        if intent == "compare_period":
+            data, baseline_data = await self._query_compare_period(
+                metrics_request, now=now
+            )
+        else:
+            data = await self._engine.query(metrics_request, now=now)
+
+        alerts, citations = self._alerts_for_intent(
+            intent,
+            interpreted=validated.interpreted,
             data=data,
-            active_alerts=active_alerts,
         )
+        citations = [
+            NlCitation(type="metrics_query", query_id=data.query_id),
+            *citations,
+        ]
+
+        rendered = render_answer(
+            RenderInput(
+                intent=intent,
+                data=data,
+                baseline_data=baseline_data,
+                audience=context.audience,
+                alerts=tuple(alerts),
+                application=str(
+                    validated.interpreted.filters.get("application", context.default_application)
+                ),
+                extra_caveats=tuple(caveats),
+                now=now,
+            )
+        )
+
         logger.info(
             "nl interpreted query user=%s intent=%s source=%s interpreted=%s",
             user_id or "anonymous",
@@ -177,16 +203,63 @@ class NlQueryService:
             validated.interpreted.model_dump(mode="json", by_alias=True),
         )
         response = NlQueryResponse(
-            answer=answer_text,
+            answer=rendered.answer,
             intent=validated.interpreted.intent,
             confidence=confidence,
             source=source,
             interpreted_query=validated.interpreted,
             data=data,
-            citations=[NlCitation(type="metrics_query", query_id=data.query_id)],
+            citations=citations,
             caveats=caveats,
+            chart_rows=rendered.chart_rows,
+            alert_summaries=rendered.alert_summaries,
         )
         return NlQueryOutcome(kind="answer", answer=response)
+
+    async def _query_compare_period(
+        self, request: MetricsQueryRequest, *, now: datetime
+    ) -> tuple[MetricsQueryResponse, MetricsQueryResponse | None]:
+        primary = await self._engine.query(request, now=now)
+        from_utc = primary.effective_time_range.from_utc
+        to_utc = primary.effective_time_range.to_utc
+        baseline_range = baseline_time_range_before(from_utc, to_utc)
+        baseline_request = request.model_copy(update={"time_range": baseline_range})
+        try:
+            self._engine.prepare_metrics_query(baseline_request, now=now)
+        except Exception:
+            return primary, None
+        baseline = await self._engine.query(baseline_request, now=now)
+        return primary, baseline
+
+    def _alerts_for_intent(
+        self,
+        intent: str,
+        *,
+        interpreted: InterpretedQuery,
+        data: MetricsQueryResponse,
+    ) -> tuple[list[AlertRecord], list[NlCitation]]:
+        if intent not in {"alert_status", "rejection_summary", "order_flow_summary"}:
+            return [], []
+
+        application = str(interpreted.filters.get("application", "")) or None
+        instance_id = _filter_instance(interpreted.filters)
+        listed = self._alert_store.list_alerts(
+            status="active",
+            application=application,
+            instance_id=instance_id,
+        )
+        alerts = listed.alerts
+        if intent == "rejection_summary" and alerts:
+            alerts = alerts[:1]
+        if intent == "order_flow_summary" and not alerts:
+            return [], []
+
+        citations = [
+            NlCitation(type="alert", alert_id=alert.alert_id) for alert in alerts[:3]
+        ]
+        if intent == "alert_status":
+            return alerts, citations
+        return alerts, citations
 
 
 def _filter_instance(filters: dict[str, str | list[str]]) -> str | None:

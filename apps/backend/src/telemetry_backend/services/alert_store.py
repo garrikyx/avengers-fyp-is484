@@ -163,9 +163,17 @@ class AlertStore:
                 return
 
             if existing is None:
+                delivery = (
+                    event.callback_delivery
+                    if event.callback_delivery is not None
+                    else None
+                )
                 stored = _StoredAlert(
                     record=self._record_from_event(
-                        event, source=source, synthetic=False
+                        event,
+                        source=source,
+                        synthetic=False,
+                        delivery=delivery,
                     ),
                     synthetic=False,
                 )
@@ -176,17 +184,32 @@ class AlertStore:
                 return
 
             synthetic = existing.synthetic
+            delivery = existing.record.delivery
+            if event.callback_delivery is not None:
+                delivery = event.callback_delivery
+            only_delivery = (
+                event.callback_delivery is not None
+                and event.status == existing.record.status
+                and event.notification_count == existing.record.notification_count
+            )
             stored = _StoredAlert(
                 record=self._record_from_event(
                     event,
                     source=source,
                     synthetic=synthetic,
-                    delivery=existing.record.delivery,
+                    delivery=delivery,
                 ),
                 transitions=existing.transitions,
                 synthetic=synthetic,
             )
-            self._append_transition(stored, event)
+            if not only_delivery:
+                self._append_transition(stored, event)
+            else:
+                stored = _StoredAlert(
+                    record=stored.record,
+                    transitions=existing.transitions,
+                    synthetic=synthetic,
+                )
             self._place_alert(
                 instance, stored, active=_is_active_status(event.status)
             )

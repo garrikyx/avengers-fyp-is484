@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from telemetry_shared.models._base import CamelModel
+from telemetry_shared.models.alerts_query import AlertDelivery
 
 
 class AlertEvent(CamelModel):
@@ -42,3 +43,4 @@ class AlertEvent(CamelModel):
     group_by: dict[str, str] = {}
     metric_context: dict[str, float | int | str] = {}
     notification_count: int
+    callback_delivery: AlertDelivery | None = None

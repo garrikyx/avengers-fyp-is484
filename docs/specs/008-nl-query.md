@@ -148,7 +148,13 @@ query execution per request. The slot schema is the security boundary.
 (spec 003 §5), no free text from the log stream can reach a prompt. This is deliberate: it
 prevents log content from influencing the model.
 
-## 8. Evaluation
+## 8. Callback delivery in NL answers
+
+| ID | Requirement |
+| --- | --- |
+| `FR-NLQ-029` | When an NL answer cites an alert (`alert_status`, `rejection_summary`, or related intents), it MUST include that alert's callback `delivery` status from the Alert Store (spec 007 §4.1). Structured response fields (`alertSummaries`) MUST carry the same delivery block for Teams Adaptive Cards. |
+
+## 9. Evaluation
 
 `FR-NLQ-025`: A fixed evaluation set of at least 40 question/expected-`interpretedQuery`
 pairs MUST live in the repository and run in CI. Intent accuracy and slot exactness MUST be

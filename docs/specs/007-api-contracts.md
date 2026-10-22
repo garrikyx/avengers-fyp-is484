@@ -257,7 +257,7 @@ on a public listener.
 
 ```json
 { "question": "Why are Magic orders rejecting in the last 30 minutes?",
-  "context": { "defaultApplication": "Magic", "userTimezone": "Asia/Singapore" } }
+  "context": { "defaultApplication": "Magic", "userTimezone": "Asia/Singapore", "audience": "technical" } }
 ```
 
 ```json
@@ -278,7 +278,16 @@ on a public listener.
     { "type": "metrics_query", "queryId": "q-8f21" },
     { "type": "alert", "alertId": "alert-1024" }
   ],
-  "caveats": ["Percentiles are approximate.", "Data covers 1 of 1 expected agents."]
+  "caveats": ["Percentiles are approximate.", "Data covers 1 of 1 expected agents."],
+  "chartRows": [{ "name": "OrderExceedsLimit", "value": 35 }],
+  "alertSummaries": [{
+    "alertId": "alert-1024",
+    "ruleName": "HighRejectRate",
+    "severity": "critical",
+    "status": "firing",
+    "instanceId": "magic-prod-01",
+    "delivery": { "status": "delivered", "attempts": 1 }
+  }]
 }
 ```
 

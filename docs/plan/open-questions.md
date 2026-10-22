@@ -18,7 +18,7 @@ update the affected specs, and add an ADR if the answer is a design decision rat
 | Q-8 | Log format and FIX version reality | Parser correctness | **Open — highest risk** |
 | Q-9 | Trading hours and timezone per instance | Absence rules, `today` semantics | Open |
 | Q-10 | Who receives alerts besides Magic | Notification design | Open |
-| Q-11 | Scope of "Callback audit" under Integration Service | UBS-102, spec 008 §6/§7 shape | Open |
+| Q-11 | Scope of "Callback audit" under Integration Service | UBS-102, spec 008 `FR-NLQ-029` | Resolved — NL + `alertSummaries` surface `delivery`; agent publishes via `callbackDelivery` on `AlertEvent` |
 | Q-12 | Config/control push from backend to agent (thresholds, rules) | Day-1 vs Day-2 scope boundary | Open |
 | Q-13 | Production deployment topology (local vs cloud, DB requirement) | Hosting plan, persistence design, FYP demo vs production target | **Open — raised 2026-09-23 sponsor call** |
 
