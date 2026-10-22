@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "magic-telemetry": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "telemetry-mcp"],
+      "env": { "TELEMETRY_BACKEND_URL": "http://127.0.0.1:8080" }
+    }
+  }
+}
