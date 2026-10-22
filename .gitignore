@@ -62,3 +62,5 @@ graphify-out/*
 !graphify-out/graph.json
 !graphify-out/GRAPH_REPORT.md
 !graphify-out/manifest.json
+# Teams app package output
+apps/teams/appPackage/dist/
