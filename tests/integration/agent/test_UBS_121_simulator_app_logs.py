@@ -20,10 +20,12 @@ import httpx
 import pytest
 from simulator import mock_logger
 from telemetry_agent.callbacks.signing import sign
+from telemetry_agent.callbacks.sink import HttpsCallbackSink
 from telemetry_agent.callbacks.status import DeliveryStatus
 from telemetry_agent.config import load_agent_config
 from telemetry_agent.main import Agent, build_agent
 from telemetry_agent.publishing.outcome import PublishAction
+from telemetry_agent.publishing.sink import HttpsPublishSink
 from telemetry_backend.main import create_app
 from telemetry_shared.models.alerts import AlertEvent
 
@@ -136,9 +138,7 @@ def test_every_simulator_application_variant_reaches_the_shipped_counters(
     assert {
         level: row.counters["app_log_lines"] for (level,), row in levels.items()
     } == {"N": 2, "I": 2, "W": 3, "E": 3, "F": 2}
-    signatures = agent.ingestor.aggregator.snapshot(
-        "1m", group_by=("error_signature",)
-    )
+    signatures = agent.ingestor.aggregator.snapshot("1m", group_by=("error_signature",))
     assert {
         label: row.counters["app_error_signatures"]
         for (label,), row in signatures.items()
@@ -170,6 +170,10 @@ def test_simulator_signatures_fire_only_their_own_shipped_rule(
     # Sponsor venue disconnects count, but must not trip memory/database rules.
     _simulate(agent, monkeypatch, log_type="venue", event_index=3, count=4)
     _simulate(agent, monkeypatch, log_type="client")
+    noise = agent.ingestor.aggregator.snapshot("1m", group_by=())[()].counters
+    assert noise["app_log_lines"] == 5
+    assert noise["app_log_errors"] == 4
+    assert noise["app_error_signatures"] == 4
     assert _tick(agent, 1) == []
     assert _tick(agent, 2) == []
 
@@ -194,9 +198,13 @@ def test_simulator_signatures_fire_only_their_own_shipped_rule(
     totals = agent.ingestor.aggregator.snapshot("1m", group_by=())[()].counters
     assert totals["app_log_lines"] == 5 + critical_count
     assert totals["app_log_errors"] == 4 + critical_count
+    assert totals["app_error_signatures"] == 4 + critical_count
     grouped = agent.ingestor.aggregator.snapshot("1m", group_by=("error_signature",))
-    assert grouped[(signature,)].counters["app_error_signatures"] == critical_count
-    assert grouped[("connection_disconnected",)].counters["app_error_signatures"] == 4
+    assert {
+        label: row.counters["app_error_signatures"]
+        for (label,), row in grouped.items()
+        if "app_error_signatures" in row.counters
+    } == {signature: critical_count, "connection_disconnected": 4}
     assert "messages_total" not in totals  # app-only activity keeps liveness quiet
 
 
@@ -221,7 +229,9 @@ def test_simulator_rotation_preserves_application_counters_and_fix_parsing(
     assert totals["log_lines_read"] == 4
     assert "parse_errors" not in totals
     assert {path.name for path in app_log.parent.iterdir()} == {
-        "Application.log", "Application.log.1", "Fix.log"
+        "Application.log",
+        "Application.log.1",
+        "Fix.log",
     }
     assert agent.monitor.monitors["Application.log"].get_status().offset == (
         app_log.stat().st_size
@@ -289,9 +299,10 @@ def test_simulator_signature_alert_reaches_backend_and_signed_callback(
             ingestion.cancel()
             delivery.cancel()
             await asyncio.gather(ingestion, delivery, return_exceptions=True)
-            for sink in (agent.publish_sink, agent.callback_sink):
-                if sink is not None:
-                    await sink.aclose()
+            if isinstance(agent.publish_sink, HttpsPublishSink):
+                await agent.publish_sink.aclose()
+            if isinstance(agent.callback_sink, HttpsCallbackSink):
+                await agent.callback_sink.aclose()
 
     agent.bridge.start()
     try:

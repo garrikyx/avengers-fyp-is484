@@ -54,30 +54,32 @@ High-volume per-message data is **only** represented as metrics, never as events
 Rules:
 
 - `FR-MET-021`: `eventId` MUST be a UUIDv7 so it is both unique and time-sortable.
-- `FR-MET-022`: `fields` MUST contain only allowlisted values from spec 003 §4. No
-  `text`, no price, no account, no raw line. A backend-side validator MUST reject
-  unknown keys.
+- `FR-MET-022`: FIX `fields` MUST contain only allowlisted values from spec 003 §4.
+  Derived operational metadata is restricted to §2.3 below. No `text`, no price, no
+  account, no raw line. Agent and backend share the compile-time field allowlist in
+  `telemetry_shared.events`; the backend MUST reject unknown keys.
 - `FR-MET-023`: Events MUST be rate-limited per `eventType` per instance
   (`maxEventsPerMinute`, default 600). Excess is dropped and counted, never queued
   indefinitely, so a reject storm cannot become an event storm.
 
 ### 2.1 Event type catalogue
 
-| `eventType`                                              | When emitted                                              | Sampled / rate-limited |
-| -------------------------------------------------------- | --------------------------------------------------------- | ---------------------- |
-| `fix.order_reject`                                       | ExecutionReport or OrderCancelReject indicating rejection | rate-limited           |
-| `fix.execution`                                          | Trade execution — **sampled**, metrics carry the truth    | sampled 1:N            |
-| `fix.session_reject`                                     | 35=3 session-level reject                                 | rate-limited           |
-| `fix.session_state`                                      | Logon / Logout / heartbeat timeout                        | no                     |
-| `fix.seq_gap`                                            | Sequence gap or regression detected                       | rate-limited           |
-| `parse.error`                                            | Parse failure, one per reason per bucket (aggregated)     | aggregated             |
-| `log.rotated`                                            | Rotation detected and handled                             | no                     |
-| `log.truncated`                                          | Truncation detected                                       | no                     |
-| `log.stalled`                                            | No new lines for `logStallThreshold`                      | no                     |
-| `app.error_signature`                                    | Configured application error pattern matched              | rate-limited           |
-| `agent.started` / `agent.stopping` / `agent.state_reset` | Lifecycle                                                 | no                     |
-| `alert.fired` / `alert.resolved`                         | Alert state change (spec 005)                             | no                     |
-| `callback.failed`                                        | Callback exhausted retries                                | rate-limited           |
+| `eventType`                                              | When emitted                                                                                          | Sampled / rate-limited    |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------- |
+| `fix.order_reject`                                       | ExecutionReport or OrderCancelReject indicating rejection                                             | rate-limited              |
+| `fix.execution`                                          | Trade execution — **sampled**, metrics carry the truth                                                | sampled 1:N, rate-limited |
+| `fix.session_reject`                                     | 35=3 session-level reject                                                                             | rate-limited              |
+| `fix.session_state`                                      | Logon / Logout / heartbeat timeout                                                                    | rate-limited defensively  |
+| `fix.seq_gap`                                            | Sequence gap or regression detected                                                                   | rate-limited              |
+| `parse.error`                                            | Parse failure, one per reason per bucket (aggregated)                                                 | aggregated, rate-limited  |
+| `log.rotated`                                            | Rotation detected and handled                                                                         | rate-limited defensively  |
+| `log.truncated`                                          | Truncation detected                                                                                   | rate-limited defensively  |
+| `log.stalled`                                            | No new lines for `logStallThreshold`                                                                  | rate-limited defensively  |
+| `app.error_signature`                                    | Configured application pattern matched at any N/I/W/E/F level; no alert rule required                 | rate-limited              |
+| `app.error`                                              | E/F application lines summarised by level over a completed bucket, whether or not a signature matched | aggregated, rate-limited  |
+| `agent.started` / `agent.stopping` / `agent.state_reset` | Lifecycle                                                                                             | rate-limited defensively  |
+| `alert.fired` / `alert.resolved`                         | Alert state change (spec 005)                                                                         | rate-limited defensively  |
+| `callback.failed`                                        | Terminal callback failure (permanent HTTP failure, exhausted retries, oversized payload)              | rate-limited              |
 
 ### 2.2 Event classes
 
@@ -93,6 +95,57 @@ is not a separate field.
 Host conditions (disk, memory, Magic process liveness) are not separate event types.
 They are gauges (§4.7) that rules turn into `alert.fired` / `alert.resolved` (spec 005
 §1.2). That is the event the agent pushes.
+
+### 2.3 Derived operational metadata
+
+UBS-117 publishes observations independently of alert rules. `app.error` is a summary
+(default 10 seconds, matching `publish.metricsBucketSeconds`), with only `level: E` /
+`level: F` and a count. E maps to event severity `warning`, F to `critical`; this
+mapping does **not** fire an alert. All N/I/W/E/F levels contribute to metrics. A
+configured signature can emit `app.error_signature` at any level: N/I map to `info`, W/E
+to `warning`, and F to `critical`, with the original level retained as a dimension.
+Signatures need no matching alert rule. Signature events provide additional
+classification and MUST NOT be added to `app.error` counts when calculating error
+totals. Metrics remain the counting source of truth: events are sampled/rate-limited and
+have bounded retention. Summaries use the active processing bucket; backlogged lines
+arriving after their read-time bucket closed contribute to that active bucket. Metric
+bucketing remains unchanged, so event summaries describe detection time rather than
+exact source time. Application signature timestamps use the agent's read time, and
+summary timestamps use its processing bucket; both declare `timeSource: agent`.
+
+The `app.error` summary is a deliberate extension to the original UBS-117 catalogue to
+retain the sponsor's unclassified error/failure observations. It produces at most one
+summary per E/F level per bucket; routine unmatched N/I/W lines remain metrics under
+FR-MET-020. It adds no alert rule or notification. UBS-128 owns generic F-level
+alerting, and UBS-129/130 own host/process detection.
+
+| Event type                                    | Additional allowed fields                     | Meaning                                                                                                                            |
+| --------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `app.error`, `parse.error`                    | `count`, `bucketSeconds`                      | Summary count and bucket width; timestamp is bucket start                                                                          |
+| `fix.seq_gap`                                 | `expectedSeqNum`, `gapSize`, `isRegression`   | Derived sequence comparison; `seqNum` is the observed number                                                                       |
+| `fix.session_state`                           | `state`, `silentSeconds`                      | `logon`, `logout`, or `heartbeat_timeout`; silence duration for timeout only                                                       |
+| `fix.execution`                               | `sampleEvery`                                 | One out of every N observed trades; never extrapolate exact totals from samples                                                    |
+| `alert.fired`, `alert.resolved`               | `alertId`, `ruleName`, `status`               | Reference to the existing alert record; no copied message text                                                                     |
+| `log.rotated`, `log.truncated`, `log.stalled` | `sourceIndex`                                 | Zero-based configured monitor order; no filesystem path                                                                            |
+| `agent.state_reset`                           | `reason`                                      | Closed values: `missing`, `corrupt`, `unreadable`                                                                                  |
+| `callback.failed`                             | `alertId`, `reason`, `attempts`, `httpStatus` | Closed reasons: `payload_too_large`, `permanent_http_failure`, `retries_exhausted`; status omitted for transport errors/no request |
+
+`log.stalled` reports one observation after the configured idle threshold, rearmed by
+the next complete log line. It is not proof of an application outage or an automatic
+alert. Runtime `agent.state_reset` currently reports offset-zero recovery; the
+end-of-file recovery policy in spec 002 FR-LOG-022 remains a separate gap.
+
+Alert observations mirror state/severity changes from AlertRouter. Cooldown reminders
+continue on the existing alert/callback path but do not create another observation. A
+severity change keeps the same `alertId`; it is not a second incident. The mirror
+remembers the most recent 4096 alert IDs per instance; reminders for an evicted ID can
+appear again. Consumers use `alertId` for incident counting.
+
+The publisher's existing memory buffer/retry mechanism carries events. No separate event
+bus, event database or MCP ingestion path is introduced. Rate limits use a rolling
+monotonic 60-second window per event type per instance (including lifecycle and alert
+observations defensively). Excess increments `events_rate_limited` and the heartbeat's
+`droppedEventsLast5Min`. Metric/alert processing continues.
 
 ## 3. Metric snapshot
 
@@ -242,7 +295,8 @@ looks like a 100% reject rate.
 
 `FR-MET-033`: The POC Application.log level set MUST be `N`, `W`, `E`, `I`, and `F`,
 matching the sponsor-format simulator samples (confirmed by the team on 2026-10-16).
-`[F]` denotes failure and `[E]` denotes error.
+`[F]` denotes failure and is more severe than `[E]` error. The proposed C level was
+withdrawn in UBS-127; UBS-128 implements an F-only default alert.
 
 `app_log_errors` MUST count E and F lines, and the `level` dimension MUST let a rule
 select one level (spec 005 §1.2). `[N]`, `[W]` and `[I]` lines count only toward

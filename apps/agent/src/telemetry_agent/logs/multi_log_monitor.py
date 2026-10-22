@@ -23,6 +23,7 @@ class MultiLogMonitor:
         rotation_drain_timeout: float = 5.0,
         auto_commit: bool = False,
         commit_on_read: bool | None = None,
+        log_stall_threshold: float = 300.0,
     ) -> None:
         if read_mode not in {"tail", "interval"}:
             raise ValueError("read_mode must be 'tail' or 'interval'")
@@ -41,9 +42,14 @@ class MultiLogMonitor:
                 checkpoint_interval=checkpoint_interval,
                 rotation_drain_timeout=rotation_drain_timeout,
                 commit_on_read=commit_on_read,
+                log_stall_threshold=log_stall_threshold,
             )
             for path in log_paths
         }
+
+    @property
+    def state_reset_reason(self) -> str | None:
+        return self._offset_tracker.state_reset_reason
 
     @property
     def monitors(self) -> dict[str, LogMonitor]:

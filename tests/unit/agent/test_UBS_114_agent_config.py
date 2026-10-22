@@ -48,6 +48,7 @@ def test_minimal_config_gets_the_defaults(tmp_path: Path) -> None:
     assert cfg.callbacks is None  # no section, no dispatcher
     assert cfg.logs.state_dir == Path(".agent-state")
     assert cfg.logs.app_log_patterns == ()
+    assert cfg.logs.log_stall_threshold_seconds == 300
     assert cfg.parse_workers == 1
     assert cfg.evaluation_interval_seconds == 10.0
     assert len(cfg.rules) > 0  # rules.yaml absent here -> DEFAULT_RULES
@@ -139,3 +140,21 @@ def test_invalid_error_signature_regex_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(AgentConfigError, match="errorSignatures 'bad'"):
         load_agent_config(_write(tmp_path, text))
+
+
+@pytest.mark.parametrize(("value", "seconds"), [("2m", 120), ("30s", 30), ("0.5", 0.5)])
+def test_log_stall_threshold_is_configurable(
+    tmp_path: Path, value: str, seconds: float
+) -> None:
+    cfg = load_agent_config(
+        _write(tmp_path, _MINIMAL + f"  logStallThreshold: {value}\n")
+    )
+    assert cfg.logs.log_stall_threshold_seconds == seconds
+
+
+@pytest.mark.parametrize("value", ["0s", "-1", ".inf", ".nan", "soon"])
+def test_invalid_log_stall_threshold_is_rejected(tmp_path: Path, value: str) -> None:
+    with pytest.raises(AgentConfigError, match="logs: logStallThreshold"):
+        load_agent_config(
+            _write(tmp_path, _MINIMAL + f"  logStallThreshold: {value}\n")
+        )

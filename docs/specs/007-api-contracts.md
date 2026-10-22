@@ -32,6 +32,11 @@ the real Teams demonstration; they do not imply per-user backend Entra enforceme
 
 ### 2.1 `POST /telemetry/batch` (primary agent path)
 
+Ingestion accepts `Content-Encoding: gzip` (`FR-PUB-002`) as well as uncompressed JSON.
+`ingest.maxBodyBytes` (default 8 MiB) bounds both wire bytes and decompressed bytes;
+either overflow returns `413 body_too_large`. Invalid/truncated gzip returns
+`400 invalid_encoding`. Unsupported content encodings return `415 unsupported_encoding`.
+
 ```json
 {
   "schemaVersion": 1,
@@ -89,8 +94,8 @@ Retained because it matches the original design sketch and is convenient for tes
 
 ### 2.3 `POST /telemetry/heartbeat`
 
-Accepts one heartbeat document (spec 004 §6). Used when an agent has nothing else to
-send.
+Accepts one heartbeat document (spec 004 §6) for heartbeat-only callers. The configured
+agent uses `POST /telemetry/batch` even for a heartbeat-only publish.
 
 ## 3. `POST /telemetry/query/metrics`
 
@@ -318,7 +323,8 @@ prompt grounding and to keep documentation honest.
 Closed set of codes: `invalid_field`, `invalid_time_range`, `invalid_filter`,
 `unknown_metric`, `unknown_dimension`, `unsupported_schema_version`, `bucket_too_old`,
 `cardinality_exceeded`, `rate_limited`, `queue_full`, `unauthorized`, `forbidden`,
-`agent_id_mismatch`, `not_found`, `query_timeout`, `internal_error`.
+`agent_id_mismatch`, `not_found`, `query_timeout`, `internal_error`, `body_too_large`,
+`invalid_encoding`, `unsupported_encoding`.
 
 | ID           | Requirement                                                                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |

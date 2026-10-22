@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.alias_generators import to_camel
 
 from telemetry_agent.rules.config_loader import _parse_duration_seconds
@@ -67,6 +67,8 @@ class _PublishYaml(BaseModel):
     # StreamProcessorConfig.canonical_bucket_seconds, so the backend's
     # floor-alignment is a lossless no-op for this agent's own buckets.
     metrics_bucket_seconds: int = 10
+    max_events_per_minute: int = Field(default=600, ge=1, le=100_000)
+    execution_sample_every: int = Field(default=100, ge=1)
     retry: _RetryYaml = _RetryYaml()
 
 
@@ -94,6 +96,8 @@ class PublishConfig(BaseModel):
     retry_factor: float
     retry_cap_seconds: float
     retry_jitter: float
+    max_events_per_minute: int = 600
+    execution_sample_every: int = 100
 
 
 def parse_publish_config(raw: dict[str, Any]) -> PublishConfig:
@@ -133,10 +137,10 @@ def parse_publish_config(raw: dict[str, Any]) -> PublishConfig:
         compress_threshold=parsed.compress_threshold,
         buffer_bytes=parsed.buffer_bytes,
         buffer_max_age_seconds=_parse_duration_seconds(parsed.buffer_max_age),
-        halt_probe_interval_seconds=_parse_duration_seconds(
-            parsed.halt_probe_interval
-        ),
+        halt_probe_interval_seconds=_parse_duration_seconds(parsed.halt_probe_interval),
         metrics_bucket_seconds=parsed.metrics_bucket_seconds,
+        max_events_per_minute=parsed.max_events_per_minute,
+        execution_sample_every=parsed.execution_sample_every,
         retry_base_seconds=_parse_duration_seconds(parsed.retry.base),
         retry_factor=parsed.retry.factor,
         retry_cap_seconds=_parse_duration_seconds(parsed.retry.cap),
