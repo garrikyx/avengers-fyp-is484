@@ -11,7 +11,7 @@ def test_defaults_when_the_environment_is_empty() -> None:
     assert config.backend_base_url == "http://127.0.0.1:8080"
     assert config.default_application == "Magic"
     assert config.default_timezone == "Asia/Singapore"
-    assert config.request_timeout_seconds == 10.0
+    assert config.request_timeout_seconds == 12.0
     assert config.bind_host == "127.0.0.1"
     assert config.port == 3978
 

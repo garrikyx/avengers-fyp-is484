@@ -1,4 +1,11 @@
-.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval lint
+.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint \
+	ollama-check ollama-setup backend-run simulator-run agent-run teams-run playground mcp-inspector
+
+# Local LLM for the NL query path (spec 008). Keep OLLAMA_MODEL in step with
+# nl.llm.model in config/backend.yaml.
+OLLAMA_HOST ?= http://127.0.0.1:11434
+OLLAMA_MODEL ?= llama3.2
+BACKEND_CONFIG ?= config/backend.yaml
 
 sync:
 	uv sync
@@ -60,6 +67,45 @@ stream-processor-quickstart:
 
 nl-eval: sync
 	uv run pytest tests/unit/backend/nl/test_nl_eval_fixtures.py -v
+
+ollama-check:
+	@command -v ollama >/dev/null || { echo "Ollama is not installed. See README.md > Prerequisites."; exit 1; }
+	@curl -sf $(OLLAMA_HOST)/api/tags >/dev/null || { echo "Ollama is not running at $(OLLAMA_HOST). Start the Ollama app or run: ollama serve"; exit 1; }
+	@curl -sf $(OLLAMA_HOST)/api/tags | grep -q '"name":"$(OLLAMA_MODEL)' || { echo "Model $(OLLAMA_MODEL) is not pulled. Run: make ollama-setup"; exit 1; }
+	@echo "Ollama OK: $(OLLAMA_MODEL) at $(OLLAMA_HOST)"
+
+ollama-setup:
+	@command -v ollama >/dev/null || { echo "Ollama is not installed. See README.md > Prerequisites."; exit 1; }
+	ollama pull $(OLLAMA_MODEL)
+
+backend-run: sync ollama-check
+	uv run telemetry-backend --config $(BACKEND_CONFIG)
+
+simulator-run:
+	uv run python apps/simulator/src/simulator/mock_logger.py
+
+agent-run:
+	uv run telemetry-agent --config config/agent.yaml
+
+# Dev only: dummy Azure credentials with anonymous access. Never use on a deployed bot.
+teams-run:
+	CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=00000000-0000-0000-0000-000000000000 \
+	CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=dummy \
+	CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=00000000-0000-0000-0000-000000000000 \
+	CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED=true \
+	uv run telemetry-teams
+
+playground:
+	npx @microsoft/teams-app-test-tool start -e http://localhost:3978/api/messages -c msteams
+
+mcp-inspector:
+	npx @modelcontextprotocol/inspector
+
+mcp-run: sync
+	uv run telemetry-mcp
+
+mcp-test: sync
+	uv run pytest tests/unit/mcp -v
 
 lint:
 	uv run ruff check .

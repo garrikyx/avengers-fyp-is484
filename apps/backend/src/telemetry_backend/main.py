@@ -250,11 +250,21 @@ def create_app(
             heartbeat_task = asyncio.create_task(
                 monitor.run(), name="telemetry-heartbeat-monitor"
             )
+        # Load the LLM in the background so the first NL question does not pay
+        # the model's cold start, and startup never waits on it.
+        nl_warm_up: asyncio.Task[None] | None = None
+        if nl_service is not None:
+            nl_warm_up = asyncio.create_task(
+                nl_service.warm_up(), name="telemetry-nl-warm-up"
+            )
         try:
             yield
         finally:
             worker.cancel()
             tasks: list[asyncio.Task[None]] = [worker]
+            if nl_warm_up is not None:
+                nl_warm_up.cancel()
+                tasks.append(nl_warm_up)
             if heartbeat_task is not None:
                 # monitor.run() is `while True`; awaiting it uncancelled hung
                 # shutdown forever (every `with TestClient(app)` exit, and a
@@ -268,6 +278,8 @@ def create_app(
                     pass
             if fanout_client is not None:
                 await fanout_client.aclose()
+            if nl_service is not None:
+                await nl_service.aclose()
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion

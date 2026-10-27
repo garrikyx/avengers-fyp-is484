@@ -314,6 +314,30 @@ exposed on a public listener.
 `FR-NLQ-020`: The response MUST always include `interpretedQuery` and `data`. An answer
 the user cannot verify against numbers is not acceptable for operational use.
 
+When the question can't be answered as a telemetry query, the response is a
+`clarification` instead (`FR-NLQ-003`, `FR-NLQ-030`). It carries no numbers, so
+`interpretedQuery` and `data` are absent:
+
+```json
+200 OK
+{
+  "kind": "clarification",
+  "message": "Hi! I can answer questions about Magic telemetry. Try one of these.",
+  "supportedIntents": ["rejection_summary", "order_flow_summary", "latency_summary"],
+  "details": [],
+  "reason": "greeting",
+  "suggestedQuestions": ["How is Magic doing today?", "Is Magic slow right now?"]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `reason` | `clarify` (default: no intent matched), `greeting`, `help`, `out_of_scope` (the question isn't about telemetry), or `llm_unavailable` (the LLM timed out or couldn't be reached and no rule matched). |
+| `suggestedQuestions` | Example questions from the intent catalogue. Surfaces may render them as buttons that re-ask the question. Empty if none apply. |
+
+Both fields are optional and additive. Clients that ignore them still get `message` and
+`supportedIntents`.
+
 ### 6.2 `GET /telemetry/nl/intents`
 
 Returns the intent catalogue (spec 008 §2) with example questions. Used to build Copilot

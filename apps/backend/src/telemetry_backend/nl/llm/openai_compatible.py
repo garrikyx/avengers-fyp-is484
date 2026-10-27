@@ -15,20 +15,24 @@ from telemetry_backend.nl.llm.parse_slots import (
     parse_llm_slot_payload,
 )
 from telemetry_backend.nl.llm.protocol import (
-    LlmSlotFiller,
     LlmSlotFillError,
     LlmSlotResult,
+    LlmUnavailableError,
+    ManagedLlmSlotFiller,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class OpenAiCompatibleSlotFiller(LlmSlotFiller):
+class OpenAiCompatibleSlotFiller(ManagedLlmSlotFiller):
     def __init__(
         self, config: LlmConfig, *, client: httpx.AsyncClient | None = None
     ) -> None:
         self._config = config
-        self._client = client
+        # One pooled client for the process: a client per question paid a new
+        # connection (and TLS handshake) on every LLM call.
+        self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
+        self._json_mode = config.structured_output
 
     async def fill_slots(
         self,
@@ -55,30 +59,42 @@ class OpenAiCompatibleSlotFiller(LlmSlotFiller):
         elif self._config.require_api_key:
             raise LlmSlotFillError("LLM API key is not configured")
 
-        client = self._client or httpx.AsyncClient(timeout=self._config.timeout_seconds)
-        owns_client = self._client is None
+        client = self._client
         try:
-            return await self._post_and_parse(
-                client, url, headers, user_content, use_json_mode=True
-            )
-        except _JsonModeRejected:
-            logger.warning(
-                "LLM server rejected response_format json_object; retrying without it"
-            )
-            return await self._post_and_parse(
-                client, url, headers, user_content, use_json_mode=False
-            )
+            try:
+                return await self._post_and_parse(
+                    client, url, headers, user_content, use_json_mode=self._json_mode
+                )
+            except _JsonModeRejected:
+                # Remember the rejection: retrying on every question doubled the
+                # latency of each LLM fallback.
+                logger.warning(
+                    "LLM server rejected response_format json_object; "
+                    "continuing without it"
+                )
+                self._json_mode = False
+                return await self._post_and_parse(
+                    client, url, headers, user_content, use_json_mode=False
+                )
         except (
             httpx.HTTPError,
             KeyError,
             json.JSONDecodeError,
             LlmSlotFillError,
         ) as exc:
+            if isinstance(exc, httpx.HTTPError):
+                logger.warning(
+                    "openai-compatible is unavailable: %s", type(exc).__name__
+                )
+                raise LlmUnavailableError("LLM is unavailable") from exc
             logger.warning("openai-compatible slot fill failed: %s", exc)
             raise LlmSlotFillError("LLM slot fill failed") from exc
-        finally:
-            if owns_client:
-                await client.aclose()
+
+    async def warm_up(self) -> None:
+        """Nothing to load: OpenAI-compatible servers manage their own models."""
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     async def _post_and_parse(
         self,

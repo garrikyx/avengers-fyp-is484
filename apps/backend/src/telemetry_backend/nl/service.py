@@ -9,12 +9,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from pydantic import ValidationError
 from telemetry_shared.models.alerts_query import AlertRecord
 from telemetry_shared.models.metrics_query import (
     MetricsQueryRequest,
     MetricsQueryResponse,
 )
 from telemetry_shared.models.nl_query import (
+    ClarificationReason,
     InterpretedQuery,
     NlCitation,
     NlClarificationResponse,
@@ -26,15 +28,33 @@ from telemetry_backend.config import NlConfig
 from telemetry_backend.nl.catalogue import SUPPORTED_INTENTS as CATALOGUE_INTENTS
 from telemetry_backend.nl.compiler import merge_interpreted_query
 from telemetry_backend.nl.intents import catalogue_summary_for_prompt
-from telemetry_backend.nl.llm.protocol import LlmSlotFiller, LlmSlotFillError
+from telemetry_backend.nl.llm.protocol import (
+    NO_INTENT,
+    LlmSlotFiller,
+    LlmSlotFillError,
+    LlmUnavailableError,
+    ManagedLlmSlotFiller,
+)
 from telemetry_backend.nl.normalize import normalize_question
 from telemetry_backend.nl.render import RenderInput, render_answer
+from telemetry_backend.nl.render.replies import (
+    WEAK_RULE_MATCH_CAVEAT,
+    greeting_message,
+    help_message,
+    llm_unavailable_message,
+    out_of_scope_message,
+    suggested_questions,
+    thanks_message,
+)
+from telemetry_backend.nl.reply_guard import guard_reply
 from telemetry_backend.nl.rule_matcher import (
     HIGH_CONFIDENCE,
+    RuleMatchResult,
     match_rules,
     rule_match_to_interpreted,
 )
-from telemetry_backend.nl.time import baseline_time_range_before
+from telemetry_backend.nl.smalltalk import SmallTalkKind, match_small_talk
+from telemetry_backend.nl.time import baseline_time_range_before, parse_time_expression
 from telemetry_backend.nl.validator import (
     InterpretedValidationError,
     validate_interpreted_query,
@@ -78,12 +98,23 @@ class NlQueryService:
         normalized = normalize_question(
             question, max_chars=self._config.max_question_chars
         )
+        application = context.default_application
+        small_talk = match_small_talk(normalized)
+        if small_talk is not None:
+            logger.info(
+                "nl small talk user=%s kind=%s", user_id or "anonymous", small_talk
+            )
+            return _small_talk_outcome(small_talk, application)
+
+        # A weak match is kept as the fallback when the LLM is unavailable
+        # (FR-NLQ-021); only a high-confidence one skips the LLM (FR-NLQ-006).
         rule_match = match_rules(
             normalized,
             context=context,
             config=self._config,
             now=now,
             max_range_seconds=self._max_range_seconds,
+            min_confidence=0.0,
         )
 
         source: Literal["rule", "llm"] = "rule"
@@ -92,19 +123,7 @@ class NlQueryService:
         interpreted: InterpretedQuery | None = None
 
         if rule_match is not None and rule_match.confidence >= HIGH_CONFIDENCE:
-            payload, time_caveats = rule_match_to_interpreted(rule_match)
-            interpreted = merge_interpreted_query(
-                time_range=payload["time_range"],
-                filters=payload["filters"],  # type: ignore[arg-type]
-                group_by=payload["group_by"],  # type: ignore[arg-type]
-                metrics=payload["metrics"],  # type: ignore[arg-type]
-                series=payload["series"],  # type: ignore[arg-type]
-                step=payload["step"],  # type: ignore[arg-type]
-                percentiles=payload["percentiles"],  # type: ignore[arg-type]
-                intent=payload["intent"],  # type: ignore[arg-type]
-                context=context,
-                config=self._config,
-            )
+            interpreted, time_caveats = self._rule_interpreted(rule_match, context)
             confidence = rule_match.confidence
             source = "rule"
         else:
@@ -118,27 +137,64 @@ class NlQueryService:
                     ),
                     timeout=self._config.llm.timeout_seconds,
                 )
-            except (LlmSlotFillError, TimeoutError):
-                return NlQueryOutcome(
-                    kind="clarification",
-                    answer=_clarification(
-                        "I could not interpret that question within the time limit. "
-                        "Try one of the supported intents."
-                    ),
+            except (TimeoutError, LlmSlotFillError) as exc:
+                unavailable = isinstance(exc, TimeoutError | LlmUnavailableError)
+                logger.warning(
+                    "nl llm fallback %s: %s",
+                    "unavailable" if unavailable else "failed",
+                    type(exc).__name__,
                 )
-            interpreted = merge_interpreted_query(
-                intent=llm_result.intent,
-                time_range=llm_result.time_range,
-                filters=llm_result.filters,
-                group_by=llm_result.group_by,
-                metrics=llm_result.metrics,
-                series=llm_result.series,
-                step=llm_result.step,
-                percentiles=llm_result.percentiles,
-                context=context,
-                config=self._config,
-            )
-            confidence = 0.75
+                if rule_match is None:
+                    return _no_interpretation_outcome(unavailable=unavailable)
+                interpreted, time_caveats = self._rule_interpreted(rule_match, context)
+                time_caveats = (*time_caveats, WEAK_RULE_MATCH_CAVEAT)
+                confidence = rule_match.confidence
+                source = "rule"
+                llm_result = None
+
+            if llm_result is not None:
+                llm_intent = llm_result.intent
+                if llm_intent == NO_INTENT:
+                    return _conversational_outcome(llm_result.reply, application)
+                llm_time_range = llm_result.time_range
+                if llm_time_range is None:
+                    time_from_question = parse_time_expression(
+                        normalized,
+                        now=now,
+                        timezone_name=context.user_timezone,
+                        default_last=self._config.default_time_range,
+                        max_range_seconds=self._max_range_seconds,
+                    )
+                    if time_from_question.explicit:
+                        llm_time_range = time_from_question.time_range
+                        time_caveats = time_from_question.caveats
+                try:
+                    interpreted = merge_interpreted_query(
+                        intent=llm_intent,
+                        time_range=llm_time_range,
+                        filters=llm_result.filters,
+                        group_by=llm_result.group_by,
+                        metrics=llm_result.metrics,
+                        series=llm_result.series,
+                        step=llm_result.step,
+                        percentiles=llm_result.percentiles,
+                        context=context,
+                        config=self._config,
+                    )
+                except ValidationError as exc:
+                    details = [
+                        f"{err.get('loc', ('',))[0]}: {err.get('msg', 'invalid')}"
+                        for err in exc.errors()
+                    ]
+                    return NlQueryOutcome(
+                        kind="clarification",
+                        answer=_clarification(
+                            "The interpreted query was invalid. "
+                            "Please clarify your question.",
+                            details=details,
+                        ),
+                    )
+                confidence = 0.75
 
         assert interpreted is not None
         try:
@@ -188,7 +244,9 @@ class NlQueryService:
                 audience=context.audience,
                 alerts=tuple(alerts),
                 application=str(
-                    validated.interpreted.filters.get("application", context.default_application)
+                    validated.interpreted.filters.get(
+                        "application", context.default_application
+                    )
                 ),
                 extra_caveats=tuple(caveats),
                 now=now,
@@ -215,6 +273,33 @@ class NlQueryService:
             alert_summaries=rendered.alert_summaries,
         )
         return NlQueryOutcome(kind="answer", answer=response)
+
+    def _rule_interpreted(
+        self, rule_match: RuleMatchResult, context: NlQueryContext
+    ) -> tuple[InterpretedQuery, tuple[str, ...]]:
+        payload, time_caveats = rule_match_to_interpreted(rule_match)
+        interpreted = merge_interpreted_query(
+            time_range=payload["time_range"],
+            filters=payload["filters"],  # type: ignore[arg-type]
+            group_by=payload["group_by"],  # type: ignore[arg-type]
+            metrics=payload["metrics"],  # type: ignore[arg-type]
+            series=payload["series"],  # type: ignore[arg-type]
+            step=payload["step"],  # type: ignore[arg-type]
+            percentiles=payload["percentiles"],  # type: ignore[arg-type]
+            intent=payload["intent"],  # type: ignore[arg-type]
+            context=context,
+            config=self._config,
+        )
+        return interpreted, time_caveats
+
+    async def warm_up(self) -> None:
+        """Load the model before the first question (startup background task)."""
+        if self._config.llm.warm_up and isinstance(self._llm, ManagedLlmSlotFiller):
+            await self._llm.warm_up()
+
+    async def aclose(self) -> None:
+        if isinstance(self._llm, ManagedLlmSlotFiller):
+            await self._llm.aclose()
 
     async def _query_compare_period(
         self, request: MetricsQueryRequest, *, now: datetime
@@ -270,27 +355,74 @@ def _filter_instance(filters: dict[str, str | list[str]]) -> str | None:
 
 
 def _clarification(
-    message: str, *, details: list[str] | None = None
+    message: str,
+    *,
+    details: list[str] | None = None,
+    reason: ClarificationReason = "clarify",
+    suggestions: list[str] | None = None,
 ) -> NlClarificationResponse:
     return NlClarificationResponse(
         message=message,
         supported_intents=list(CATALOGUE_INTENTS),
         details=details or [],
+        reason=reason,
+        suggested_questions=(
+            suggestions if suggestions is not None else suggested_questions()
+        ),
+    )
+
+
+def _reply(message: str, reason: ClarificationReason) -> NlQueryOutcome:
+    return NlQueryOutcome(
+        kind="clarification", answer=_clarification(message, reason=reason)
+    )
+
+
+def _small_talk_outcome(kind: SmallTalkKind, application: str) -> NlQueryOutcome:
+    if kind == "greeting":
+        return _reply(greeting_message(application), "greeting")
+    if kind == "thanks":
+        return _reply(thanks_message(application), "greeting")
+    return _reply(help_message(application), "help")
+
+
+def _conversational_outcome(reply: str | None, application: str) -> NlQueryOutcome:
+    """FR-NLQ-030: the model's own words only when the guard accepts them."""
+    guarded = guard_reply(reply, application=application)
+    return _reply(guarded or out_of_scope_message(application), "out_of_scope")
+
+
+def _no_interpretation_outcome(*, unavailable: bool) -> NlQueryOutcome:
+    if unavailable:
+        return _reply(llm_unavailable_message(), "llm_unavailable")
+    return _reply(
+        "I could not map that question to a supported telemetry intent. "
+        "Try one of these questions.",
+        "clarify",
     )
 
 
 def _slot_schema_json() -> str:
     schema = {
         "intent": list(CATALOGUE_INTENTS),
-        "timeRange": {"last": "30m", "fromUtc": "ISO-8601", "toUtc": "ISO-8601"},
-        "filters": {
-            "application": "string",
-            "instanceId": "string",
-            "symbol": "string",
+        "timeRange": {
+            "exampleRelative": {"last": "15m"},
+            "exampleAbsolute": {
+                "fromUtc": "2026-06-12T00:00:00Z",
+                "toUtc": "2026-06-12T01:00:00Z",
+            },
         },
-        "groupBy": ["dimension"],
-        "metrics": ["metric"],
-        "series": False,
-        "step": "1m",
+        "filters": {
+            "example": {"application": "Magic", "instanceId": "magic-prod-01"},
+        },
+        "optionalSlotsNote": (
+            "Omit groupBy, metrics, series, and step to use intent defaults "
+            "from the catalogue; only set them when you must override."
+        ),
+        "latency_summaryExample": {
+            "intent": "latency_summary",
+            "timeRange": {"last": "15m"},
+            "filters": {"application": "Magic"},
+        },
     }
     return json.dumps(schema)

@@ -105,10 +105,53 @@ def test_json_mode_rejected_retries_without_response_format() -> None:
         filler = OpenAiCompatibleSlotFiller(config, client=client)
         result = await filler.fill_slots("q", catalogue_summary="c", schema_json="{}")
         assert result.intent == "latency_summary"
+        # The rejection is remembered: the next question is a single request.
+        await filler.fill_slots("q", catalogue_summary="c", schema_json="{}")
         await client.aclose()
 
     asyncio.run(run())
-    assert calls == 2
+    assert calls == 3
+
+
+def test_fill_slots_coerces_ollama_time_range_shape() -> None:
+    ollama_response = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "intent": "latency_summary",
+                            "timeRange": {"fromUtc": "15m", "toUtc": "30m"},
+                            "filters": {"magic": True, "application": "Magic"},
+                            "metrics": ["metric"],
+                            "groupBy": ["dimension"],
+                            "series": True,
+                        }
+                    )
+                }
+            }
+        ]
+    }
+    config = LlmConfig(
+        provider="ollama",
+        base_url="http://127.0.0.1:11434/v1",
+        model="llama3.2",
+    )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json=ollama_response, request=request)
+    )
+
+    async def run() -> None:
+        client = httpx.AsyncClient(transport=transport)
+        filler = OpenAiCompatibleSlotFiller(config, client=client)
+        result = await filler.fill_slots("q", catalogue_summary="c", schema_json="{}")
+        assert result.intent == "latency_summary"
+        assert result.time_range is not None
+        assert result.time_range.last == "15m"  # type: ignore[union-attr]
+        assert result.filters == {"application": "Magic"}
+        await client.aclose()
+
+    asyncio.run(run())
 
 
 def test_require_api_key_without_env_raises() -> None:

@@ -2,14 +2,23 @@
 #
 #   uv run telemetry-backend --config config/backend.yaml     (from the repo root)
 #
-# Everything not listed here uses the defaults in spec 010. This file only turns on
-# the natural-language query API (POST /telemetry/nl/query) for the Teams bot, with
-# the mock LLM so no model or API key is needed. Rule-matched questions never reach
-# the LLM; questions the rules cannot match get a clarification response.
+# Everything not listed here uses the defaults in spec 010. This file turns on the
+# natural-language query API (POST /telemetry/nl/query) for the Teams bot and the MCP
+# server, with a local Ollama model as the LLM fallback. Rule-matched questions and
+# small talk never reach the LLM. If Ollama is slow or down, the backend answers from a
+# weaker rule match or with a friendly reply instead of timing out (FR-NLQ-021).
 #
-# For a real LLM, switch `provider` (ollama | vllm | openai-compatible | azure-openai)
-# and see spec 010 §nl and the MAGIC_TELEMETRY_LLM_API_KEY env var.
+# Without Ollama, set `provider: mock` (no model or API key needed). For other LLMs see
+# spec 010 §nl and the MAGIC_TELEMETRY_LLM_API_KEY env var.
 nl:
   enabled: true
   llm:
-    provider: mock
+    provider: ollama
+    baseUrl: http://127.0.0.1:11434   # a trailing /v1 is accepted and ignored
+    model: llama3.2          # must match `ollama list` / what you pulled
+    timeout: 6s              # keep below the Teams/MCP client timeout (12s)
+    keepAlive: 30m           # keep the model loaded between questions
+    numPredict: 256          # cap on generated tokens per question
+    warmUp: true             # load the model at backend startup
+    structuredOutput: true   # JSON Schema constrained output
+    requireApiKey: false     # local Ollama: no env key

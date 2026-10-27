@@ -230,10 +230,13 @@ nl:
   perUserRateLimitPerMinute: 20
   llm:
     provider: ollama # mock | openai-compatible | ollama | vllm | azure-openai
-    baseUrl: http://127.0.0.1:11434/v1
+    baseUrl: http://127.0.0.1:11434 # ollama: native /api/chat; a trailing /v1 is ignored
     model: llama3.2 # must match `ollama pull` / vLLM served model
-    timeout: 30s # OSS defaults ~25s; azure-openai default 2s (FR-NLQ-021)
+    timeout: 6s # OSS default 6s (POC deviation, spec 008 §6); azure-openai default 2s (FR-NLQ-021)
     maxRetries: 1
+    keepAlive: 30m # ollama only: keep the model loaded between questions
+    numPredict: 256 # ollama only: cap on generated tokens
+    warmUp: true # ollama only: load the model in the background at startup
     structuredOutput: true # FR-NLQ-007
     requireApiKey: false # true for authenticated vLLM / LiteLLM / OpenAI-compat
     deployment: gpt-4o-mini # azure-openai only

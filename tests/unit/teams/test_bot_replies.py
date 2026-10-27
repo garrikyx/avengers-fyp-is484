@@ -171,6 +171,31 @@ def test_hostile_text_is_escaped_in_every_rendered_field() -> None:
     assert "\\[click\\]\\(http://evil\\)" in texts(exchange.card)[0]
 
 
+def test_FR_NLQ_030_reply_offers_suggested_questions_as_buttons() -> None:
+    response = clarification().model_copy(
+        update={
+            "message": "Hi! I can answer questions about Magic's telemetry.",
+            "reason": "greeting",
+            "details": [],
+            "suggested_questions": ["How is Magic doing today?", "Any alerts open?"],
+        }
+    )
+    exchange = converse(message("hi"), json_ok(response))
+
+    body_text = " ".join(texts(exchange.card))
+    assert "I can answer questions about: " not in body_text
+    buttons = exchange.card["actions"]
+    assert [b["title"] for b in buttons] == [
+        "How is Magic doing today?",
+        "Any alerts open?",
+    ]
+    assert buttons[0]["type"] == "Action.Submit"
+    assert buttons[0]["data"]["msteams"] == {
+        "type": "imBack",
+        "value": "How is Magic doing today?",
+    }
+
+
 def test_hostile_clarification_text_is_escaped() -> None:
     evil = "<at>everyone</at> [x](http://evil)"
     response = clarification().model_copy(update={"message": evil, "details": [evil]})
@@ -189,6 +214,7 @@ def test_bot_mention_is_stripped_before_the_question_is_sent() -> None:
             "context": {
                 "defaultApplication": "Magic",
                 "userTimezone": "Asia/Singapore",
+                "audience": "technical",
             },
         }
     ]

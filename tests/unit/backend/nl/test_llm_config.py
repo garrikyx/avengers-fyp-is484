@@ -19,6 +19,7 @@ from telemetry_backend.config import (
 from telemetry_backend.nl.factory import build_llm_filler
 from telemetry_backend.nl.llm.azure_openai import AzureOpenAiSlotFiller
 from telemetry_backend.nl.llm.mock import MockLlmSlotFiller
+from telemetry_backend.nl.llm.ollama_native import OllamaSlotFiller
 from telemetry_backend.nl.llm.openai_compatible import OpenAiCompatibleSlotFiller
 
 
@@ -47,14 +48,14 @@ def test_resolve_azure_default_timeout() -> None:
     assert resolved.timeout_seconds == AZURE_LLM_DEFAULT_TIMEOUT_SECONDS
 
 
-def test_factory_ollama_uses_compat_client() -> None:
+def test_factory_ollama_uses_native_client() -> None:
     filler = build_llm_filler(
         NlConfig(
             enabled=True,
             llm=LlmConfig(provider="ollama", base_url="http://localhost:11434/v1"),
         )
     )
-    assert isinstance(filler, OpenAiCompatibleSlotFiller)
+    assert isinstance(filler, OllamaSlotFiller)
 
 
 def test_factory_vllm_uses_compat_client() -> None:
@@ -71,7 +72,9 @@ def test_factory_azure_uses_azure_client() -> None:
     filler = build_llm_filler(
         NlConfig(
             enabled=True,
-            llm=LlmConfig(provider="azure-openai", endpoint="https://x.openai.azure.com"),
+            llm=LlmConfig(
+                provider="azure-openai", endpoint="https://x.openai.azure.com"
+            ),
         )
     )
     assert isinstance(filler, AzureOpenAiSlotFiller)
@@ -111,8 +114,6 @@ def test_ensure_credentials_compat_require_api_key() -> None:
             ensure_nl_llm_credentials(
                 NlConfig(
                     enabled=True,
-                    llm=LlmConfig(
-                        provider="openai-compatible", require_api_key=True
-                    ),
+                    llm=LlmConfig(provider="openai-compatible", require_api_key=True),
                 )
             )

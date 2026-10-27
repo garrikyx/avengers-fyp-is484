@@ -13,12 +13,8 @@ from telemetry_backend.nl.time import parse_time_expression
 
 HIGH_CONFIDENCE = 0.85
 
-_INSTANCE_RE = re.compile(
-    r"\b(magic[-\w]+|instance[-\s]+[\w-]+)\b", re.IGNORECASE
-)
-_SYMBOL_RE = re.compile(
-    r"\b(?:symbol|on|for)\s+([A-Z]{1,8})\b|\b([A-Z]{2,8})\b"
-)
+_INSTANCE_RE = re.compile(r"\b(magic[-\w]+|instance[-\s]+[\w-]+)\b", re.IGNORECASE)
+_SYMBOL_RE = re.compile(r"\b(?:symbol|on|for)\s+([A-Z]{1,8})\b|\b([A-Z]{2,8})\b")
 _SESSION_RE = re.compile(r"\bsession\s+([\w:>-]+)\b", re.IGNORECASE)
 
 
@@ -146,7 +142,10 @@ def match_rules(
     config: NlConfig,
     now: object,
     max_range_seconds: int,
+    min_confidence: float = HIGH_CONFIDENCE,
 ) -> RuleMatchResult | None:
+    """Best rule match at or above `min_confidence`. Callers that want a weak match
+    to fall back on when the LLM is unavailable (FR-NLQ-021) pass a lower floor."""
     best_intent: IntentId | None = None
     best_score = 0.0
     best_priority = -1
@@ -188,7 +187,7 @@ def match_rules(
     elif confidence < 0.9:
         confidence = min(0.84, confidence)
 
-    if confidence < HIGH_CONFIDENCE:
+    if confidence < min_confidence:
         return None
 
     return RuleMatchResult(
@@ -218,9 +217,7 @@ def _score_patterns(
     return 0.0
 
 
-def _extract_filters(
-    text: str, context: NlQueryContext
-) -> dict[str, str | list[str]]:
+def _extract_filters(text: str, context: NlQueryContext) -> dict[str, str | list[str]]:
     filters: dict[str, str | list[str]] = {}
     instance = _extract_instance(text)
     if instance is not None:

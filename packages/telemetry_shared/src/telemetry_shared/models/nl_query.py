@@ -27,6 +27,11 @@ IntentId = Literal[
 
 InterpretationSource = Literal["rule", "llm"]
 
+# Why a clarification was returned instead of an answer (spec 007 §6, FR-NLQ-030).
+ClarificationReason = Literal[
+    "clarify", "greeting", "help", "out_of_scope", "llm_unavailable"
+]
+
 
 class NlQueryContext(CamelModel):
     default_application: str = "Magic"
@@ -102,3 +107,5 @@ class NlClarificationResponse(CamelModel):
     message: str
     supported_intents: list[IntentId]
     details: list[str] = Field(default_factory=list)
+    reason: ClarificationReason = "clarify"
+    suggested_questions: list[str] = Field(default_factory=list)

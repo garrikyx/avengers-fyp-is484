@@ -11,6 +11,7 @@ dev = [
     "mypy>=1.15",
     "telemetry-agent",
     "telemetry-backend",
+    "telemetry-mcp",
     "telemetry-simulator",
     "telemetry-teams",
     "types-pyyaml",
@@ -20,6 +21,7 @@ dev = [
 [tool.uv.sources]
 telemetry-agent = { workspace = true }
 telemetry-backend = { workspace = true }
+telemetry-mcp = { workspace = true }
 telemetry-simulator = { workspace = true }
 telemetry-teams = { workspace = true }
 
