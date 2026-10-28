@@ -31,6 +31,7 @@ from datetime import datetime
 from telemetry_shared.models.alerts import AlertEvent
 
 from telemetry_agent.actions.runner import ActionRunner
+from telemetry_agent.callbacks.delivery_wire import enrich_alert_delivery
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.publishing.publisher import BackendPublisher
@@ -115,9 +116,14 @@ class AlertRouter:
             if not self._identity_matches(alert):
                 self._reject(alert)
                 continue
+            publish_alert = alert
+            if self._dispatcher is not None:
+                publish_alert = enrich_alert_delivery(
+                    alert, self._dispatcher.tracker
+                )
             if self._guarded(
                 "publish",
-                alert,
+                publish_alert,
                 lambda a: self._publisher.enqueue_alert(a, now=now),
             ):
                 routed += 1

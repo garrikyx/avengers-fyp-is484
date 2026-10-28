@@ -155,6 +155,16 @@ def _parse_short_datetime(
     return None
 
 
+def baseline_time_range_before(
+    from_utc: datetime, to_utc: datetime
+) -> QueryTimeRange:
+    """Previous window of equal length immediately before the primary range."""
+    duration = to_utc - from_utc
+    if duration.total_seconds() <= 0:
+        duration = timedelta(minutes=30)
+    return QueryTimeRange(from_utc=from_utc - duration, to_utc=from_utc)
+
+
 def _parse_relative_duration(value: str) -> timedelta:
     match = _RELATIVE_RE.match(value.strip())
     if not match:

@@ -24,11 +24,13 @@ def build_intents_response() -> NlIntentsResponse:
 
 
 def catalogue_summary_for_prompt() -> str:
+    """One short line per intent: small local models answer faster on short prompts,
+    and the compiler fills metric and groupBy defaults from the catalogue."""
     lines: list[str] = []
     for intent in SUPPORTED_INTENTS:
         definition = INTENT_DEFINITIONS[intent]
         lines.append(
             f"- {intent}: {definition.description} "
-            f"(metrics={list(definition.metrics)}, groupBy={list(definition.group_by)})"
+            f'e.g. "{definition.example_questions[0]}"'
         )
     return "\n".join(lines)

@@ -27,7 +27,19 @@
       "botId": "<APP_ID>",
       "scopes": ["personal", "groupChat"],
       "supportsFiles": false,
-      "isNotificationOnly": false
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "groupChat"],
+          "commands": [
+            { "title": "How is Magic doing today?", "description": "Order flow, rejects and fill rate" },
+            { "title": "Why are orders rejecting?", "description": "Reject counts by reason and instance" },
+            { "title": "Is Magic slow right now?", "description": "Ack latency percentiles" },
+            { "title": "Any alerts open for Magic?", "description": "Active alerts and their delivery" },
+            { "title": "help", "description": "What I can answer" }
+          ]
+        }
+      ]
     }
   ],
   "permissions": ["identity", "messageTeamMembers"],

@@ -260,6 +260,7 @@ def build_agent(
             callback_sink,
             cfg.callbacks,
             _secret(env, _SECRET_ENV, _DEV_SECRET, local=local).encode(),
+            on_delivery_settled=publisher.enqueue_alert,
             on_failure=callback_failed,
         )
 

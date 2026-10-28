@@ -12,29 +12,39 @@ required for real Teams.
 
 ## Run it locally (5 terminals, all from the repo root)
 
-Start them in this order. After step 3, wait about 30 seconds so the backend has data.
+**Prerequisite:** Ollama running with `llama3.2` pulled, and Node.js for step 5. See the
+[root README](../../README.md#prerequisites); `make ollama-check` confirms it.
 
-**1. Backend.** The API that answers questions (public API on :8080).
+Start them in this order. After step 3, wait about 30 seconds so the backend has data.
+Each step shows its `make` shortcut and the full command.
+
+**1. Backend.** The API that answers questions (public API on :8080). The log should
+show `ollama model llama3.2 is loaded` within a few seconds.
 
 ```sh
-uv run telemetry-backend --config config/backend.yaml
+make backend-run
+# or: uv run telemetry-backend --config config/backend.yaml
 ```
 
 **2. Simulator.** Writes fake Magic logs (`logs/Fix.log`, `logs/Application.log`) with orders, fills and rejects.
 
 ```sh
-uv run python apps/simulator/src/simulator/mock_logger.py
+make simulator-run
+# or: uv run python apps/simulator/src/simulator/mock_logger.py
 ```
 
 **3. Agent.** Reads those logs, turns them into metrics, and sends them to the backend every ~10s.
 
 ```sh
-uv run telemetry-agent --config config/agent.yaml
+make agent-run
+# or: uv run telemetry-agent --config config/agent.yaml
 ```
 
 **4. Teams bot.** The bot itself, listening on :3978. The dummy credentials plus `ANONYMOUS_ALLOWED=true` let it run without an Azure app. **Dev only, never use this on a deployed bot.**
 
 ```sh
+make teams-run
+# or:
 CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=00000000-0000-0000-0000-000000000000 \
 CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=dummy \
 CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=00000000-0000-0000-0000-000000000000 \
@@ -45,7 +55,8 @@ uv run telemetry-teams
 **5. Agents Playground.** Microsoft's local Teams-style chat window, pointed at the bot. Needs Node; the first run downloads the tool.
 
 ```sh
-npx @microsoft/teams-app-test-tool start -e http://localhost:3978/api/messages -c msteams
+make playground
+# or: npx @microsoft/teams-app-test-tool start -e http://localhost:3978/api/messages -c msteams
 ```
 
 Open http://localhost:56150. The log panel on the right should say "Connected". Type a
@@ -74,7 +85,14 @@ range is ...") when no data arrived in that window.
 Also try:
 
 - Tap **Show query** on any card to see how the question was interpreted.
-- An off-topic question ("what's the weather like") for the clarification card.
+- "hi", "thanks" or "help" for an instant reply with suggested-question buttons. Tap a
+  button to ask it.
+- An off-topic question ("what's the weather like") for a short reply that steers back
+  to Magic, with the same buttons.
+- A phrasing the rules don't know ("Is anything firing on Magic that I should worry
+  about?") for an answer interpreted by the LLM. "Show query" shows `source: llm`.
+- Quit Ollama and ask "is it slow". The answer says it was interpreted by keyword
+  matching. Nothing times out.
 - Stop the backend and ask again, for the error card.
 - Wait a few minutes with the simulator running, then ask "Any alerts open for Magic?".
   An alert only shows if a rule has fired; the first card has none.
@@ -94,8 +112,9 @@ Also try:
 and 10am". They silently use the default 30 minutes, and the card's caveat line says
 "Using default time range of last 30m."
 
-Phrasings the rules don't match, such as "give me a rejection summary", get the
-clarification card. The mock LLM in `config/backend.yaml` can't help; a real model would.
+Phrasings the rules don't match, such as "give me a rejection summary", go to the local
+Ollama model, which usually takes 1 to 5 seconds. If it can't answer within 6 seconds,
+the backend falls back to keyword matching or replies with suggested questions.
 Some answers (latency, sessions, trend) are short one-liners until UBS-99's full answer
 renderer lands.
 
@@ -106,7 +125,7 @@ renderer lands.
 | `TELEMETRY_BACKEND_URL` | `http://127.0.0.1:8080` | Backend public API base URL |
 | `TEAMS_DEFAULT_APPLICATION` | `Magic` | Application every question is scoped to |
 | `TEAMS_DEFAULT_TIMEZONE` | `Asia/Singapore` | Used when Teams does not report the user's timezone |
-| `TEAMS_BACKEND_TIMEOUT_SECONDS` | `10` | Backend request timeout |
+| `TEAMS_BACKEND_TIMEOUT_SECONDS` | `12` | Backend request timeout; keep above the backend `nl.llm.timeout` (6s) |
 | `TEAMS_BIND_HOST` | `127.0.0.1` | Interface to listen on (use `0.0.0.0` in a container) |
 | `PORT` | `3978` | Port the bot listens on |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | | Azure app (client) ID |

@@ -16,7 +16,9 @@ class TeamsBotConfig:
     backend_base_url: str = "http://127.0.0.1:8080"
     default_application: str = "Magic"
     default_timezone: str = "Asia/Singapore"
-    request_timeout_seconds: float = 10.0
+    # Must stay above the backend's LLM budget (nl.llm.timeout, 6s) plus query time,
+    # so the backend's fallback reply arrives before this client gives up.
+    request_timeout_seconds: float = 12.0
     bind_host: str = "127.0.0.1"
     port: int = 3978
 

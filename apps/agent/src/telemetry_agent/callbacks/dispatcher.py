@@ -18,6 +18,7 @@ from telemetry_shared.models.alerts import AlertEvent
 
 from telemetry_agent.callbacks.backoff import RetryPolicy
 from telemetry_agent.callbacks.config import CallbacksConfig
+from telemetry_agent.callbacks.delivery_wire import enrich_alert_delivery
 from telemetry_agent.callbacks.payload import from_alert_event
 from telemetry_agent.callbacks.queue import DropOldestQueue
 from telemetry_agent.callbacks.retry import RetryDecision, classify_http_status
@@ -36,6 +37,7 @@ class CallbackDispatcher:
         *,
         counters: CounterRegistry | None = None,
         tracker: DeliveryTracker | None = None,
+        on_delivery_settled: Callable[[AlertEvent], None] | None = None,
         logger: logging.Logger | None = None,
         on_failure: Callable[[AlertEvent, str, int, int | None], None] | None = None,
     ) -> None:
@@ -44,7 +46,9 @@ class CallbackDispatcher:
         self._secret = secret
         self._counters = counters or CounterRegistry()
         self._tracker = tracker or DeliveryTracker()
+        self._on_delivery_settled = on_delivery_settled
         self._logger = logger or logging.getLogger(__name__)
+        self._last_delivery_ids: dict[str, str] = {}
         self._on_failure = on_failure
         self._queue: DropOldestQueue[AlertEvent] = DropOldestQueue(
             config.queue_size,
@@ -142,6 +146,7 @@ class CallbackDispatcher:
                 error="payload_too_large",
             )
             self._emit_failure(alert, "payload_too_large", 0, None)
+            self._notify_delivery_settled(alert)
             return
 
         for attempt in range(1, self._config.max_attempts + 1):
@@ -149,9 +154,11 @@ class CallbackDispatcher:
                 alert.alert_id, DeliveryStatus.SENT, now=datetime.now(UTC)
             )
             timestamp = str(int(datetime.now(UTC).timestamp()))
+            delivery_id = str(uuid.uuid4())
+            self._last_delivery_ids[alert.alert_id] = delivery_id
             headers = {
                 "Content-Type": "application/json",
-                "X-Telemetry-Delivery-Id": str(uuid.uuid4()),
+                "X-Telemetry-Delivery-Id": delivery_id,
                 "X-Telemetry-Idempotency-Key": idempotency_key,
                 "X-Telemetry-Timestamp": timestamp,
                 "X-Telemetry-Signature": sign(self._secret, timestamp, body),
@@ -168,6 +175,7 @@ class CallbackDispatcher:
                 self._tracker.record(
                     alert.alert_id, DeliveryStatus.DELIVERED, now=datetime.now(UTC)
                 )
+                self._notify_delivery_settled(alert)
                 return
 
             if result.status_code is not None:
@@ -193,6 +201,7 @@ class CallbackDispatcher:
                 self._emit_failure(
                     alert, "permanent_http_failure", attempt, result.status_code
                 )
+                self._notify_delivery_settled(alert)
                 return
 
             if attempt >= self._config.max_attempts:
@@ -214,6 +223,7 @@ class CallbackDispatcher:
                 self._emit_failure(
                     alert, "retries_exhausted", attempt, result.status_code
                 )
+                self._notify_delivery_settled(alert)
                 return
 
             delay = self._retry_policy.delay_for_attempt(
@@ -236,3 +246,12 @@ class CallbackDispatcher:
                 error=failure_reason,
             )
             await asyncio.sleep(delay)
+
+    def _notify_delivery_settled(self, alert: AlertEvent) -> None:
+        if self._on_delivery_settled is None:
+            return
+        correlation = self._last_delivery_ids.get(alert.alert_id)
+        enriched = enrich_alert_delivery(
+            alert, self._tracker, correlation_id=correlation
+        )
+        self._on_delivery_settled(enriched)

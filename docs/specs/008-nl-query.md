@@ -64,6 +64,18 @@ This eliminates fabricated numbers. A model MAY be used to smooth phrasing only 
 numeric tokens are substituted from the query result afterwards and verified to appear
 unchanged.
 
+`FR-NLQ-030`: Questions that aren't about telemetry MUST still get a reply rather than a
+dead end. Greetings, thanks and "help" are matched deterministically and answered from
+a template without calling the LLM. For other off-topic questions the LLM MAY return
+`intent: "none"` with a one- or two-sentence `reply`. That reply MUST NOT state telemetry
+facts. The backend MUST reject it, and use a templated out-of-scope reply instead, if it
+contains any digit, URL or markup character, exceeds 300 characters, or never mentions
+the application or telemetry (a reply such as "I can help with the weather" promises
+something the bot can't do). All of these
+use the `clarification` envelope with a `reason` and `suggestedQuestions` (spec 007 §6),
+so they carry no `interpretedQuery` and never count as an answer. They are escaped per
+surface like any other output (`FR-NLQ-022`).
+
 ## 4. Time expression handling
 
 | ID           | Requirement                                                                                                                                                                                                                  |
@@ -152,6 +164,10 @@ tool and MUST apply the same Entra ID authentication, read-only authorisation, r
 limits and audit logging as the other surfaces (`FR-NLQ-018`, `019`, `021`). Tool
 outputs carry the same `dataCompleteness` envelope as the API responses.
 
+Implementation: `apps/mcp` (`uv run telemetry-mcp`, streamable HTTP). Every tool is
+annotated read-only. Its Entra ID authentication falls under the spec 009 §3.3 POC
+exception above.
+
 `FR-NLQ-029`: The technical Teams/Copilot alert detail view MUST surface the alert API's
 existing `delivery` block: status, attempts, `lastAttemptUtc`, and `correlationId` (spec
 007 §4.1). Read these values through the backend APIs and escape rendered output.
@@ -166,6 +182,16 @@ export.
 | `FR-NLQ-021` | Per-user rate limits MUST apply (default 20 questions/minute), and LLM calls MUST have a `2s` timeout with fallback to the rule matcher or a clarification response. |
 | `FR-NLQ-022` | Rendered output MUST be escaped for its destination (Adaptive Card text, Markdown, HTML) — user-supplied text is never interpolated unescaped.                       |
 
+**POC deviation from `FR-NLQ-021` (2026-10-26).** A local Ollama model on a developer
+laptop often can't answer in 2s, so the OSS providers (`ollama`, `vllm`,
+`openai-compatible`) default to a 6s LLM timeout. Azure OpenAI keeps 2s. The fallback is
+unchanged in spirit and stronger in practice. On a timeout or an unreachable model, the
+backend answers from the best rule match below the confidence threshold, with the
+caveat "Interpreted by keyword matching". If there's no rule match, it returns a reply
+with `reason: "llm_unavailable"` and suggested questions. The Teams and MCP clients
+time out at 12s, above the backend budget, so users always get the backend's reply
+rather than a client error. Production should restore 2s with a hosted model.
+
 ## 7. Prompt-injection and abuse considerations
 
 `FR-NLQ-023`: Question text is untrusted input. It MUST NOT be able to change filters
@@ -176,7 +202,13 @@ more than one query execution per request. The slot schema is the security bound
 time (spec 003 §5), no free text from the log stream can reach a prompt. This is
 deliberate: it prevents log content from influencing the model.
 
-## 8. Evaluation
+## 8. Callback delivery in NL answers
+
+| ID | Requirement |
+| --- | --- |
+| `FR-NLQ-029` | When an NL answer cites an alert (`alert_status`, `rejection_summary`, or related intents), it MUST include that alert's callback `delivery` status from the Alert Store (spec 007 §4.1). Structured response fields (`alertSummaries`) MUST carry the same delivery block for Teams Adaptive Cards. |
+
+## 9. Evaluation
 
 `FR-NLQ-025`: A fixed evaluation set of at least 40 question/expected-`interpretedQuery`
 pairs MUST live in the repository and run in CI. Intent accuracy and slot exactness MUST

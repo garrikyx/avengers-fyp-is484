@@ -2,13 +2,14 @@
 
 SMU FinTech capstone project
 
-The repo contains four main applications:
+The repo contains five main applications:
 
 ```text
 apps/
 ├── agent/       # Runs on each Magic log host; supports multiple instances
 ├── backend/     # Central telemetry API/service
 ├── teams/       # Microsoft Teams integration
+├── mcp/         # Read-only MCP server for Microsoft 365 Copilot
 └── simulator/   # Generates synthetic Magic/FIX logs for testing
 ```
 
@@ -26,10 +27,10 @@ Magic / Simulator
       ↓
 Telemetry Agent
       ↓
-Telemetry Backend
+Telemetry Backend ←── Ollama (local LLM, NL fallback only)
  (bounded in-memory stores)
       ↓
-Microsoft Teams
+Microsoft Teams / Copilot (MCP)
 
 Day 2:
 Telemetry Backend → approved historical store (technology TBD)
@@ -233,7 +234,8 @@ mypy
 Docker / Docker Compose
 ```
 
-Useful commands will be added as the project setup matures.
+See [Prerequisites](#prerequisites) for what to install, and the `Makefile` for the
+common commands.
 
 ---
 
@@ -256,11 +258,43 @@ Useful commands will be added as the project setup matures.
 If you are unsure where your feature belongs, check the folder responsibilities above
 before creating new modules.
 
+## Prerequisites
+
+Install these before running anything:
+
+| Tool | Version | Why | Install |
+| --- | --- | --- | --- |
+| [uv](https://docs.astral.sh/uv/) | latest | Python 3.14 and every package in the workspace | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| [Ollama](https://ollama.com/download) | 0.5 or later | Local LLM for natural-language questions the rule matcher can't parse (spec 008) | macOS: `brew install ollama` or the app; Windows: the installer; Linux: `curl -fsSL https://ollama.com/install.sh \| sh` |
+| `llama3.2` model | | The model `config/backend.yaml` uses (about 2 GB) | `make ollama-setup` (or `ollama pull llama3.2`) |
+| Node.js | 20 or later | Only for the Teams Agents Playground and the MCP Inspector (`npx`) | [nodejs.org](https://nodejs.org) |
+| `make`, `curl` | | Shortcuts and checks below | Preinstalled on macOS/Linux; on Windows, run the commands from the `Makefile` directly |
+
+Then make sure Ollama is running (open the Ollama app, or run `ollama serve`) and check:
+
+```bash
+make ollama-check        # "Ollama OK: llama3.2 at http://127.0.0.1:11434"
+```
+
+`make backend-run` runs this check first and stops with a fix-it message if Ollama is
+missing, not running or the model isn't pulled. To use another model, pull it, set
+`nl.llm.model` in `config/backend.yaml`, and pass `OLLAMA_MODEL=<name>` to `make`.
+
+Ollama is only a fallback. Rule-matched questions and small talk never reach it, and if
+it is slow or down the backend still answers (keyword match or a short reply) instead of
+timing out. To run with no LLM at all, set `nl.llm.provider: mock` in
+`config/backend.yaml` and skip `ollama-check` by running
+`uv run telemetry-backend --config config/backend.yaml`.
+
 ## Quick start
 
 ```bash
 # Install uv (if not present)
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Pull the local LLM (once) and check Ollama is running
+make ollama-setup
+make ollama-check
 
 # Create virtual environment
 uv venv
@@ -307,15 +341,35 @@ them, updates metrics and agent health, evaluates the rules and publishes alerts
 heartbeats to the backend (and signed callbacks to Magic). It replaces the old
 `telemetry-agent-heartbeat` and `scripts/health_monitor_demo.py` demos.
 
-Four terminals, all from the repo root:
+Complete [Prerequisites](#prerequisites) first (Ollama running, model pulled). Then, in
+separate terminals from the repo root:
 
 ```bash
-uv sync --all-packages                                     # once
+uv sync --all-packages   # once
 
-uv run telemetry-backend                                   # 1. backend: :8080 public, :8081 internal
-uv run python apps/simulator/src/simulator/mock_logger.py  # 2. writes ./logs/Application.log + Fix.log
-uv run telemetry-agent --config config/agent.yaml          # 3. the agent
+make backend-run         # 1. backend: :8080 public, :8081 internal; checks Ollama first
+make simulator-run       # 2. writes ./logs/Application.log + Fix.log
+make agent-run           # 3. the agent
 # 4. optional: anything listening on 127.0.0.1:9000 receives the Magic callbacks
+```
+
+To ask questions in a chat window, add:
+
+```bash
+make teams-run           # 5. Teams bot on :3978 (dev-only dummy credentials)
+make playground          # 6. Teams-style chat at http://localhost:56150
+make mcp-run             # 7. optional: MCP server for Copilot on :8765/mcp
+```
+
+See [the Teams README](apps/teams/README.md) and [the MCP README](apps/mcp/README.md)
+for details, and [the NL manual test plan](docs/plan/nl-ollama-manual-test-plan.md) for
+what to check.
+
+Or ask the backend directly:
+
+```bash
+curl -s http://127.0.0.1:8080/telemetry/nl/query -H 'Content-Type: application/json' \
+  -d '{"question": "Is anything firing on Magic that I should worry about?"}'
 ```
 
 Check config only: `uv run telemetry-agent --check-config`. Secrets come from the

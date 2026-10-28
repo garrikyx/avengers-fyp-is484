@@ -175,7 +175,9 @@ def parse_duration_seconds(value: str | int | float) -> float:
 OSS_LLM_PROVIDERS: frozenset[str] = frozenset({"openai-compatible", "ollama", "vllm"})
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_VLLM_BASE_URL = "http://127.0.0.1:8000/v1"
-OSS_LLM_DEFAULT_TIMEOUT_SECONDS = 25.0
+# POC deviation from FR-NLQ-021 (2s): local Ollama needs longer, but the budget must
+# stay below the Teams/MCP client timeout (12s) so a reply always arrives.
+OSS_LLM_DEFAULT_TIMEOUT_SECONDS = 6.0
 AZURE_LLM_DEFAULT_TIMEOUT_SECONDS = 2.0
 
 
@@ -191,12 +193,17 @@ class LlmConfig:
     max_retries: int = 1
     structured_output: bool = True
     require_api_key: bool = False
+    keep_alive: str = "30m"
+    num_predict: int = 256
+    warm_up: bool = True
 
     def __post_init__(self) -> None:
         if self.timeout_seconds <= 0:
             raise BackendConfigError("nl.llm.timeout must be > 0")
         if self.max_retries < 0:
             raise BackendConfigError("nl.llm.maxRetries must be >= 0")
+        if self.num_predict < 1:
+            raise BackendConfigError("nl.llm.numPredict must be >= 1")
 
 
 def resolve_llm_config(config: LlmConfig, *, timeout_from_yaml: bool) -> LlmConfig:
@@ -352,6 +359,9 @@ class _LlmYaml(_Lenient):
     max_retries: int | None = None
     structured_output: bool | None = None
     require_api_key: bool | None = None
+    keep_alive: str | None = None
+    num_predict: int | None = None
+    warm_up: bool | None = None
 
 
 class _NlYaml(_Lenient):
@@ -423,6 +433,9 @@ def load_nl_config(path: Path | str | None) -> NlConfig:
             max_retries=llm.max_retries,
             structured_output=llm.structured_output,
             require_api_key=llm.require_api_key,
+            keep_alive=llm.keep_alive,
+            num_predict=llm.num_predict,
+            warm_up=llm.warm_up,
         )
     )
     return NlConfig(

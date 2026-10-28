@@ -18,6 +18,7 @@ from telemetry_backend.nl.llm.protocol import (
     LlmSlotFiller,
     LlmSlotFillError,
     LlmSlotResult,
+    LlmUnavailableError,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,9 @@ class AzureOpenAiSlotFiller(LlmSlotFiller):
             json.JSONDecodeError,
             LlmSlotFillError,
         ) as exc:
+            if isinstance(exc, httpx.HTTPError):
+                logger.warning("azure openai is unavailable: %s", type(exc).__name__)
+                raise LlmUnavailableError("LLM is unavailable") from exc
             logger.warning("azure openai slot fill failed: %s", exc)
             raise LlmSlotFillError("LLM slot fill failed") from exc
         finally:

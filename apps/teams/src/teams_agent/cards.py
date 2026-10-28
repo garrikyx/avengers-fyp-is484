@@ -210,14 +210,26 @@ def build_answer_card(
 
 
 def build_clarification_card(response: NlClarificationResponse) -> dict[str, Any]:
+    """Also the conversational reply (FR-NLQ-030): greeting, help, out of scope or
+    a slow model. Suggested questions become buttons that ask them again."""
     body: list[dict[str, Any]] = [_text(response.message, weight="Bolder")]
     body += [_text(f"• {detail}", size="Small") for detail in response.details]
-    if response.supported_intents:
+    if response.reason == "clarify" and response.supported_intents:
         intents = ", ".join(
             intent.replace("_", " ") for intent in response.supported_intents
         )
         body.append(_text(f"I can answer questions about: {intents}.", isSubtle=True))
-    return _card(body)
+    return _card(body, [_ask_again(q) for q in response.suggested_questions])
+
+
+def _ask_again(question: str) -> dict[str, Any]:
+    # `imBack` posts the text back as if the user typed it, so it reaches the bot
+    # as an ordinary message. Action titles are plain text, not Markdown.
+    return {
+        "type": "Action.Submit",
+        "title": question,
+        "data": {"msteams": {"type": "imBack", "value": question}},
+    }
 
 
 def build_error_card(kind: ErrorKind) -> dict[str, Any]:

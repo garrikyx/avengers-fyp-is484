@@ -121,7 +121,9 @@ the only sanctioned source of test log data (`FR-TST-002`).
 ## 6. NL evaluation harness
 
 `FR-TST-007`: At least 40 question fixtures with expected `intent` and expected slot
-values. CI asserts intent accuracy ≥ 90% and exact slot match ≥ 80% (`FR-NLQ-025`).
+values. CI asserts intent accuracy ≥ 90% and exact slot match ≥ 80% (`FR-NLQ-025`). Run
+via `make nl-eval` (`tests/fixtures/nl/eval_fixtures.json`,
+`tests/unit/backend/nl/test_nl_eval_fixtures.py`).
 
 `FR-TST-008`: For every fixture, every numeric token in the rendered answer MUST be
 present in the structured `data` payload. A number in prose that is not in the data is a

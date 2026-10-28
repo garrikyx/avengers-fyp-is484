@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from telemetry_backend.config import NlConfig, OSS_LLM_PROVIDERS, StreamProcessorConfig
+from telemetry_backend.config import OSS_LLM_PROVIDERS, NlConfig, StreamProcessorConfig
 from telemetry_backend.nl.llm.azure_openai import AzureOpenAiSlotFiller
 from telemetry_backend.nl.llm.mock import MockLlmSlotFiller, default_mock_responses
+from telemetry_backend.nl.llm.ollama_native import OllamaSlotFiller
 from telemetry_backend.nl.llm.openai_compatible import OpenAiCompatibleSlotFiller
 from telemetry_backend.nl.llm.protocol import LlmSlotFiller
 from telemetry_backend.nl.service import NlQueryService
@@ -17,6 +18,8 @@ def build_llm_filler(config: NlConfig) -> LlmSlotFiller:
     provider = llm.provider
     if provider == "mock":
         return MockLlmSlotFiller(default_mock_responses())
+    if provider == "ollama":
+        return OllamaSlotFiller(llm)
     if provider in OSS_LLM_PROVIDERS:
         return OpenAiCompatibleSlotFiller(llm)
     if provider == "azure-openai":
