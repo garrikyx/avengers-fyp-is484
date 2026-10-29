@@ -112,10 +112,29 @@ def _simulate(
     assert agent.ingestor.stats()["ingest_errors"] == 0
 
 
-def _tick(agent: Agent, seconds: int) -> list[AlertEvent]:
+def _tick_all(agent: Agent, seconds: int) -> list[AlertEvent]:
     return agent.evaluator.evaluate_once(
         now=datetime.now(UTC) + timedelta(seconds=seconds)
     )
+
+
+def _tick(agent: Agent, seconds: int) -> list[AlertEvent]:
+    """Signature-rule alerts only. The simulator logs these signatures at
+    `[F]`, so `AppLogFailure` (UBS-128) legitimately fires alongside them;
+    these tests are about the signature rules not tripping each other."""
+    return [a for a in _tick_all(agent, seconds) if a.rule_name != "AppLogFailure"]
+
+
+def test_simulator_failure_lines_fire_app_log_failure(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UBS-128: `[F]` lines raise the default level rule, grouped by level."""
+    _simulate(agent, monkeypatch, log_type="main", event_index=4)
+
+    assert _tick_all(agent, 1) == []  # first tick: pending
+    fired = [a for a in _tick_all(agent, 2) if a.rule_name == "AppLogFailure"]
+
+    assert [(a.severity, a.group_by) for a in fired] == [("critical", {"level": "F"})]
 
 
 def test_every_simulator_application_variant_reaches_the_shipped_counters(
@@ -289,9 +308,12 @@ def test_simulator_signature_alert_reaches_backend_and_signed_callback(
             ) as client:
                 response = await client.get("/telemetry/alerts")
                 assert response.status_code == 200
-                assert [a["ruleName"] for a in response.json()["alerts"]] == [
-                    "AppOutOfMemory"
-                ]
+                # [F] lines also raise AppLogFailure (UBS-128); not this test's concern.
+                assert [
+                    a["ruleName"]
+                    for a in response.json()["alerts"]
+                    if a["ruleName"] != "AppLogFailure"
+                ] == ["AppOutOfMemory"]
                 health = await client.get(f"/telemetry/health/agents/{cfg.agent_id}")
                 assert health.status_code == 200
                 assert health.json()["parseErrorCountLast5Min"] == 0
@@ -312,8 +334,12 @@ def test_simulator_signature_alert_reaches_backend_and_signed_callback(
         assert alert.rule_name == "AppOutOfMemory"
         assert alert.severity == "critical"
         asyncio.run(deliver(alert))
-        assert len(callbacks) == 1
-        request = callbacks[0]
+        # The [F] lines also deliver an AppLogFailure callback (UBS-128).
+        (request,) = [
+            r
+            for r in callbacks
+            if json.loads(r.content)["ruleName"] == "AppOutOfMemory"
+        ]
         assert json.loads(request.content)["ruleName"] == "AppOutOfMemory"
         assert request.headers["X-Telemetry-Signature"] == sign(
             b"simulator-test-secret",

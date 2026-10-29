@@ -88,11 +88,7 @@ def test_each_metric_appears_exactly_once_at_its_own_native_dimensions() -> None
 
     # Three metrics in, three series out -- not folded together, not
     # duplicated across a coarser family that happens to be a superset.
-    by_metric = {
-        metric: series
-        for series in snap.series
-        for metric in series.counters
-    }
+    by_metric = {metric: series for series in snap.series for metric in series.counters}
     assert set(by_metric) == {"orders_submitted", "rejects_total", "logons"}
     assert by_metric["orders_submitted"].counters["orders_submitted"] == Decimal(5)
     assert by_metric["rejects_total"].counters["rejects_total"] == Decimal(2)
@@ -130,6 +126,7 @@ def test_build_snapshot_is_pure_and_repeatable() -> None:
         counters={"orders_submitted": Decimal(5)},
         at=at,
     )
+
     def _build() -> Snapshot:
         return build_snapshot(
             aggregator,
@@ -161,12 +158,12 @@ def test_app_log_dimensions_survive_the_wire_allowlist() -> None:
         at=at,
     )
     aggregator.ingest_agent_counters(
-        dims=dict(zip(APP_LOG_COMPONENT_DIMS, ("i1", "OMS"), strict=True)),
+        dims=dict(zip(APP_LOG_COMPONENT_DIMS, ("i1", "E", "OMS"), strict=True)),
         counters={"app_log_errors": Decimal(1)},
         at=at,
     )
     aggregator.ingest_agent_counters(
-        dims=dict(zip(APP_LOG_COMPONENT_DIMS, ("i1", "VS_2"), strict=True)),
+        dims=dict(zip(APP_LOG_COMPONENT_DIMS, ("i1", "E", "VS_2"), strict=True)),
         counters={"app_log_errors": Decimal(2)},
         at=at,
     )
@@ -195,7 +192,7 @@ def test_app_log_dimensions_survive_the_wire_allowlist() -> None:
     by_level = {
         s.dimensions["level"]: s.counters["app_log_lines"]
         for s in snap.series
-        if "level" in s.dimensions
+        if "level" in s.dimensions and "app_log_lines" in s.counters
     }
     assert by_level == {"I": Decimal(2), "E": Decimal(3)}
 

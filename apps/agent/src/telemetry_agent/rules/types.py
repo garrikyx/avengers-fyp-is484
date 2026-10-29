@@ -68,6 +68,11 @@ class SeverityTier:
 # label `parsing.errorSignatures` assigned, carried by `app_error_signatures`.
 SIGNATURE_DIMENSION = "error_signature"
 
+# The snapshot dimension a `level:` threshold rule is read from (FR-RUL-023),
+# and the closed Application.log level set it may select (FR-MET-033).
+LEVEL_DIMENSION = "level"
+APP_LOG_LEVELS: frozenset[str] = frozenset("NWEIF")
+
 
 @dataclass(frozen=True, slots=True)
 class RuleConfig:
@@ -89,6 +94,7 @@ class RuleConfig:
     guard_metric: str | None = None  # absence only: guard_metric > 0 required
     extra_counters: tuple[str, ...] = ()  # threshold: OR'd via sum, e.g. FixSessionDown
     signature: str | None = None  # signature only: the errorSignatures label
+    level: str | None = None  # threshold only: one Application.log level (FR-RUL-023)
 
     for_seconds: int = 60  # FR-RUL-004 default
     resolve_after_seconds: int = 300  # FR-RUL-004 default
