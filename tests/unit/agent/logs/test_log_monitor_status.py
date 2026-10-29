@@ -7,14 +7,14 @@ from telemetry_agent.logs.offset_tracker import OffsetTracker
 
 def make_monitor(tmp_path: Path, name: str = "app.log") -> tuple[LogMonitor, Path]:
     log_path = tmp_path / name
-    log_path.write_text("")
+    log_path.write_text("", newline="\n")
     tracker = OffsetTracker(registry_path=tmp_path / "offsets.json")
     return LogMonitor(log_path, offset_tracker=tracker), log_path
 
 
 def test_status_before_any_read_has_no_lag(tmp_path: Path) -> None:
     monitor, log_path = make_monitor(tmp_path)
-    log_path.write_text("line one\nline two\n")
+    log_path.write_text("line one\nline two\n", newline="\n")
 
     status = monitor.get_status()
 
@@ -28,7 +28,7 @@ def test_status_before_any_read_has_no_lag(tmp_path: Path) -> None:
 
 def test_status_after_read_reports_elapsed_lag(tmp_path: Path) -> None:
     monitor, log_path = make_monitor(tmp_path)
-    log_path.write_text("line one\nline two\n")
+    log_path.write_text("line one\nline two\n", newline="\n")
 
     list(monitor.poll_lines())  # consume both lines, sets last_read_at
 
@@ -47,12 +47,12 @@ def test_status_after_read_reports_elapsed_lag(tmp_path: Path) -> None:
 
 def test_status_reports_offset_progress_between_polls(tmp_path: Path) -> None:
     monitor, log_path = make_monitor(tmp_path)
-    log_path.write_text("first\n")
+    log_path.write_text("first\n", newline="\n")
     list(monitor.poll_lines())
     first_status = monitor.get_status()
     assert first_status.offset == len("first\n")
 
-    with open(log_path, "a") as f:
+    with open(log_path, "a", newline="\n") as f:
         f.write("second\n")
     list(monitor.poll_lines())
     second_status = monitor.get_status()
