@@ -121,7 +121,10 @@ backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` f
 accepted snapshots and `AlertStore.merge()` for alerts. Heartbeats update the Agent
 Registry (UBS-69/87) and feed `AgentHeartbeatMissing` (UBS-95). Events remain
 accept-and-drop (no Event Store story yet). Alert query responses carry placeholder
-`delivery.status: unknown` until agent callback delivery is published to the backend.
+`delivery.status: unknown` until the agent publishes a callback outcome. Since the agent
+republishes each alert once its callback settles, queries show the real delivery state:
+tracked per notification (`FR-CBK-018`, `callbacks/status.py`) and merged by the Alert
+Store, which ignores a stale non-resolved update for a resolved alert (`FR-QRY-019`).
 Authentication and body-size limits remain separate stories; dedupe/rate limiting
 (UBS-85) and health read API (UBS-69) are done.
 
@@ -131,7 +134,7 @@ Authentication and body-size limits remain separate stories; dedupe/rate limitin
 | ----- | ------------------------------------------------- | -------------------------------------------- | ------ | ----------------------------------------------------------------------- |
 | RE-01 | Rule and alert lifecycle types, multi-tier schema | `FR-RUL-001`–`003`, `FR-RUL-015`             | Done   | `test_RE_01_fsm.py`                                                     |
 | RE-02 | Rule evaluation and the alert lifecycle FSM       | `FR-RUL-004`–`007`, `012`–`014`, `016`–`022` | Done   | `test_RE_01_fsm.py`, `test_RE_02_evaluators.py`, `test_RE_03_safety.py` |
-| RE-03 | The 14 default rules                              | `FR-RUL-010`                                 | Done   | `test_RE_04_default_rules.py`                                           |
+| RE-03 | The 17 default rules                              | `FR-RUL-010`                                 | Done   | `test_RE_04_default_rules.py`                                           |
 
 Full detail and the alert-readiness table:
 `docs/plan/re-epic-implementation-summary.md`. Not yet wired: consecutive-failure streak
@@ -168,6 +171,21 @@ Code: `rules/baseline.py` (baseline tracker, explanation text), `anomaly` kind i
 `rules/engine.py`, `load_anomaly_rules` in `rules/config_loader.py`,
 `config/anomaly.yaml`; backend `services/reject_reason_trends.py` and
 `models/trends.py`. Notes on the ticket wording problems: `docs/plan/ubs25-29-notes.md`.
+
+## Application.log failure alert (UBS-128)
+
+| ID      | Story                                 | Requirement                                                | Status | Verified by                                             |
+| ------- | ------------------------------------- | ---------------------------------------------------------- | ------ | ------------------------------------------------------- |
+| UBS-128 | Alert on Application.log [F] failures | `FR-RUL-023` (spec 005 §1.2), `FR-MET-033` (spec 004 §4.6) | Done   | `tests/unit/agent/pipeline/test_UBS_128_level_rules.py` |
+
+Code: optional `level:` on `threshold` rules (`rules/types.py`,
+`rules/config_loader.py`, read from a `level`-grouped snapshot in `rules/engine.py` and
+`pipeline/evaluator.py`), `AppLogFailure` in `rules/defaults.py` and
+`config/rules.yaml`, and the `level` dimension on `app_log_errors`
+(`metrics/counters.py`). `[E]` lines are counted but do not fire it. Known limit: series
+admission is first-come under `maxSeriesPerBucket`, so if a bucket is already full when
+the first `[F]` line arrives it folds to `__other__` and the rule does not match;
+`cardinality_folded` is the signal.
 
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 
@@ -246,7 +264,8 @@ uv run mypy apps/backend/src packages/telemetry_shared/src   # mypy on backend (
 
 ## Open risks
 
-| Risk                                                                                                                              | Mitigation                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples      |
-| Python agent footprint unproven at load                                                                                           | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply |
+| Risk                                                                                                                                               | Mitigation                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown                  | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples                                    |
+| `AppLogFailure` misses an `[F]` line if its bucket already holds `maxSeriesPerBucket` series (admission is first-come; signature rules share this) | Watch `cardinality_folded`; raise the cap or reserve budget for level and signature series if it ever trips |
+| Python agent footprint unproven at load                                                                                                            | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply                               |

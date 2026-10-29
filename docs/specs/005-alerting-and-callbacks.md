@@ -245,6 +245,15 @@ Expected acknowledgement:
 `FR-CBK-012`: The agent MUST treat any 2xx as success even if the body is absent or
 unparseable; `correlationId` is recorded when present and never required.
 
+`FR-CBK-018`: Delivery state MUST be tracked per notification, not per alert. Firing,
+resolved and each renotify of one `alertId` are separate notifications, identified as
+`alertId:status:notificationCount` (the idempotency key, `FR-CBK-003`), and each keeps
+its own status, attempt count, last error and `correlationId`. A firing callback that is
+still retrying therefore never shares attempts or status with the resolved callback sent
+while it waited. When a notification settles (`delivered` or `failed`), the agent MUST
+republish the alert carrying that notification's `callbackDelivery`; the backend merges
+it into the existing alert (`FR-QRY-017`, `FR-QRY-019`).
+
 The final protocol (HTTPS vs message queue, auth scheme, endpoint path) is
 [Q-2](../plan/open-questions.md). The dispatcher MUST therefore sit behind a
 `CallbackSink` interface with the HTTPS implementation as the Day-1 default.
