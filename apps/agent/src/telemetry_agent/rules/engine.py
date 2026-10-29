@@ -9,6 +9,8 @@ snapshot was built with `group_by=()` (single-instance semantics — CLAUDE.md:
 The one exception is `signature` rules (spec 005 §1), which read a snapshot
 grouped by `error_signature` and pick the group for their own label; every
 other rule skips that snapshot, and signature rules skip the ungrouped one.
+`level:` threshold rules (FR-RUL-023) work the same way on a snapshot grouped
+by `level`.
 
 Callback dispatch (spec 005 §3) is out of scope — `evaluate()` returns the
 `AlertEvent`s that changed or were re-notified this tick; wiring those to a
@@ -25,6 +27,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from telemetry_agent.rules.types import (
+    LEVEL_DIMENSION,
     SIGNATURE_DIMENSION,
     AlertStatus,
     RuleConfig,
@@ -143,7 +146,8 @@ def _rule_group(rule: RuleConfig, snapshot: MetricsSnapshot) -> MetricsGroup | N
     """The group a rule reads. Instance-level snapshots (`group_by=()`) have
     one group; a signature rule reads the per-signature snapshot's group for
     its own label, so other signatures can't trip it. No group means no
-    matches in the window, which a counter reads as 0."""
+    matches in the window, which a counter reads as 0. A `level:` rule reads
+    the per-level snapshot's group the same way (FR-RUL-023)."""
     if rule.kind is RuleKind.SIGNATURE:
         return next(
             (
@@ -153,14 +157,26 @@ def _rule_group(rule: RuleConfig, snapshot: MetricsSnapshot) -> MetricsGroup | N
             ),
             None,
         )
+    if rule.level is not None:
+        return next(
+            (
+                g
+                for g in snapshot.groups
+                if g.dimensions.get(LEVEL_DIMENSION) == rule.level
+            ),
+            None,
+        )
     return snapshot.groups[0] if snapshot.groups else None
 
 
 def _evaluates_on(rule: RuleConfig, snapshot: MetricsSnapshot) -> bool:
-    """Signature rules need the per-signature snapshot; every other rule the
-    instance-level one (see the module docstring)."""
+    """Signature rules need the per-signature snapshot, `level:` rules the
+    per-level one; every other rule the instance-level one (see the module
+    docstring)."""
     if rule.kind is RuleKind.SIGNATURE:
         return tuple(snapshot.group_by) == (SIGNATURE_DIMENSION,)
+    if rule.level is not None:
+        return tuple(snapshot.group_by) == (LEVEL_DIMENSION,)
     return not snapshot.group_by
 
 

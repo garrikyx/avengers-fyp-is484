@@ -32,9 +32,12 @@ from pydantic import (
     model_validator,
 )
 from pydantic.alias_generators import to_camel
+from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS
 from telemetry_agent.rules.defaults import DEFAULT_RULES
 from telemetry_agent.rules.engine import _OPERATORS, RuleEngine
 from telemetry_agent.rules.types import (
+    APP_LOG_LEVELS,
+    LEVEL_DIMENSION,
     RuleConfig,
     RuleKind,
     RuleState,
@@ -85,6 +88,7 @@ class _RuleYaml(BaseModel):
     guard_metric: str | None = None
     extra_counters: tuple[str, ...] = ()
     signature: str | None = None
+    level: str | None = None
     for_: str = Field(default="60s", alias="for")
     resolve_after: str = Field(default="300s")
     group_by: tuple[str, ...] = ()
@@ -109,6 +113,26 @@ class _RuleYaml(BaseModel):
             raise ValueError("`signature` is required on, and only on, kind: signature")
         return self
 
+    @model_validator(mode="after")
+    def _level_selects_a_level_dimension(self) -> _RuleYaml:
+        # FR-RUL-023: `level:` reads a snapshot grouped by `level`, so it is
+        # meaningful only on a counter that carries that dimension. Anything
+        # else would silently read nothing, so reject it at load (FR-RUL-009).
+        if self.level is None:
+            return self
+        if self.kind is not RuleKind.THRESHOLD:
+            raise ValueError("`level` is valid only on kind: threshold")
+        if LEVEL_DIMENSION not in COUNTER_DIMENSIONS.get(self.metric, ()):
+            raise ValueError(
+                f"`level` requires a metric with a `level` dimension; "
+                f"{self.metric!r} has none"
+            )
+        if self.level not in APP_LOG_LEVELS:
+            raise ValueError(
+                f"`level` must be one of {sorted(APP_LOG_LEVELS)}, got {self.level!r}"
+            )
+        return self
+
 
 def _to_rule_config(parsed: _RuleYaml) -> RuleConfig:
     return RuleConfig(
@@ -126,6 +150,7 @@ def _to_rule_config(parsed: _RuleYaml) -> RuleConfig:
         guard_metric=parsed.guard_metric,
         extra_counters=parsed.extra_counters,
         signature=parsed.signature,
+        level=parsed.level,
         for_seconds=_parse_duration_seconds(parsed.for_),
         resolve_after_seconds=_parse_duration_seconds(parsed.resolve_after),
         group_by=parsed.group_by,

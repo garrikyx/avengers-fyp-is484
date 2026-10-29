@@ -68,8 +68,11 @@ PARSE_ERROR_DIMS: tuple[str, ...] = (*AGENT_DIMS, "reason")
 # budget and could fold FIX order series into __other__. `level` is a closed
 # set ([NWEIF]); `component` is free text, bounded by ComponentLimiter;
 # `error_signature` is bounded by the parser's SignatureMatcher.
+# `app_log_errors` also carries `level` (spec 004 §4.6) so a `level:` rule
+# (FR-RUL-023) can pick F out of E+F; only E and F are ever counted there, so
+# it adds at most two series per component.
 APP_LOG_LEVEL_DIMS: tuple[str, ...] = (*AGENT_DIMS, "level")
-APP_LOG_COMPONENT_DIMS: tuple[str, ...] = (*AGENT_DIMS, "component")
+APP_LOG_COMPONENT_DIMS: tuple[str, ...] = (*AGENT_DIMS, "level", "component")
 APP_LOG_SIGNATURE_DIMS: tuple[str, ...] = (*AGENT_DIMS, "error_signature")
 
 # FR-MET-030's "one shared table", spec 004 §4.1 names.
