@@ -8,6 +8,7 @@ import httpx
 from action_fixtures import callback_action, make_alert
 from telemetry_agent.actions.runner import ActionRunner
 from telemetry_agent.callbacks.signing import sign
+from telemetry_agent.callbacks.status import DeliveryTracker
 from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_shared.models.alerts import AlertEvent
 
@@ -15,6 +16,8 @@ from telemetry_shared.models.alerts import AlertEvent
 class _Recorder:
     def __init__(self) -> None:
         self.alerts: list[AlertEvent] = []
+        # AlertRouter reads the dispatcher's tracker to enrich published alerts.
+        self.tracker = DeliveryTracker()
 
     def enqueue(self, alert: AlertEvent) -> None:
         self.alerts.append(alert)
