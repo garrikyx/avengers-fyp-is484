@@ -13,7 +13,7 @@
 #
 # Per-metric keys (all optional; defaults shown):
 #   enabled: true
-#   window_minutes: 5               # the "current" evaluation window
+#   window_minutes: 5               # the "current" window: 1, 5 or 15 (the aggregator's windows)
 #   baseline_window_minutes: 60     # history the baseline is built from (>= 3x window)
 #   minimum_samples: 100            # pooled baseline events required
 #   window_minimum_samples: 20      # events the current window needs (50 for latency)

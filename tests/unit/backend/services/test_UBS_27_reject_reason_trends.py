@@ -12,7 +12,7 @@ from telemetry_backend.config import StreamProcessorConfig
 from telemetry_backend.main import create_app
 from telemetry_backend.services.agent_registry import AgentRegistry
 from telemetry_backend.services.metric_store import MetricStore
-from telemetry_backend.services.query_engine import QueryEngine
+from telemetry_backend.services.query_engine import QueryEngine, QueryValidationError
 from telemetry_backend.services.reject_reason_trends import (
     RejectReasonTrendService,
     classify,
@@ -131,6 +131,34 @@ def test_nothing_is_flagged_when_the_preceding_window_is_not_covered() -> None:
     assert not response.previous_window_complete
     assert response.increasing == []
     assert response.caveats
+
+
+def test_the_boundary_bucket_is_counted_once() -> None:
+    service = _service(previous={"UnknownSymbol": 10}, current={"UnknownSymbol": 10})
+    # A burst in the first bucket of the current window.
+    store = service._engine.store
+    start = NOW - WINDOW
+    store.merge(
+        make_snapshot(
+            counters={"orders_rejected": 40},
+            dimensions={"session_id": "S", "reject_reason": "UnknownSymbol"},
+            bucket_start=start,
+        ),
+        canonical_start=start,
+        now=NOW,
+    )
+
+    [trend] = _analyse(service).reasons
+
+    assert (trend.previous_count, trend.current_count) == (10, 50)
+
+
+@pytest.mark.parametrize("window", ["soon", "0m", "45s"])
+def test_a_bad_window_names_the_window_field(window: str) -> None:
+    service = _service(previous={}, current={})
+    with pytest.raises(QueryValidationError) as exc:
+        _analyse(service, window=window)
+    assert exc.value.field == "window"
 
 
 def test_classify_boundaries() -> None:

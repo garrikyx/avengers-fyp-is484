@@ -32,6 +32,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic.alias_generators import to_camel
+from telemetry_agent.metrics.aggregator import DEFAULT_WINDOWS
 from telemetry_agent.rules.baseline import ANOMALY_METRICS
 from telemetry_agent.rules.defaults import DEFAULT_RULES
 from telemetry_agent.rules.engine import _OPERATORS, RuleEngine
@@ -230,6 +231,11 @@ _DEFAULT_WINDOW_MIN_SAMPLES = {"ack_latency_ms": 50}
 _DEFAULT_ANOMALY_TIER = _TierYaml(severity="warning", threshold=Decimal("0.5"))
 
 
+_ANOMALY_WINDOW_MINUTES = frozenset(
+    seconds // 60 for seconds in DEFAULT_WINDOWS.values()
+)
+
+
 class _AnomalyYaml(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -247,6 +253,16 @@ class _AnomalyYaml(BaseModel):
     resolve_after: str = "5m"
     actions: tuple[str, ...] = ()
     state: RuleState = RuleState.ACTIVE
+
+    @model_validator(mode="after")
+    def _window_exists(self) -> _AnomalyYaml:
+        # The snapshot is built per aggregator window; any other length would
+        # raise on every evaluation tick, for every rule.
+        if self.window_minutes not in _ANOMALY_WINDOW_MINUTES:
+            raise ValueError(
+                f"window_minutes must be one of {sorted(_ANOMALY_WINDOW_MINUTES)}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _baseline_covers_windows(self) -> _AnomalyYaml:

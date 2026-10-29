@@ -248,6 +248,88 @@ def test_the_alert_resolves_once_the_metric_returns_to_baseline() -> None:
     assert [a.status for a in resolved] == ["resolved"]
 
 
+def test_a_long_incident_keeps_alerting_instead_of_auto_resolving() -> None:
+    engine = _engine(_rule("reject_rate"))
+    last = _warm_up(
+        engine, lambda at: _ratio_snapshot("reject_rate", bad=6, total=1000, at=at), 6
+    )
+    for _ in range(18):  # 90 minutes: longer than the whole 60m baseline
+        last += _WINDOW
+        _fire(engine, _ratio_snapshot("reject_rate", bad=18, total=1000, at=last), last)
+    assert engine.status_of("Abnormal-reject_rate") is not None
+    assert engine.status_of("Abnormal-reject_rate").value == "firing"
+
+
+def test_the_tail_of_an_incident_is_not_learned_into_the_baseline() -> None:
+    engine = _engine(_rule("reject_rate"))
+    last = _warm_up(
+        engine, lambda at: _ratio_snapshot("reject_rate", bad=6, total=1000, at=at), 6
+    )
+    last += _WINDOW
+    _fire(engine, _ratio_snapshot("reject_rate", bad=18, total=1000, at=last), last)
+    # Just after the incident the rolling window still holds part of it; 0.9% is
+    # not anomalous (+50% is not "more than" 50%) but must not become baseline.
+    engine.evaluate(
+        _ratio_snapshot(
+            "reject_rate", bad=9, total=1000, at=last + timedelta(seconds=20)
+        ),
+        last + timedelta(seconds=20),
+    )
+    last += timedelta(seconds=20)
+    for _ in range(5):
+        last += _WINDOW
+        engine.evaluate(
+            _ratio_snapshot("reject_rate", bad=6, total=1000, at=last), last
+        )
+    last += _WINDOW
+    alerts = _fire(
+        engine, _ratio_snapshot("reject_rate", bad=18, total=1000, at=last), last
+    )
+    assert alerts, "second incident should fire"
+    assert alerts[0].metric_context["baseline"] == pytest.approx(0.006)
+
+
+def test_a_resolved_anomaly_carries_no_fabricated_metric_context() -> None:
+    engine = _engine(_rule("reject_rate"))
+    last = _warm_up(
+        engine, lambda at: _ratio_snapshot("reject_rate", bad=6, total=1000, at=at), 6
+    )
+    last += _WINDOW
+    _fire(engine, _ratio_snapshot("reject_rate", bad=18, total=1000, at=last), last)
+    resolved: list[AlertEvent] = []
+    for _ in range(3):
+        last += _WINDOW
+        resolved += engine.evaluate(
+            _ratio_snapshot("reject_rate", bad=6, total=1000, at=last), last
+        )
+    assert resolved[0].status == "resolved"
+    assert resolved[0].metric_context == {}
+
+
+def test_removing_an_anomaly_rule_drops_its_baseline() -> None:
+    rule = _rule("reject_rate")
+    engine = _engine(rule)
+    last = _warm_up(
+        engine, lambda at: _ratio_snapshot("reject_rate", bad=6, total=1000, at=at), 6
+    )
+    engine.apply_rules([], now=last)
+    engine.apply_rules([rule], now=last)  # same name again: starts from nothing
+    last += _WINDOW
+    assert (
+        _fire(engine, _ratio_snapshot("reject_rate", bad=60, total=1000, at=last), last)
+        == []
+    )
+
+
+def test_an_unevaluable_anomaly_rule_is_rejected_when_the_engine_is_built() -> None:
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="baseline_seconds"):
+        _engine(replace(_rule("reject_rate"), baseline_seconds=None))
+    with pytest.raises(ValueError, match="unknown metric"):
+        _engine(replace(_rule("reject_rate"), metric="nope"))
+
+
 # --- anomaly.yaml ----------------------------------------------------------
 
 
@@ -296,6 +378,8 @@ def test_disabled_missing_and_empty_yield_no_rules(tmp_path) -> None:
         "no_such_metric:\n  enabled: true\n",
         "reject_rate:\n  baseline_window_minutes: 10\n",  # < 3x the 5m window
         "reject_rate:\n  unknown_key: 1\n",
+        # There is no 10m aggregator window.
+        "reject_rate:\n  window_minutes: 10\n  baseline_window_minutes: 60\n",
     ],
 )
 def test_bad_anomaly_yaml_is_rejected(tmp_path, text: str) -> None:

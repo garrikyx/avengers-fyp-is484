@@ -12,7 +12,8 @@ when it was absent before. Both need `min_occurrences` in the latest window.
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 from telemetry_shared.models.metrics_query import (
     MetricsQueryRequest,
@@ -31,6 +32,18 @@ from telemetry_backend.services.query_engine import QueryEngine, QueryValidation
 _METRIC = "rejections"  # alias of orders_rejected (telemetry_shared.query.aliases)
 _REASON = "rejectReason"
 _STEADY_BAND = 0.1  # within +/-10% is "steady", not worth a line either way
+_WINDOW_RE = re.compile(r"^(\d+)([smh])$")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
+_EPSILON = timedelta(microseconds=1)
+
+
+def _bad_window(window: str, issue: str) -> QueryValidationError:
+    return QueryValidationError(
+        code="invalid_field",
+        message="window is invalid.",
+        field="window",
+        issue=issue.format(window=window),
+    )
 
 
 def classify(
@@ -64,21 +77,25 @@ class RejectReasonTrendService:
         fanout_client: object | None = None,
     ) -> RejectReasonTrendsResponse:
         """Raises `QueryValidationError` for a bad window or filter."""
-        length = self._engine._parse_relative(request.window)
-        if length.total_seconds() <= 0:
-            raise QueryValidationError(
-                code="invalid_field",
-                message="window must be positive.",
-                field="window",
-                issue=f"{request.window!r} is not a positive duration",
-            )
-        current_from, previous_from = now - length, now - 2 * length
+        length = self._window_length(request.window)
+        # Windows are half-open and aligned to the store's buckets, and end at
+        # the last *complete* bucket: the store's range reads are bucket-
+        # inclusive at both ends, so sharing a boundary instant would count
+        # that bucket in both windows, and the newest bucket is still filling.
+        bucket = self._engine.bucket_seconds
+        end = datetime.fromtimestamp(now.timestamp() // bucket * bucket, tz=now.tzinfo)
+        current_from, previous_from = end - length, end - 2 * length
 
         current = await self._counts(
-            request, current_from, now, skip_fanout, fanout_client, now
+            request, current_from, end - _EPSILON, skip_fanout, fanout_client, now
         )
         previous = await self._counts(
-            request, previous_from, current_from, skip_fanout, fanout_client, now
+            request,
+            previous_from,
+            current_from - _EPSILON,
+            skip_fanout,
+            fanout_client,
+            now,
         )
 
         complete = self._covers(previous_from, now)
@@ -111,7 +128,7 @@ class RejectReasonTrendService:
             threshold=request.threshold,
             min_occurrences=request.min_occurrences,
             current_from_utc=current_from,
-            current_to_utc=now,
+            current_to_utc=end,
             previous_from_utc=previous_from,
             previous_to_utc=current_from,
             previous_window_complete=complete,
@@ -119,6 +136,18 @@ class RejectReasonTrendService:
             reasons=reasons,
             caveats=caveats,
         )
+
+    def _window_length(self, window: str) -> timedelta:
+        match = _WINDOW_RE.match(window)
+        if match is None:
+            raise _bad_window(window, "cannot parse {window!r}; expected e.g. '15m'")
+        seconds = int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+        bucket = self._engine.bucket_seconds
+        if seconds <= 0 or seconds % bucket != 0:
+            raise _bad_window(
+                window, f"{{window!r}} must be a positive multiple of {bucket}s"
+            )
+        return timedelta(seconds=seconds)
 
     def _covers(self, start: datetime, now: datetime) -> bool:
         oldest, _ = self._engine.store.retention_bounds(now=now)

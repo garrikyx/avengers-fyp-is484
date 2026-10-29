@@ -98,14 +98,17 @@ class QueryEngine:
     def store(self) -> MetricStore:
         return self._store
 
+    @property
+    def bucket_seconds(self) -> int:
+        """Canonical Metric Store bucket length."""
+        return self._stream_config.canonical_bucket_seconds
+
     def prepare_metrics_query(
         self, request: MetricsQueryRequest, *, now: datetime
     ) -> tuple[datetime, datetime]:
         """Validate and resolve the effective UTC window (FR-NLQ-002)."""
         from_utc, to_utc = self._resolve_time_range(request, now=now)
-        self._validate_clamps(
-            request, from_utc=from_utc, to_utc=to_utc
-        )
+        self._validate_clamps(request, from_utc=from_utc, to_utc=to_utc)
         self._validate_retention(from_utc=from_utc, to_utc=to_utc, now=now)
         self._validate_metrics_and_dimensions(request)
         return from_utc, to_utc
@@ -147,9 +150,7 @@ class QueryEngine:
     ) -> MetricsQueryResponse:
         from_utc, to_utc = self.prepare_metrics_query(request, now=now)
 
-        stored_group_by = tuple(
-            resolve_dimension_name(dim) for dim in request.group_by
-        )
+        stored_group_by = tuple(resolve_dimension_name(dim) for dim in request.group_by)
         resolved_metrics = self._resolve_requested_metrics(request.metrics)
         instance_ids = self._resolve_instances(request.filters, now=now)
 
@@ -321,8 +322,7 @@ class QueryEngine:
                 message="Requested time range is outside the retention window.",
                 field="timeRange",
                 issue=(
-                    f"available range is {oldest.isoformat()} to "
-                    f"{newest.isoformat()}"
+                    f"available range is {oldest.isoformat()} to {newest.isoformat()}"
                 ),
             )
 
@@ -594,9 +594,11 @@ class QueryEngine:
         for group in rest:
             for metric, value in group.counters.items():
                 other_counters[metric] = other_counters.get(metric, 0) + value
-        other_dim = "rejectReason" if any(
-            g.dimensions.get("rejectReason") for g in groups
-        ) else "__other__"
+        other_dim = (
+            "rejectReason"
+            if any(g.dimensions.get("rejectReason") for g in groups)
+            else "__other__"
+        )
         top.append(
             QueryGroup(
                 dimensions={other_dim: "__other__"},

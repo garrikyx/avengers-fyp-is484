@@ -15,17 +15,24 @@ Baseline construction (`BaselineTracker`):
   it joins the history. That delay is what keeps the baseline strictly older
   than the window being judged; without it, a spike would be part of its own
   baseline within seconds.
-- A sample taken while the rule is anomalous is dropped, so an incident does
-  not teach the baseline that incidents are normal. Trade-off: a permanent
-  level shift keeps alerting until the operator re-baselines (reload the rules
-  or restart) rather than silently becoming the new normal.
+- A window is dropped if the rule was anomalous at any tick inside it (not
+  only at the tick that samples it), so an incident, and the tail of one still
+  in the rolling window, does not teach the baseline that incidents are
+  normal. History expiry never leaves fewer than `MIN_BASELINE_WINDOWS`
+  samples, so a long incident keeps being judged against the last good
+  baseline instead of auto-resolving. Trade-off: a permanent level shift keeps
+  alerting until the operator re-baselines (restart, or reload with a changed
+  window or baseline length). A slow ramp that stays under the lowest tier is
+  never anomalous, so it can still creep into the baseline.
 - Ratios are pooled (sum of numerators / sum of denominators), never an
   average of per-window ratios — the same rule `telemetry_shared.metrics.ratios`
   applies. Latency uses the median of the per-window p95s.
 - No baseline means no reading (never a fabricated zero, `FR-HLT-004`'s spirit):
   fewer than `MIN_BASELINE_WINDOWS` samples, fewer than `baseline_min_samples`
   pooled denominator events, or a baseline of exactly 0 (a relative deviation
-  from zero is undefined; the fixed-threshold rules own that case).
+  from zero is undefined; the fixed-threshold rules own that case). While the
+  baseline is untrusted the windows seen are still learned from, so the first
+  baseline is whatever the first windows looked like.
 """
 
 from __future__ import annotations
@@ -57,8 +64,11 @@ class AnomalyMetric:
     histogram: str | None = None
 
 
-def _standard(name: str, label: str) -> AnomalyMetric:
-    ratio = next(r for r in STANDARD_RATIOS if r.name == name)
+def _standard(name: str, label: str, *, standard: str | None = None) -> AnomalyMetric:
+    """An anomaly metric whose formula is one of spec 004 §4.5's ratios, so a
+    change to `STANDARD_RATIOS` carries through (`standard` when the anomaly
+    metric is named differently)."""
+    ratio = next(r for r in STANDARD_RATIOS if r.name == (standard or name))
     return AnomalyMetric(
         name=name,
         label=label,
@@ -73,12 +83,8 @@ ANOMALY_METRICS: dict[str, AnomalyMetric] = {
     "reject_rate": _standard("reject_rate", "reject rate"),
     # UBS-29: parser_failures / messages_processed is the parser's
     # `parse_errors / log_lines_read` (spec 004 §4.5 `parse_error_rate`).
-    "parser_failure_rate": AnomalyMetric(
-        name="parser_failure_rate",
-        label="parser failure rate",
-        kind="ratio",
-        numerators=("parse_errors",),
-        denominators=("log_lines_read",),
+    "parser_failure_rate": _standard(
+        "parser_failure_rate", "parser failure rate", standard="parse_error_rate"
     ),
     # UBS-28: spec 004 defines no execution-issue counters, so this is the
     # project's working definition: order actions that did not execute
@@ -171,6 +177,7 @@ class _RuleBaseline:
     shape: tuple[str, int, int | None]
     history: deque[_Sample] = field(default_factory=deque)
     pending: _Sample | None = None
+    last_anomalous_at: datetime | None = None
 
 
 def _sum(group: MetricsGroup, names: tuple[str, ...]) -> Decimal:
@@ -209,6 +216,21 @@ def _baseline_value(metric: AnomalyMetric, history: deque[_Sample]) -> Decimal |
     return sum((s.value for s in history), Decimal(0)) / total if total else None
 
 
+def validate_anomaly_rule(rule: RuleConfig) -> int:
+    """The rule's `baseline_seconds`; raises `ValueError` at construction time
+    rather than mid-evaluation if an anomaly rule cannot be evaluated."""
+    if rule.metric not in ANOMALY_METRICS:
+        raise ValueError(
+            f"anomaly rule {rule.name!r}: unknown metric {rule.metric!r}, "
+            f"expected one of {sorted(ANOMALY_METRICS)}"
+        )
+    if rule.baseline_seconds is None or rule.window is None:
+        raise ValueError(
+            f"anomaly rule {rule.name!r} needs `window` and `baseline_seconds`"
+        )
+    return rule.baseline_seconds
+
+
 class BaselineTracker:
     """Per-rule baseline state for the Rule Engine. Not thread-safe; the
     engine is driven from one evaluation loop."""
@@ -223,11 +245,11 @@ class BaselineTracker:
         """The reading for `rule` against `snapshot`, or None if there is not
         yet enough current or baseline data to judge. Call `settle()` with the
         outcome afterwards so the window can join the baseline."""
-        assert rule.baseline_seconds is not None
+        baseline_seconds = validate_anomaly_rule(rule)
         metric = ANOMALY_METRICS[rule.metric]
         window_seconds = _window_seconds(snapshot)
         state = self._state(rule, window_seconds)
-        self._promote(state, now, window_seconds, rule.baseline_seconds)
+        self._promote(state, now, window_seconds, baseline_seconds)
 
         if not snapshot.groups:
             return None
@@ -272,6 +294,8 @@ class BaselineTracker:
         state = self._rules.get(rule.name)
         if state is None:
             return
+        if anomalous:
+            state.last_anomalous_at = now
         self._offer(
             state,
             reading.sample,
@@ -280,6 +304,11 @@ class BaselineTracker:
             warm=True,
             anomalous=anomalous,
         )
+
+    def retain(self, names: set[str]) -> None:
+        """Forget rules that were removed or moved to draft."""
+        for name in set(self._rules) - names:
+            del self._rules[name]
 
     def _state(self, rule: RuleConfig, window_seconds: int) -> _RuleBaseline:
         shape = (rule.metric, window_seconds, rule.baseline_seconds)
@@ -300,7 +329,11 @@ class BaselineTracker:
             state.history.append(pending)
             state.pending = None
         horizon = now - timedelta(seconds=baseline_seconds)
-        while state.history and state.history[0].at < horizon:
+        # Never expire below the minimum: a long incident adds no samples, and
+        # an emptied history would end the alert while the problem persists.
+        while (
+            len(state.history) > MIN_BASELINE_WINDOWS and state.history[0].at < horizon
+        ):
             state.history.popleft()
 
     @staticmethod
@@ -317,6 +350,9 @@ class BaselineTracker:
         # own timestamp, and the next is not taken until it has been promoted.
         if anomalous or not warm or state.pending is not None:
             return
+        last = state.last_anomalous_at
+        if last is not None and (now - last).total_seconds() < window_seconds:
+            return  # this rolling window still holds part of the anomaly
         state.pending = _Sample(now, sample.value, sample.weight)
 
 

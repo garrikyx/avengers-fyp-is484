@@ -35,8 +35,18 @@ forward. Adaptive thresholds, durable baselines and seasonality are still out.
   `baseline_window_minutes` / `minimum_samples` keys. `load_rules()` appends its rules,
   and the reloader watches its mtime.
 - **Baseline strictly precedes the judged window** (a sample sits pending one window
-  before joining history) and excludes anomalous windows. Cost: a permanent shift keeps
-  alerting until reload/restart.
+  before joining history) and excludes any window in which the rule was anomalous at any
+  tick, including the tail of an incident still inside the rolling window. History
+  expiry never drops below 3 windows, so a long incident keeps alerting rather than
+  auto-resolving. Cost: a permanent shift keeps alerting until restart or a reload with
+  a changed window/baseline; a slow ramp under the lowest tier can still creep in.
+- **A zero or thin baseline learns from what it sees**: the first baseline is whatever
+  the first windows looked like, so a spike arriving over a zero baseline is judged by
+  the fixed rules (`HighRejectRate`) only.
+- **`window_minutes` must be 1, 5 or 15** (the aggregator's windows); anything else
+  would fail every evaluation tick, so the loader rejects it.
+- **UBS-27 windows** are half-open and end at the last complete 10s bucket, so no bucket
+  is counted in both windows.
 - **UBS-27 is backend-side**: the agent only holds 15 minutes, the Metric Store holds 6
   hours and already groups by `rejectReason`. It does not alert; it answers "which
   reasons are rising".

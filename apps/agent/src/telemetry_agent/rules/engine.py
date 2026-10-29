@@ -24,7 +24,11 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from telemetry_agent.rules.baseline import AnomalyReading, BaselineTracker
+from telemetry_agent.rules.baseline import (
+    AnomalyReading,
+    BaselineTracker,
+    validate_anomaly_rule,
+)
 from telemetry_agent.rules.types import (
     SIGNATURE_DIMENSION,
     AlertStatus,
@@ -236,6 +240,12 @@ def _metric_context(
     return dict(list(context.items())[:10])
 
 
+def _validate_anomaly_rules(rules: Sequence[RuleConfig]) -> None:
+    for rule in rules:
+        if rule.kind is RuleKind.ANOMALY:
+            validate_anomaly_rule(rule)
+
+
 class RuleEngine:
     def __init__(
         self,
@@ -250,6 +260,7 @@ class RuleEngine:
         max_active_alerts: int = 100,
         schedule_checker: ScheduleChecker | None = None,
     ) -> None:
+        _validate_anomaly_rules(rules)
         self._rules = tuple(rules)
         self._instance_id = instance_id
         self._application = application
@@ -284,6 +295,7 @@ class RuleEngine:
         longer has a definition. Returns the synthetic `resolved` events
         for any such states (empty if none).
         """
+        _validate_anomaly_rules(new_rules)  # before any state changes
         # A rule moved back to `draft` stops being evaluated, so its open
         # alert is resolved like a removed rule's (UBS-36).
         new_names = {rule.name for rule in new_rules if rule.state is RuleState.ACTIVE}
@@ -317,6 +329,9 @@ class RuleEngine:
                 )
             del self._states[key]
         self._rules = tuple(new_rules)
+        self._baselines.retain(new_names)
+        for name in set(self._readings) - new_names:
+            del self._readings[name]
         return resolved_events
 
     def active_alert_count(self) -> int:
@@ -566,7 +581,11 @@ class RuleEngine:
                 if tier is not None and observed is not None
                 else f"{rule.name} resolved"
             )
-            context = _metric_context(rule, snapshot)
+            # An anomaly rule's metric is a ratio or latency, not a counter:
+            # `_metric_context` would report a made-up 0.0 for it.
+            context = (
+                {} if rule.kind is RuleKind.ANOMALY else _metric_context(rule, snapshot)
+            )
         event = AlertEvent(
             alert_id=state.alert_id,
             rule_name=rule.name,
