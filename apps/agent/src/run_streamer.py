@@ -7,7 +7,7 @@ LOG_DIR = Path("./logs")
 REGISTRY_FILE = Path("offsets.json")
 
 
-def main():
+def main() -> None:
     # Define targets to match mock_logger.py output files
     target_files = [
         LOG_DIR / "Application.log",

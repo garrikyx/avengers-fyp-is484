@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict
 from re import Pattern
+from typing import TextIO
 
 from telemetry_agent.metrics.demo_sink import DemoMetricsSink
 from telemetry_agent.parser.applog.signatures import SignatureMatcher, extract_log_level
@@ -99,11 +100,11 @@ class _Style:
         self.magenta = magenta
 
 
-def _use_color(stream: object) -> bool:
-    return hasattr(stream, "isatty") and stream.isatty()  # type: ignore[union-attr]
+def _use_color(stream: TextIO) -> bool:
+    return hasattr(stream, "isatty") and stream.isatty()
 
 
-def _style_for(stream: object) -> _Style:
+def _style_for(stream: TextIO) -> _Style:
     if not _use_color(stream):
         return _Style()
     return _Style(
@@ -156,7 +157,7 @@ def _box_title(title: str, *, width: int, style: _Style) -> str:
     )
 
 
-def print_demo_header(corpus_dirs: list[str], *, stream: object = sys.stdout) -> None:
+def print_demo_header(corpus_dirs: list[str], *, stream: TextIO = sys.stdout) -> None:
     style = _style_for(stream)
     print(
         _box_title("Telemetry Agent — Parser Interactive Demo", width=72, style=style),
@@ -176,7 +177,7 @@ def print_demo_summary(
     summary: dict[str, int],
     metrics: DemoMetricsSink,
     *,
-    stream: object = sys.stdout,
+    stream: TextIO = sys.stdout,
 ) -> None:
     style = _style_for(stream)
     print(_box_title("Corpus Summary", width=72, style=style), file=stream)
@@ -536,8 +537,8 @@ def render_demo_line(
     parser_chain: list[str],
     fix_parser: FixParser,
     signature_matcher: SignatureMatcher,
-    app_log_patterns: list | None = None,
-    stream: object = sys.stdout,
+    app_log_patterns: list[Pattern[bytes]] | None = None,
+    stream: TextIO = sys.stdout,
 ) -> None:
     """Print one annotated demo block for a corpus line."""
     style = _style_for(stream)

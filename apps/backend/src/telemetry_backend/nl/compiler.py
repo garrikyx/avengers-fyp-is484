@@ -32,7 +32,7 @@ def merge_interpreted_query(
     config: NlConfig,
 ) -> InterpretedQuery:
     definition = INTENT_DEFINITIONS[intent]  # type: ignore[index]
-    merged_filters = dict(build_default_filters(context))
+    merged_filters: dict[str, str | list[str]] = dict(build_default_filters(context))
     if filters:
         merged_filters.update(filters)
     merged_metrics = _merge_metrics(metrics, definition.metrics)
@@ -50,7 +50,7 @@ def merge_interpreted_query(
         group_by=merged_group_by,
         metrics=merged_metrics,
         series=merged_series,
-        step=merged_step,  # type: ignore[arg-type]
+        step=merged_step,
         percentiles=percentiles if percentiles is not None else definition.percentiles,
     )
 

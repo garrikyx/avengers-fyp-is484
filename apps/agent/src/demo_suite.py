@@ -7,19 +7,19 @@ LOG_DIR = Path("./demo_logs")
 REGISTRY = LOG_DIR / "offsets.json"
 
 
-def print_header(title):
+def print_header(title: str) -> None:
     print("\n==================================================")
     print(f" 🚀 DEMO SCENARIO: {title}")
     print("==================================================")
 
 
-def setup_environment():
+def setup_environment() -> None:
     LOG_DIR.mkdir(exist_ok=True)
     for p in LOG_DIR.glob("*"):
         p.unlink()
 
 
-def run_demo():
+def run_demo() -> None:
     setup_environment()
     app_log = LOG_DIR / "Application.log"
     fix_log = LOG_DIR / "Fix.log"
