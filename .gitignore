@@ -47,6 +47,7 @@ Thumbs.db
 CLAUDE.local.md
 # Claude Code local settings (machine-specific hook paths)
 .claude/settings.json
+.codex
 
 # Simulator-Generated Log Output & Rotation Backups
 /logs/
