@@ -104,7 +104,10 @@ def main() -> None:
     registry = Registry(parsers=parsers)
     unknown = registry.validate_chain(chain)
     if unknown:
-        msg = f"unknown parsers in chain: {unknown}; registered={sorted(registered_names())}"
+        msg = (
+            f"unknown parsers in chain: {unknown}; "
+            f"registered={sorted(registered_names())}"
+        )
         raise SystemExit(msg)
 
     if not args.corpus:

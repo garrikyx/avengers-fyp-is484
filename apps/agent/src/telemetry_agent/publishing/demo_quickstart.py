@@ -47,9 +47,7 @@ class _ScriptedSink:
     def __init__(self, script: list[PublishResult]) -> None:
         self._script = deque(script)
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         print(f"  >> POST {_ENDPOINT}")
         print(f"     Content-Encoding: {headers.get('Content-Encoding', '(none)')}")
         print(f"     body ({len(body)} bytes)")
@@ -201,9 +199,7 @@ def main() -> None:
     asyncio.run(_drain(publisher_5, ticks=4, now=now))
     _print_state(publisher_5)
 
-    _step(
-        "6. Buffer overflow -> drop-oldest, counted, and visible in a real heartbeat"
-    )
+    _step("6. Buffer overflow -> drop-oldest, counted, and visible in a real heartbeat")
     health_reporter = HealthReporter(
         monitors={},
         heartbeat=HeartbeatConfig(

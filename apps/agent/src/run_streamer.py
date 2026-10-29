@@ -1,9 +1,11 @@
 import sys
 from pathlib import Path
+
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 
 LOG_DIR = Path("./logs")
 REGISTRY_FILE = Path("offsets.json")
+
 
 def main():
     # Define targets to match mock_logger.py output files
@@ -27,6 +29,7 @@ def main():
         print("\n[STREAMER] Shutting down cleanly and persisting offsets...")
         monitor.close()
         sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

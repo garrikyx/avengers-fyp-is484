@@ -121,7 +121,9 @@ def test_restart_backfills_multiple_rotations_created_while_offline(
     restarted_monitor.close()
 
 
-def test_does_not_emit_an_unterminated_line_until_it_is_complete(tmp_path: Path) -> None:
+def test_does_not_emit_an_unterminated_line_until_it_is_complete(
+    tmp_path: Path,
+) -> None:
     log_path = tmp_path / "Fix.log"
     log_path.write_text("partial")
     monitor = LogMonitor(log_path, OffsetTracker(tmp_path / "offsets.json"))

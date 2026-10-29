@@ -60,12 +60,20 @@ def test_batch_sequencer_seq_is_monotonic_and_ids_differ() -> None:
     sequencer = BatchSequencer()
 
     first = build_batch(
-        [], agent_id=AGENT_ID, application=APPLICATION, sequencer=sequencer,
-        heartbeat=None, now=_NOW,
+        [],
+        agent_id=AGENT_ID,
+        application=APPLICATION,
+        sequencer=sequencer,
+        heartbeat=None,
+        now=_NOW,
     )
     second = build_batch(
-        [], agent_id=AGENT_ID, application=APPLICATION, sequencer=sequencer,
-        heartbeat=None, now=_NOW,
+        [],
+        agent_id=AGENT_ID,
+        application=APPLICATION,
+        sequencer=sequencer,
+        heartbeat=None,
+        now=_NOW,
     )
 
     assert second.batch_seq == first.batch_seq + 1
@@ -93,8 +101,12 @@ def test_build_batch_with_only_a_heartbeat_and_no_items() -> None:
     )
 
     batch = build_batch(
-        [], agent_id=AGENT_ID, application=APPLICATION, sequencer=BatchSequencer(),
-        heartbeat=heartbeat, now=_NOW,
+        [],
+        agent_id=AGENT_ID,
+        application=APPLICATION,
+        sequencer=BatchSequencer(),
+        heartbeat=heartbeat,
+        now=_NOW,
     )
 
     assert batch.snapshots == []

@@ -44,9 +44,7 @@ class ReplicaFanout:
         self, request: MetricsQueryRequest, *, now: datetime | None = None
     ) -> MetricsQueryResponse:
         now = now or datetime.now(UTC)
-        local_response = await self._local.query(
-            request, now=now, skip_fanout=True
-        )
+        local_response = await self._local.query(request, now=now, skip_fanout=True)
 
         peer_tasks = [
             asyncio.wait_for(

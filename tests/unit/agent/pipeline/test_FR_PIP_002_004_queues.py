@@ -27,12 +27,8 @@ def test_event_queue_defaults_to_256_capacity() -> None:
 
 def test_line_queue_drop_oldest_when_configured() -> None:
     queue = LineQueue(capacity=1, overflow_policy="drop_oldest")
-    queue.put_nowait(
-        QueuedLine(line=b"old", meta=_meta(), parser_chain=("fix",))
-    )
-    queue.put_nowait(
-        QueuedLine(line=b"new", meta=_meta(), parser_chain=("fix",))
-    )
+    queue.put_nowait(QueuedLine(line=b"old", meta=_meta(), parser_chain=("fix",)))
+    queue.put_nowait(QueuedLine(line=b"new", meta=_meta(), parser_chain=("fix",)))
 
     assert queue.lines_dropped == 1
     remaining = queue.get(timeout=0.1)

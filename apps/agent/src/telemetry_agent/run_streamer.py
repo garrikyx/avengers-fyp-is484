@@ -33,9 +33,7 @@ def main() -> None:
     )
 
     try:
-        for source_file, line in monitor.stream_lines(
-            poll_interval=args.poll_interval
-        ):
+        for source_file, line in monitor.stream_lines(poll_interval=args.poll_interval):
             print(f"[{source_file}] {line}")
     except KeyboardInterrupt:
         print("\n[STREAMER] Shutting down cleanly and persisting offsets...")

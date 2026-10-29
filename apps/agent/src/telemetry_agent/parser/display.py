@@ -63,7 +63,17 @@ _MSG_TYPE_NAMES: dict[str, str] = {
 
 
 class _Style:
-    __slots__ = ("reset", "bold", "dim", "cyan", "green", "yellow", "red", "blue", "magenta")
+    __slots__ = (
+        "reset",
+        "bold",
+        "dim",
+        "cyan",
+        "green",
+        "yellow",
+        "red",
+        "blue",
+        "magenta",
+    )
 
     def __init__(
         self,
@@ -209,7 +219,9 @@ def _explain_classification(
         steps.append("→ classified as unsupported")
         return LineClassification.UNSUPPORTED, steps
 
-    steps.append(f'✓ Found BeginString "{fix_token.decode("ascii")}" at byte offset {fix_start}')
+    steps.append(
+        f'✓ Found BeginString "{fix_token.decode("ascii")}" at byte offset {fix_start}'
+    )
 
     msg_type_idx = window.find(b"35=", fix_start)
     if msg_type_idx < 0:
@@ -288,7 +300,9 @@ def _render_framing(line: bytes, *, style: _Style) -> list[str]:
         lines.append("    No log prefix — message starts at beginning of line")
 
     if not result.ok:
-        lines.append(f"    {style.red}✗ Framing failed: {result.error_reason}{style.reset}")
+        lines.append(
+            f"    {style.red}✗ Framing failed: {result.error_reason}{style.reset}"
+        )
         return lines
 
     message = result.message
@@ -351,7 +365,9 @@ def _render_enrichment(result: ParseResult, *, style: _Style) -> list[str]:
     lines: list[str] = []
     tel = result.telemetry
     if tel is None:
-        lines.append(f"  {style.dim}(no telemetry — framing did not complete){style.reset}")
+        lines.append(
+            f"  {style.dim}(no telemetry — framing did not complete){style.reset}"
+        )
         return lines
 
     if tel.normalized_msg_type:
@@ -362,13 +378,15 @@ def _render_enrichment(result: ParseResult, *, style: _Style) -> list[str]:
         lines.append(f"  normalized_ord_status   {tel.normalized_ord_status}")
     if tel.reject_reason_label:
         lines.append(
-            f"  reject_reason_label     {style.yellow}{tel.reject_reason_label}{style.reset}"
+            f"  reject_reason_label     {style.yellow}"
+            f"{tel.reject_reason_label}{style.reset}"
         )
     if tel.effective_reject_reason:
         lines.append(f"  effective_reject_reason {tel.effective_reject_reason}")
     if tel.unclassified_reject_text:
         lines.append(
-            f"  {style.yellow}→ unclassified_reject_text counter incremented{style.reset}"
+            f"  {style.yellow}→ unclassified_reject_text counter incremented"
+            f"{style.reset}"
         )
     if tel.unknown_enums:
         lines.append(
@@ -381,10 +399,13 @@ def _render_enrichment(result: ParseResult, *, style: _Style) -> list[str]:
             f"({tel.time_source})"
         )
     if tel.bad_timestamp:
-        lines.append(f"  {style.yellow}→ bad_timestamp; using log read time{style.reset}")
+        lines.append(
+            f"  {style.yellow}→ bad_timestamp; using log read time{style.reset}"
+        )
     if tel.clock_skew:
         lines.append(
-            f"  {style.yellow}→ clock_skew_events incremented; using agent clock{style.reset}"
+            f"  {style.yellow}→ clock_skew_events incremented; using agent clock"
+            f"{style.reset}"
         )
     if tel.seq_gap is not None:
         gap = tel.seq_gap
@@ -400,7 +421,8 @@ def _render_enrichment(result: ParseResult, *, style: _Style) -> list[str]:
             )
     if tel.unknown_msg_type:
         lines.append(
-            f"  {style.yellow}→ unknown_msg_type warning (message still processed){style.reset}"
+            f"  {style.yellow}→ unknown_msg_type warning (message still processed)"
+            f"{style.reset}"
         )
     return lines
 
@@ -454,7 +476,9 @@ def _render_metrics_for_line(
         if sink.counters[key]:
             lines.append(f"  {key}: {sink.counters[key]}")
     for label in sorted(sink.signature_labels):
-        lines.append(f"  app.error_signature{{{label}}}: {sink.signature_labels[label]}")
+        lines.append(
+            f"  app.error_signature{{{label}}}: {sink.signature_labels[label]}"
+        )
     if not lines:
         lines.append(f"  {style.dim}(no counters for this line){style.reset}")
     return lines
@@ -529,7 +553,10 @@ def render_demo_line(
     )
     print(file=stream)
 
-    print(f"{style.bold}▶ INPUT{style.reset}  (raw log line as read from disk)", file=stream)
+    print(
+        f"{style.bold}▶ INPUT{style.reset}  (raw log line as read from disk)",
+        file=stream,
+    )
     print(f"  {_visible_bytes(line, style=style)}", file=stream)
     print(file=stream)
 
@@ -557,11 +584,14 @@ def render_demo_line(
             if confidence == Confidence.HIGH
             else "— skipped"
         )
-        print(f"  {name}.classify() → Confidence.{confidence.name}  {marker}", file=stream)
+        print(
+            f"  {name}.classify() → Confidence.{confidence.name}  {marker}", file=stream
+        )
     print(file=stream)
 
     print(
-        f"{style.bold}▶ STEP 2 — Classification{style.reset}  (FR-PRS-010 / FR-PRS-011)",
+        f"{style.bold}▶ STEP 2 — Classification{style.reset}  "
+        "(FR-PRS-010 / FR-PRS-011)",
         file=stream,
     )
     if joiner_continuation:
@@ -589,7 +619,8 @@ def render_demo_line(
         )
         if result.joined_lines > 1:
             print(
-                f"  {style.yellow}Multi-line message: {result.joined_lines} lines joined"
+                f"  {style.yellow}Multi-line message: "
+                f"{result.joined_lines} lines joined"
                 f"{style.reset}",
                 file=stream,
             )
@@ -599,7 +630,8 @@ def render_demo_line(
         print(file=stream)
 
         print(
-            f"{style.bold}▶ STEP 4 — Enrichment{style.reset}  (UBS-45/46: FR-PRS-022–027)",
+            f"{style.bold}▶ STEP 4 — Enrichment{style.reset}  "
+            "(UBS-45/46: FR-PRS-022–027)",
             file=stream,
         )
         for enrich_line in _render_enrichment(result, style=style):
@@ -607,7 +639,8 @@ def render_demo_line(
         print(file=stream)
     elif result.classification == LineClassification.APP_LOG:
         print(
-            f"{style.bold}▶ STEP 3 — Framing{style.reset}  {style.dim}(skipped — app_log)"
+            f"{style.bold}▶ STEP 3 — Framing{style.reset}  "
+            f"{style.dim}(skipped — app_log)"
             f"{style.reset}",
             file=stream,
         )
@@ -626,7 +659,8 @@ def render_demo_line(
         print(file=stream)
     else:
         print(
-            f"{style.bold}▶ STEP 3 — Framing{style.reset}  {style.dim}(skipped — unsupported)"
+            f"{style.bold}▶ STEP 3 — Framing{style.reset}  "
+            f"{style.dim}(skipped — unsupported)"
             f"{style.reset}",
             file=stream,
         )

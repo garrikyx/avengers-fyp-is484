@@ -77,9 +77,7 @@ def test_FR_QRY_018_fresh_heartbeat_resolves_backend_alert() -> None:
 
     registry.record_heartbeat(_heartbeat(sent_at=BASE), received_at=BASE)
     monitor.evaluate_once()
-    active = store.list_alerts(
-        status="active", rule_name="AgentHeartbeatMissing"
-    )
+    active = store.list_alerts(status="active", rule_name="AgentHeartbeatMissing")
     assert active.counts.active == 1
 
     fresh = BASE + timedelta(seconds=80)

@@ -194,7 +194,7 @@ def _safe_rule_count(path: Path, *, fallback: int) -> int:
     """
     try:
         return len(load_rules(path))
-    except (RuleConfigError, OSError):
+    except RuleConfigError, OSError:
         return fallback
 
 

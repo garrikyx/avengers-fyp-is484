@@ -1,20 +1,23 @@
 import json
-import time
 from pathlib import Path
+
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 
 LOG_DIR = Path("./demo_logs")
 REGISTRY = LOG_DIR / "offsets.json"
 
+
 def print_header(title):
-    print(f"\n==================================================")
+    print("\n==================================================")
     print(f" 🚀 DEMO SCENARIO: {title}")
-    print(f"==================================================")
+    print("==================================================")
+
 
 def setup_environment():
     LOG_DIR.mkdir(exist_ok=True)
     for p in LOG_DIR.glob("*"):
         p.unlink()
+
 
 def run_demo():
     setup_environment()
@@ -42,7 +45,7 @@ def run_demo():
     # Force rotation: rename active log to .1 (simulates mock_logger)
     rotated_app = LOG_DIR / "Application.log.1"
     app_log.rename(rotated_app)
-    
+
     # Write trailing line to old inode and fresh line to new inode
     with open(rotated_app, "a") as f:
         f.write("APP trailing line on old inode\n")
@@ -56,7 +59,7 @@ def run_demo():
     # --- Scenario 3: Crash Recovery & State Resume ---
     print_header("3. Agent Crash & Resume (Zero Duplicates)")
     monitor.close()  # Simulates abrupt agent shutdown
-    
+
     # Append new data while agent is offline
     with open(fix_log, "a") as f:
         f.write("FIX offline message 1\nFIX offline message 2\n")
@@ -72,7 +75,9 @@ def run_demo():
         print(f"  [RESUMED STREAM] [{source}] -> {read_line.text}")
 
     assert recovered_lines[0][1].text == "FIX offline message 1"
-    print("  ✅ [PASS] Agent resumed at exact byte offset without duplicate processing.")
+    print(
+        "  ✅ [PASS] Agent resumed at exact byte offset without duplicate processing."
+    )
     restarted_monitor.close()
 
     # --- Scenario 4: State Registry Audit ---
@@ -82,6 +87,7 @@ def run_demo():
     print(f"  Registered file inodes tracked: {len(registry_data)}")
     print("  ✅ [PASS] Registry persisted atomic state to disk.")
     print("\n🎉 ALL DEMO SCENARIOS PASSED SUCCESSFULLY!\n")
+
 
 if __name__ == "__main__":
     run_demo()

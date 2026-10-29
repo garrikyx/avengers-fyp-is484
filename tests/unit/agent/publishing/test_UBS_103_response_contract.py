@@ -25,9 +25,7 @@ class _FakeSink:
         self._script = deque(script)
         self.calls = 0
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         self.calls += 1
         if self._script:
             return self._script.popleft()

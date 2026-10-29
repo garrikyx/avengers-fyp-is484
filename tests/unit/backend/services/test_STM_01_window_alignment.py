@@ -161,9 +161,11 @@ def test_merge_is_associative_regardless_of_arrival_order() -> None:
     reversed_groups = store_reversed.read(
         "magic-prod-01", from_utc=bucket_start, to_utc=window_end
     )
-    assert forward_groups[0].counters == reversed_groups[0].counters == {
-        "orders_submitted": 13
-    }
+    assert (
+        forward_groups[0].counters
+        == reversed_groups[0].counters
+        == {"orders_submitted": 13}
+    )
 
 
 def test_config_rejects_max_bucket_age_greater_than_retention_window() -> None:
@@ -247,7 +249,5 @@ def test_a_stale_direct_merge_is_counted_not_silently_dropped() -> None:
     store.merge(long_gone, canonical_start=now - timedelta(hours=1), now=now)
 
     assert store.dropped_after_retention_total == 1
-    groups = store.read(
-        "magic-prod-01", from_utc=now - timedelta(hours=2), to_utc=now
-    )
+    groups = store.read("magic-prod-01", from_utc=now - timedelta(hours=2), to_utc=now)
     assert groups == []

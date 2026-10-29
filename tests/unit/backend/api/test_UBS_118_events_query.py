@@ -47,9 +47,7 @@ def test_UBS_118_events_endpoint_round_trip() -> None:
         assert len(body["events"]) == 1
         assert body["events"][0]["eventId"] == "01920f3a-1c2d-7f00-8a1b-9f2c3d4e5f60"
 
-        detail = client.get(
-            "/telemetry/events/01920f3a-1c2d-7f00-8a1b-9f2c3d4e5f60"
-        )
+        detail = client.get("/telemetry/events/01920f3a-1c2d-7f00-8a1b-9f2c3d4e5f60")
         assert detail.status_code == 200
         assert detail.json()["eventType"] == "agent.started"
 
@@ -98,8 +96,6 @@ def test_UBS_118_missing_event_returns_404() -> None:
     app = _app_with_store(EventStore())
 
     with TestClient(app) as client:
-        response = client.get(
-            "/telemetry/events/01920f3a-1c2d-7f00-8a1b-9f2c3d4e5f60"
-        )
+        response = client.get("/telemetry/events/01920f3a-1c2d-7f00-8a1b-9f2c3d4e5f60")
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "not_found"

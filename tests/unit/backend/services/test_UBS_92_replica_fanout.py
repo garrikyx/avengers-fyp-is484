@@ -46,6 +46,7 @@ class _StubPeerClient:
 
 def test_UBS_92_fanout_merges_peer_totals() -> None:
     import asyncio
+
     processor = StreamProcessor(StreamProcessorConfig(), store=MetricStore())
     processor.store.merge(
         make_snapshot(counters={"orders_submitted": 10}),
@@ -89,6 +90,7 @@ def test_UBS_92_fanout_merges_peer_totals() -> None:
 
 def test_UBS_92_peer_failure_marks_partial() -> None:
     import asyncio
+
     processor = StreamProcessor(StreamProcessorConfig(), store=MetricStore())
     processor.store.merge(
         make_snapshot(counters={"orders_submitted": 4}),
