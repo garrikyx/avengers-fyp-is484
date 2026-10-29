@@ -32,6 +32,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic.alias_generators import to_camel
+from telemetry_agent.rules.baseline import ANOMALY_METRICS
 from telemetry_agent.rules.defaults import DEFAULT_RULES
 from telemetry_agent.rules.engine import _OPERATORS, RuleEngine
 from telemetry_agent.rules.types import (
@@ -100,6 +101,14 @@ class _RuleYaml(BaseModel):
             known = sorted(_OPERATORS)
             raise ValueError(f"unknown operator {v!r}, expected one of {known}")
         return v
+
+    @model_validator(mode="after")
+    def _not_anomaly(self) -> _RuleYaml:
+        if self.kind is RuleKind.ANOMALY:
+            raise ValueError(
+                "kind: anomaly rules are configured in anomaly.yaml, not rules.yaml"
+            )
+        return self
 
     @model_validator(mode="after")
     def _signature_matches_kind(self) -> _RuleYaml:
@@ -203,14 +212,126 @@ def load_rules_from_yaml(path: Path) -> tuple[RuleConfig, ...]:
     return tuple(rules)
 
 
+# --- anomaly.yaml (D2: UBS-25/26/28/29) ------------------------------------
+#
+# One top-level key per metric in `baseline.ANOMALY_METRICS`; each enabled
+# entry becomes one `kind: anomaly` rule, so the Rule Engine's lifecycle,
+# routing, silences and reload apply to it unchanged.
+
+ANOMALY_RULE_NAMES: dict[str, str] = {
+    "reject_rate": "AbnormalRejectRate",
+    "ack_latency_ms": "AbnormalProcessingLatency",
+    "execution_issue_rate": "AbnormalExecutionIssueRate",
+    "parser_failure_rate": "AbnormalParserFailureRate",
+}
+
+# A p95 over fewer observations than this is mostly one slow order.
+_DEFAULT_WINDOW_MIN_SAMPLES = {"ack_latency_ms": 50}
+_DEFAULT_ANOMALY_TIER = _TierYaml(severity="warning", threshold=Decimal("0.5"))
+
+
+class _AnomalyYaml(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    enabled: bool = True
+    window_minutes: int = Field(default=5, ge=1)
+    baseline_window_minutes: int = Field(default=60, ge=1)
+    # Pooled events (denominator, or latency observations) the baseline needs.
+    minimum_samples: int = Field(default=100, ge=1)
+    # Events the current window needs before it is judged; the metric's own
+    # default applies when omitted.
+    window_minimum_samples: int | None = Field(default=None, ge=1)
+    # Deviation tiers: 0.5 = +50% over baseline (1.5x), ordered least->most severe.
+    tiers: tuple[_TierYaml, ...] = Field(default=(_DEFAULT_ANOMALY_TIER,), min_length=1)
+    for_: str = Field(default="2m", alias="for")
+    resolve_after: str = "5m"
+    actions: tuple[str, ...] = ()
+    state: RuleState = RuleState.ACTIVE
+
+    @model_validator(mode="after")
+    def _baseline_covers_windows(self) -> _AnomalyYaml:
+        # MIN_BASELINE_WINDOWS non-overlapping windows must fit in the baseline.
+        if self.baseline_window_minutes < 3 * self.window_minutes:
+            raise ValueError(
+                "baseline_window_minutes must be at least 3x window_minutes"
+            )
+        return self
+
+
+def anomaly_path_for(rules_path: Path) -> Path:
+    """`anomaly.yaml` lives beside `rules.yaml` (both under `config/`)."""
+    return rules_path.with_name("anomaly.yaml")
+
+
+def load_anomaly_rules(path: Path) -> tuple[RuleConfig, ...]:
+    """Anomaly rules from `path`; none if the file is absent or empty.
+    Raises `RuleConfigError` naming the offending metric on any problem."""
+    if not path.exists():
+        return ()
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise RuleConfigError(f"{path}: invalid YAML: {exc}") from exc
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise RuleConfigError(f"{path}: expected one entry per metric")
+
+    rules: list[RuleConfig] = []
+    for metric, entry in raw.items():
+        if metric not in ANOMALY_METRICS:
+            raise RuleConfigError(
+                f"{path}: unknown anomaly metric {metric!r}, "
+                f"expected one of {sorted(ANOMALY_METRICS)}"
+            )
+        try:
+            parsed = _AnomalyYaml.model_validate(entry or {})
+        except ValidationError as exc:
+            raise RuleConfigError(f"anomaly {metric!r} is invalid: {exc}") from exc
+        if not parsed.enabled:
+            continue
+        kind = ANOMALY_METRICS[metric].kind
+        rules.append(
+            RuleConfig(
+                name=ANOMALY_RULE_NAMES[metric],
+                kind=RuleKind.ANOMALY,
+                source=(
+                    ValueSource.LATENCY_P95
+                    if kind == "latency"
+                    else ValueSource.INDICATOR
+                ),
+                metric=metric,
+                operator=">",
+                tiers=tuple(
+                    SeverityTier(severity=t.severity, threshold=t.threshold)
+                    for t in parsed.tiers
+                ),
+                window=f"{parsed.window_minutes}m",
+                min_samples=parsed.window_minimum_samples
+                or _DEFAULT_WINDOW_MIN_SAMPLES.get(metric, 20),
+                for_seconds=_parse_duration_seconds(parsed.for_),
+                resolve_after_seconds=_parse_duration_seconds(parsed.resolve_after),
+                actions=parsed.actions,
+                state=parsed.state,
+                baseline_seconds=parsed.baseline_window_minutes * 60,
+                baseline_min_samples=parsed.minimum_samples,
+            )
+        )
+    return tuple(rules)
+
+
 def load_rules(path: Path) -> tuple[RuleConfig, ...]:
     """`DEFAULT_RULES` if `path` doesn't exist; otherwise the parsed file
     (raising `RuleConfigError` if it exists but is malformed — a present-
-    but-broken file never silently falls back to defaults).
+    but-broken file never silently falls back to defaults). The sibling
+    `anomaly.yaml`'s rules are appended either way.
     """
-    if not path.exists():
-        return DEFAULT_RULES
-    return load_rules_from_yaml(path)
+    base = DEFAULT_RULES if not path.exists() else load_rules_from_yaml(path)
+    anomaly = load_anomaly_rules(anomaly_path_for(path))
+    clash = {r.name for r in base} & {r.name for r in anomaly}
+    if clash:
+        raise RuleConfigError(f"duplicate rule name(s) {sorted(clash)}")
+    return (*base, *anomaly)
 
 
 # Stage the non-rule parts of a reload (the action catalogue) before the new
@@ -218,6 +339,13 @@ def load_rules(path: Path) -> tuple[RuleConfig, ...]:
 # `RuleConfigError` to reject the whole reload, or returns the step that
 # commits them once the rules are in.
 ReloadStage = Callable[[Path], Callable[[], None]]
+
+
+def _mtime_or_none(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
 
 
 class SighupRuleReloader:
@@ -241,11 +369,12 @@ class SighupRuleReloader:
         self._logger = logger or logging.getLogger(__name__)
         self._mtime = self._read_mtime()
 
-    def _read_mtime(self) -> float | None:
-        try:
-            return self._path.stat().st_mtime
-        except OSError:
-            return None
+    def _read_mtime(self) -> tuple[float | None, float | None]:
+        """(rules.yaml, anomaly.yaml) modification times."""
+        return (
+            _mtime_or_none(self._path),
+            _mtime_or_none(anomaly_path_for(self._path)),
+        )
 
     def changed_on_disk(self) -> bool:
         """True when the file's mtime differs from the one last loaded (or

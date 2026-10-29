@@ -24,6 +24,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from telemetry_agent.rules.baseline import AnomalyReading, BaselineTracker
 from telemetry_agent.rules.types import (
     SIGNATURE_DIMENSION,
     AlertStatus,
@@ -261,6 +262,9 @@ class RuleEngine:
         self._states: dict[str, _AlertState] = {}
         self._silences: list[Silence] = []
         self._storm_active = False
+        self._baselines = BaselineTracker(started_at=started_at)
+        # The latest anomaly reading per rule, kept for the alert text.
+        self._readings: dict[str, AnomalyReading] = {}
 
     def add_silence(self, silence: Silence) -> None:
         self._silences.append(silence)
@@ -390,15 +394,38 @@ class RuleEngine:
                 and rule.name != "NoLogActivity"
             ):
                 observed = None  # FR-RUL-021: absence of data isn't absence of rejects
+                self._readings.pop(rule.name, None)  # nothing to learn from this tick
+            elif rule.kind is RuleKind.ANOMALY:
+                observed = self._read_anomaly(rule, snapshot, now)
             else:
                 observed = _read_observed(rule, snapshot)
 
             tier = _matched_tier(observed, rule.tiers, rule.operator)
+            self._settle_anomaly(rule, tier, now)
             alert = self._transition(rule, tier, observed, snapshot, now)
             if alert is not None:
                 changed.append(alert)
 
         return changed
+
+    def _read_anomaly(
+        self, rule: RuleConfig, snapshot: MetricsSnapshot, now: datetime
+    ) -> Decimal | None:
+        reading = self._baselines.assess(rule, snapshot, now)
+        if reading is None:
+            self._readings.pop(rule.name, None)
+            return None
+        self._readings[rule.name] = reading
+        return reading.deviation
+
+    def _settle_anomaly(
+        self, rule: RuleConfig, tier: SeverityTier | None, now: datetime
+    ) -> None:
+        """Let a normal window join the baseline; an anomalous one is kept
+        out so an incident does not become the new normal."""
+        reading = self._readings.get(rule.name)
+        if rule.kind is RuleKind.ANOMALY and reading is not None:
+            self._baselines.settle(rule, reading, now, anomalous=tier is not None)
 
     def _transition(
         self,
@@ -529,6 +556,17 @@ class RuleEngine:
     ) -> AlertEvent | None:
         effective_status = status or state.status
         group = _rule_group(rule, snapshot)
+        reading = self._readings.get(rule.name)
+        if rule.kind is RuleKind.ANOMALY and reading is not None and tier is not None:
+            matched_condition = reading.explain(instance_id=self._instance_id)
+            context = reading.context()
+        else:
+            matched_condition = (
+                _matched_condition(rule, tier, observed)
+                if tier is not None and observed is not None
+                else f"{rule.name} resolved"
+            )
+            context = _metric_context(rule, snapshot)
         event = AlertEvent(
             alert_id=state.alert_id,
             rule_name=rule.name,
@@ -537,18 +575,14 @@ class RuleEngine:
             application=self._application,
             instance_id=self._instance_id,
             agent_id=self._agent_id,
-            matched_condition=(
-                _matched_condition(rule, tier, observed)
-                if tier is not None and observed is not None
-                else f"{rule.name} resolved"
-            ),
+            matched_condition=matched_condition,
             observed_value=float(observed) if observed is not None else None,
             threshold=float(tier.threshold) if tier is not None else 0.0,
             first_observed_utc=state.first_observed_utc,
             last_observed_utc=now,
             resolved_at_utc=now if effective_status is AlertStatus.RESOLVED else None,
             group_by=dict(group.dimensions) if group is not None else {},
-            metric_context=_metric_context(rule, snapshot),
+            metric_context=context,
             notification_count=state.notification_count,
         )
         if self._is_silenced(rule.name, now):

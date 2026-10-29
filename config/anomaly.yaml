@@ -1,4 +1,56 @@
-# reject_rate:
+# D2 anomaly rules (UBS-25/26/28/29), parsed by
+# telemetry_agent.rules.config_loader.load_anomaly_rules and appended to the
+# rules in rules.yaml. Reloaded with them (SIGHUP / file change).
+#
+# Each metric is compared with its own rolling baseline: the pooled value over
+# the earlier `window_minutes` windows inside `baseline_window_minutes`, never
+# including the window being judged and never including windows that were
+# themselves anomalous. A tier threshold is the deviation above baseline:
+# 0.5 = +50% (1.5x baseline), 1.0 = +100% (2x).
+#
+# No alert until the baseline is trusted: at least 3 windows and
+# `minimum_samples` pooled events (a baseline of exactly 0 is never judged).
+#
+# Per-metric keys (all optional; defaults shown):
 #   enabled: true
-#   baseline_window_minutes: 60
-#   minimum_samples: 100
+#   window_minutes: 5               # the "current" evaluation window
+#   baseline_window_minutes: 60     # history the baseline is built from (>= 3x window)
+#   minimum_samples: 100            # pooled baseline events required
+#   window_minimum_samples: 20      # events the current window needs (50 for latency)
+#   tiers: [{severity: warning, threshold: 0.5}]
+#   for: 2m                         # condition must hold this long before firing
+#   resolve_after: 5m
+#   actions: []                     # names from rules.yaml `actions:`
+#   state: active                   # or draft, as in rules.yaml (UBS-36)
+#
+# Metrics:
+#   reject_rate            UBS-25  orders_rejected / (orders_acked + orders_rejected)
+#   ack_latency_ms         UBS-26  p95 ack latency vs. the median of past window p95s
+#   execution_issue_rate   UBS-28  (orders_rejected + cancel_rejects + orders_expired)
+#                                  / (orders_submitted + orders_cancel_requested
+#                                     + orders_replaced)   -- working definition
+#   parser_failure_rate    UBS-29  parse_errors / log_lines_read
+
+reject_rate:
+  enabled: true
+  window_minutes: 5
+  baseline_window_minutes: 60
+  minimum_samples: 100
+
+ack_latency_ms:
+  enabled: true
+  window_minutes: 5
+  baseline_window_minutes: 60
+  minimum_samples: 100
+
+execution_issue_rate:
+  enabled: true
+  window_minutes: 5
+  baseline_window_minutes: 60
+  minimum_samples: 100
+
+parser_failure_rate:
+  enabled: true
+  window_minutes: 5
+  baseline_window_minutes: 60
+  minimum_samples: 100

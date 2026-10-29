@@ -59,7 +59,10 @@ host or a process: disk full, memory pressure, Magic not running, agent lifecycl
 - Binary / proprietary protocol parsing (the parser interface must accommodate it —
   `FR-PRS-020`).
 - Durable persistence, historical forensics, log replay, long-term trend analytics.
-- Anomaly detection and adaptive thresholds.
+- Anomaly detection and adaptive thresholds. _Partly pulled forward (D2, UBS-25–29):
+  rolling-baseline alerts for reject rate, ack latency, execution issues and parser
+  failures (spec 005 §7), and increasing reject reasons (spec 007 §3.1). Adaptive
+  thresholds, durable baselines and seasonality remain out of scope._
 - Dashboards beyond what the query API enables; rich Teams interactive workflows.
 - Executive and end-of-day reporting for business users over historical data (spec 008
   `FR-NLQ-027`, `FR-NLQ-028`); this needs Day-2 persistence.

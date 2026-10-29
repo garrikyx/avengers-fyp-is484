@@ -15,13 +15,15 @@ from enum import StrEnum
 
 
 class RuleKind(StrEnum):
-    """FR-RUL-001: Day-1 supports exactly these five."""
+    """FR-RUL-001: Day-1 supports the first five; `anomaly` is the D2
+    rolling-baseline kind (UBS-25/26/28/29), configured in anomaly.yaml."""
 
     RATE = "rate"
     THRESHOLD = "threshold"
     LATENCY = "latency"
     ABSENCE = "absence"
     SIGNATURE = "signature"
+    ANOMALY = "anomaly"
 
 
 class ValueSource(StrEnum):
@@ -95,6 +97,14 @@ class RuleConfig:
     depends_on_log_activity: bool = True  # FR-RUL-021
     actions: tuple[str, ...] = ()  # FR-CBK-013: names from the `actions:` block
     state: RuleState = RuleState.ACTIVE  # UBS-36
+
+    # anomaly only (rules.baseline): the observed value is the relative
+    # deviation from a baseline learned over `baseline_seconds`, so `tiers`
+    # are deviations (0.5 = +50%). `baseline_min_samples` is the pooled
+    # event count the baseline needs before it is trusted; `min_samples`
+    # still gates the current window.
+    baseline_seconds: int | None = None
+    baseline_min_samples: int = 100
 
 
 @dataclass(slots=True)
