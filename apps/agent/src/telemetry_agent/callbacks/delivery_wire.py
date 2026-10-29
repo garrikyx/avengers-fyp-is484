@@ -9,6 +9,7 @@ from telemetry_agent.callbacks.status import (
     DeliveryRecord,
     DeliveryStatus,
     DeliveryTracker,
+    notification_key,
 )
 
 _API_STATUS: dict[DeliveryStatus, str] = {
@@ -39,8 +40,10 @@ def enrich_alert_delivery(
     *,
     correlation_id: str | None = None,
 ) -> AlertEvent:
-    record = tracker.status_of(alert.alert_id)
+    record = tracker.status_of(alert.alert_id, notification=notification_key(alert))
     if record is None:
         return alert
-    delivery = alert_delivery_from_record(record, correlation_id=correlation_id)
+    delivery = alert_delivery_from_record(
+        record, correlation_id=correlation_id or record.correlation_id
+    )
     return alert.model_copy(update={"callback_delivery": delivery})

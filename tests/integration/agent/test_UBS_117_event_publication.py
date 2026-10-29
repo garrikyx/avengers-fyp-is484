@@ -214,7 +214,22 @@ def test_monitor_parser_events_alerts_and_query_round_trip(tmp_path, monkeypatch
         assert "PRIVATE_" not in wire
         assert "123.456789" not in wire
         assert "8=FIX" not in wire
-        assert len(transport.batches[0]["alerts"]) == 2
+        # Each alert is published when routed, then again once its callback
+        # settles, now carrying the delivery outcome (FR-CBK-009).
+        assert [
+            (a["status"], a["callbackDelivery"]["status"])
+            for a in transport.batches[0]["alerts"]
+        ] == [
+            ("firing", "pending"),
+            ("resolved", "pending"),
+            ("firing", "delivered"),
+            ("resolved", "delivered"),
+        ]
+        # One attempt each, tracked per notification: the resolved callback
+        # does not inherit the firing one's attempt.
+        settled = [a["callbackDelivery"] for a in transport.batches[0]["alerts"][2:]]
+        assert [d["attempts"] for d in settled] == [1, 1]
+        assert settled[0]["correlationId"] != settled[1]["correlationId"]
     finally:
         agent.bridge.stop()
         agent.monitor.close()

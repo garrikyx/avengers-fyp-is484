@@ -151,6 +151,17 @@ class AlertStore:
             if existing is None:
                 existing = instance.resolved_map.get(event.alert_id)
 
+            if (
+                existing is not None
+                and existing.record.status == _RESOLVED_STATUS
+                and event.status != _RESOLVED_STATUS
+            ):
+                # `alertId` rotates per occurrence, so a non-resolved event for
+                # a resolved id is stale, e.g. the republish an agent sends
+                # when a slow firing callback settles after the alert has
+                # already resolved. It must not reopen the alert.
+                return
+
             if existing is None and event.status == _RESOLVED_STATUS:
                 stored = _StoredAlert(
                     record=self._record_from_event(
@@ -210,9 +221,7 @@ class AlertStore:
                     transitions=existing.transitions,
                     synthetic=synthetic,
                 )
-            self._place_alert(
-                instance, stored, active=_is_active_status(event.status)
-            )
+            self._place_alert(instance, stored, active=_is_active_status(event.status))
 
     def _iter_all_records(
         self, *, include_active: bool, include_resolved: bool
@@ -306,9 +315,7 @@ class AlertStore:
                 if self._is_query_active(r) and r.severity == "warning"
             ),
         )
-        return AlertsListResponse(
-            alerts=alerts, counts=counts, truncated=truncated
-        )
+        return AlertsListResponse(alerts=alerts, counts=counts, truncated=truncated)
 
     def get_alert(self, alert_id: str) -> AlertDetailResponse | None:
         for instance_id in list(self._instances):
