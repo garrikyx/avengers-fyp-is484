@@ -105,15 +105,11 @@ def _publisher(app: object) -> BackendPublisher:
         _ENDPOINT, "test-token", transport=httpx.ASGITransport(app=app)
     )
     config = parse_publish_config({"endpoint": _ENDPOINT})
-    return BackendPublisher(
-        sink, config, agent_id=_AGENT_ID, application=_APPLICATION
-    )
+    return BackendPublisher(sink, config, agent_id=_AGENT_ID, application=_APPLICATION)
 
 
 def _router(publisher: BackendPublisher) -> AlertRouter:
-    return AlertRouter(
-        publisher, agent_id=_AGENT_ID, application=_APPLICATION
-    )
+    return AlertRouter(publisher, agent_id=_AGENT_ID, application=_APPLICATION)
 
 
 async def _drain_backend(app: object) -> None:
@@ -192,9 +188,7 @@ def test_the_alert_is_served_by_the_query_endpoint() -> None:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://backend"
         ) as client:
-            return await client.get(
-                "/telemetry/alerts", params={"status": "active"}
-            )
+            return await client.get("/telemetry/alerts", params={"status": "active"})
 
     response = asyncio.run(round_trip())
 

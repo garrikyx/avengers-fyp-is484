@@ -15,13 +15,15 @@ from enum import StrEnum
 
 
 class RuleKind(StrEnum):
-    """FR-RUL-001: Day-1 supports exactly these five."""
+    """FR-RUL-001: Day-1 supports the first five; `anomaly` is the D2
+    rolling-baseline kind (UBS-25/26/28/29), configured in anomaly.yaml."""
 
     RATE = "rate"
     THRESHOLD = "threshold"
     LATENCY = "latency"
     ABSENCE = "absence"
     SIGNATURE = "signature"
+    ANOMALY = "anomaly"
 
 
 class ValueSource(StrEnum):
@@ -66,6 +68,11 @@ class SeverityTier:
 # label `parsing.errorSignatures` assigned, carried by `app_error_signatures`.
 SIGNATURE_DIMENSION = "error_signature"
 
+# The snapshot dimension a `level:` threshold rule is read from (FR-RUL-023),
+# and the closed Application.log level set it may select (FR-MET-033).
+LEVEL_DIMENSION = "level"
+APP_LOG_LEVELS: frozenset[str] = frozenset("NWEIF")
+
 
 @dataclass(frozen=True, slots=True)
 class RuleConfig:
@@ -87,6 +94,7 @@ class RuleConfig:
     guard_metric: str | None = None  # absence only: guard_metric > 0 required
     extra_counters: tuple[str, ...] = ()  # threshold: OR'd via sum, e.g. FixSessionDown
     signature: str | None = None  # signature only: the errorSignatures label
+    level: str | None = None  # threshold only: one Application.log level (FR-RUL-023)
 
     for_seconds: int = 60  # FR-RUL-004 default
     resolve_after_seconds: int = 300  # FR-RUL-004 default
@@ -95,6 +103,14 @@ class RuleConfig:
     depends_on_log_activity: bool = True  # FR-RUL-021
     actions: tuple[str, ...] = ()  # FR-CBK-013: names from the `actions:` block
     state: RuleState = RuleState.ACTIVE  # UBS-36
+
+    # anomaly only (rules.baseline): the observed value is the relative
+    # deviation from a baseline learned over `baseline_seconds`, so `tiers`
+    # are deviations (0.5 = +50%). `baseline_min_samples` is the pooled
+    # event count the baseline needs before it is trusted; `min_samples`
+    # still gates the current window.
+    baseline_seconds: int | None = None
+    baseline_min_samples: int = 100
 
 
 @dataclass(slots=True)

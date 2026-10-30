@@ -9,6 +9,8 @@ snapshot was built with `group_by=()` (single-instance semantics — CLAUDE.md:
 The one exception is `signature` rules (spec 005 §1), which read a snapshot
 grouped by `error_signature` and pick the group for their own label; every
 other rule skips that snapshot, and signature rules skip the ungrouped one.
+`level:` threshold rules (FR-RUL-023) work the same way on a snapshot grouped
+by `level`.
 
 Callback dispatch (spec 005 §3) is out of scope — `evaluate()` returns the
 `AlertEvent`s that changed or were re-notified this tick; wiring those to a
@@ -24,7 +26,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from telemetry_agent.rules.baseline import (
+    AnomalyReading,
+    BaselineTracker,
+    validate_anomaly_rule,
+)
 from telemetry_agent.rules.types import (
+    LEVEL_DIMENSION,
     SIGNATURE_DIMENSION,
     AlertStatus,
     RuleConfig,
@@ -143,7 +151,8 @@ def _rule_group(rule: RuleConfig, snapshot: MetricsSnapshot) -> MetricsGroup | N
     """The group a rule reads. Instance-level snapshots (`group_by=()`) have
     one group; a signature rule reads the per-signature snapshot's group for
     its own label, so other signatures can't trip it. No group means no
-    matches in the window, which a counter reads as 0."""
+    matches in the window, which a counter reads as 0. A `level:` rule reads
+    the per-level snapshot's group the same way (FR-RUL-023)."""
     if rule.kind is RuleKind.SIGNATURE:
         return next(
             (
@@ -153,14 +162,26 @@ def _rule_group(rule: RuleConfig, snapshot: MetricsSnapshot) -> MetricsGroup | N
             ),
             None,
         )
+    if rule.level is not None:
+        return next(
+            (
+                g
+                for g in snapshot.groups
+                if g.dimensions.get(LEVEL_DIMENSION) == rule.level
+            ),
+            None,
+        )
     return snapshot.groups[0] if snapshot.groups else None
 
 
 def _evaluates_on(rule: RuleConfig, snapshot: MetricsSnapshot) -> bool:
-    """Signature rules need the per-signature snapshot; every other rule the
-    instance-level one (see the module docstring)."""
+    """Signature rules need the per-signature snapshot, `level:` rules the
+    per-level one; every other rule the instance-level one (see the module
+    docstring)."""
     if rule.kind is RuleKind.SIGNATURE:
         return tuple(snapshot.group_by) == (SIGNATURE_DIMENSION,)
+    if rule.level is not None:
+        return tuple(snapshot.group_by) == (LEVEL_DIMENSION,)
     return not snapshot.group_by
 
 
@@ -235,6 +256,12 @@ def _metric_context(
     return dict(list(context.items())[:10])
 
 
+def _validate_anomaly_rules(rules: Sequence[RuleConfig]) -> None:
+    for rule in rules:
+        if rule.kind is RuleKind.ANOMALY:
+            validate_anomaly_rule(rule)
+
+
 class RuleEngine:
     def __init__(
         self,
@@ -249,6 +276,7 @@ class RuleEngine:
         max_active_alerts: int = 100,
         schedule_checker: ScheduleChecker | None = None,
     ) -> None:
+        _validate_anomaly_rules(rules)
         self._rules = tuple(rules)
         self._instance_id = instance_id
         self._application = application
@@ -261,6 +289,9 @@ class RuleEngine:
         self._states: dict[str, _AlertState] = {}
         self._silences: list[Silence] = []
         self._storm_active = False
+        self._baselines = BaselineTracker(started_at=started_at)
+        # The latest anomaly reading per rule, kept for the alert text.
+        self._readings: dict[str, AnomalyReading] = {}
 
     def add_silence(self, silence: Silence) -> None:
         self._silences.append(silence)
@@ -280,6 +311,7 @@ class RuleEngine:
         longer has a definition. Returns the synthetic `resolved` events
         for any such states (empty if none).
         """
+        _validate_anomaly_rules(new_rules)  # before any state changes
         # A rule moved back to `draft` stops being evaluated, so its open
         # alert is resolved like a removed rule's (UBS-36).
         new_names = {rule.name for rule in new_rules if rule.state is RuleState.ACTIVE}
@@ -313,6 +345,9 @@ class RuleEngine:
                 )
             del self._states[key]
         self._rules = tuple(new_rules)
+        self._baselines.retain(new_names)
+        for name in set(self._readings) - new_names:
+            del self._readings[name]
         return resolved_events
 
     def active_alert_count(self) -> int:
@@ -390,15 +425,38 @@ class RuleEngine:
                 and rule.name != "NoLogActivity"
             ):
                 observed = None  # FR-RUL-021: absence of data isn't absence of rejects
+                self._readings.pop(rule.name, None)  # nothing to learn from this tick
+            elif rule.kind is RuleKind.ANOMALY:
+                observed = self._read_anomaly(rule, snapshot, now)
             else:
                 observed = _read_observed(rule, snapshot)
 
             tier = _matched_tier(observed, rule.tiers, rule.operator)
+            self._settle_anomaly(rule, tier, now)
             alert = self._transition(rule, tier, observed, snapshot, now)
             if alert is not None:
                 changed.append(alert)
 
         return changed
+
+    def _read_anomaly(
+        self, rule: RuleConfig, snapshot: MetricsSnapshot, now: datetime
+    ) -> Decimal | None:
+        reading = self._baselines.assess(rule, snapshot, now)
+        if reading is None:
+            self._readings.pop(rule.name, None)
+            return None
+        self._readings[rule.name] = reading
+        return reading.deviation
+
+    def _settle_anomaly(
+        self, rule: RuleConfig, tier: SeverityTier | None, now: datetime
+    ) -> None:
+        """Let a normal window join the baseline; an anomalous one is kept
+        out so an incident does not become the new normal."""
+        reading = self._readings.get(rule.name)
+        if rule.kind is RuleKind.ANOMALY and reading is not None:
+            self._baselines.settle(rule, reading, now, anomalous=tier is not None)
 
     def _transition(
         self,
@@ -529,6 +587,21 @@ class RuleEngine:
     ) -> AlertEvent | None:
         effective_status = status or state.status
         group = _rule_group(rule, snapshot)
+        reading = self._readings.get(rule.name)
+        if rule.kind is RuleKind.ANOMALY and reading is not None and tier is not None:
+            matched_condition = reading.explain(instance_id=self._instance_id)
+            context = reading.context()
+        else:
+            matched_condition = (
+                _matched_condition(rule, tier, observed)
+                if tier is not None and observed is not None
+                else f"{rule.name} resolved"
+            )
+            # An anomaly rule's metric is a ratio or latency, not a counter:
+            # `_metric_context` would report a made-up 0.0 for it.
+            context = (
+                {} if rule.kind is RuleKind.ANOMALY else _metric_context(rule, snapshot)
+            )
         event = AlertEvent(
             alert_id=state.alert_id,
             rule_name=rule.name,
@@ -537,18 +610,14 @@ class RuleEngine:
             application=self._application,
             instance_id=self._instance_id,
             agent_id=self._agent_id,
-            matched_condition=(
-                _matched_condition(rule, tier, observed)
-                if tier is not None and observed is not None
-                else f"{rule.name} resolved"
-            ),
+            matched_condition=matched_condition,
             observed_value=float(observed) if observed is not None else None,
             threshold=float(tier.threshold) if tier is not None else 0.0,
             first_observed_utc=state.first_observed_utc,
             last_observed_utc=now,
             resolved_at_utc=now if effective_status is AlertStatus.RESOLVED else None,
             group_by=dict(group.dimensions) if group is not None else {},
-            metric_context=_metric_context(rule, snapshot),
+            metric_context=context,
             notification_count=state.notification_count,
         )
         if self._is_silenced(rule.name, now):

@@ -106,11 +106,16 @@ def breakdown_phrase(
 
 def latency_phrase(latency: dict[str, LatencySummary]) -> str:
     summary = latency.get("ack_latency_ms")
-    if summary is None or summary.count == 0:
+    if (
+        summary is None
+        or summary.count == 0
+        or summary.p50 is None
+        or summary.p95 is None
+    ):
         return "Ack latency is not available (insufficient samples)."
     return (
-        f"Ack latency p50 {summary.p50_ms:.0f} ms, "
-        f"p95 {summary.p95_ms:.0f} ms over {summary.count} samples."
+        f"Ack latency p50 {summary.p50:.0f} ms, "
+        f"p95 {summary.p95:.0f} ms over {summary.count} samples."
     )
 
 

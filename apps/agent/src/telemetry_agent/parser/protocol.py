@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from telemetry_agent.parser.fix.telemetry import FixTelemetry
 
 
-class Confidence(str, Enum):
+class Confidence(StrEnum):
     """How strongly a parser claims an input line."""
 
     NONE = "none"
@@ -20,7 +20,7 @@ class Confidence(str, Enum):
     HIGH = "high"
 
 
-class LineClassification(str, Enum):
+class LineClassification(StrEnum):
     """FR-PRS-010 classification outcome."""
 
     FIX = "fix"

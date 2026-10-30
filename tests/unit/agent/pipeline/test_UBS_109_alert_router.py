@@ -35,9 +35,7 @@ class _RecordingSink:
     def __init__(self) -> None:
         self.bodies: list[bytes] = []
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         self.bodies.append(body)
         return PublishResult(status_code=202, latency_ms=1.0)
 
@@ -187,9 +185,7 @@ def test_the_mismatch_is_logged_once_not_once_per_alert(
     router = _router(_publisher(), logger=logger)
 
     with caplog.at_level(logging.ERROR, logger=logger.name):
-        router.route(
-            [_alert(f"bad-{i}", agent_id="wrong") for i in range(5)], now=_NOW
-        )
+        router.route([_alert(f"bad-{i}", agent_id="wrong") for i in range(5)], now=_NOW)
 
     assert len(caplog.records) == 1
     assert router.counters.snapshot()["alerts_rejected_identity"] == 5

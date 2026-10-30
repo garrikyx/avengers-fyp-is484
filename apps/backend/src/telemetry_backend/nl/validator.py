@@ -77,9 +77,7 @@ def _schema_issues(interpreted: InterpretedQuery) -> list[ValidationIssue]:
     definition = INTENT_DEFINITIONS[interpreted.intent]
     if "symbol" in definition.required_slots and "symbol" not in interpreted.filters:
         issues.append(
-            ValidationIssue(
-                "filters.symbol", "symbol is required for this intent."
-            )
+            ValidationIssue("filters.symbol", "symbol is required for this intent.")
         )
 
     for metric in interpreted.metrics:

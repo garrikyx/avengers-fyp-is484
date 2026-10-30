@@ -1,4 +1,4 @@
-"""RE-03: the 16 default rules (spec 005 §1.2).
+"""RE-03: the 17 default rules (spec 005 §1.2).
 
 Concrete `RuleConfig` values, used as the **fallback** by
 `telemetry_agent.rules.config_loader.load_rules()` when `config/rules.yaml`
@@ -31,6 +31,11 @@ out-of-memory or lost database connection is already an incident rather
 than noise to be smoothed. `AppDbConnectionLost` escalates at 5 in 5m,
 since a client reconnecting usually logs a burst of these. Both are
 configurable in `rules.yaml`, like every other threshold here.
+
+`AppLogFailure` (UBS-128, `FR-RUL-023`) is a `threshold` rule with `level: F`:
+one `[F]` line is critical at once, `[E]` lines are counted in
+`app_log_errors` but never fire it, and it is independent of the signature
+rules above.
 
 `depends_on_log_activity=False` (`FR-RUL-021`) is set explicitly on the
 self-health rules below (`NoLogActivity` itself, plus the rules that watch
@@ -214,6 +219,18 @@ DEFAULT_RULES: tuple[RuleConfig, ...] = (
         operator=">=",
         tiers=(_tier("warning", 1), _tier("critical", 5)),
         window="5m",
+        for_seconds=0,
+        depends_on_log_activity=False,
+    ),
+    RuleConfig(
+        name="AppLogFailure",
+        kind=RuleKind.THRESHOLD,
+        source=ValueSource.COUNTER,
+        metric="app_log_errors",
+        level="F",
+        operator=">=",
+        tiers=(_tier("critical", 1),),
+        window="1m",
         for_seconds=0,
         depends_on_log_activity=False,
     ),

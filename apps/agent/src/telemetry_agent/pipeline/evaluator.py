@@ -56,7 +56,7 @@ from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
 from telemetry_agent.rules.config_loader import SighupRuleReloader
 from telemetry_agent.rules.engine import RuleEngine
-from telemetry_agent.rules.types import SIGNATURE_DIMENSION, RuleKind
+from telemetry_agent.rules.types import LEVEL_DIMENSION, SIGNATURE_DIMENSION, RuleKind
 
 DEFAULT_EVALUATION_INTERVAL_SECONDS = 10.0
 DEFAULT_RELOAD_CHECK_SECONDS = 10.0
@@ -254,11 +254,14 @@ class RuleEvaluator:
         signature_windows = {
             r.window for r in self._engine.rules if r.kind is RuleKind.SIGNATURE
         }
+        level_windows = {r.window for r in self._engine.rules if r.level is not None}
         changed: list[AlertEvent] = []
         for window in windows:
             group_bys: list[tuple[str, ...]] = [()]
             if window in signature_windows:
                 group_bys.append((SIGNATURE_DIMENSION,))
+            if window in level_windows:
+                group_bys.append((LEVEL_DIMENSION,))
             for group_by in group_bys:
                 snap = snapshot(
                     self._aggregator,

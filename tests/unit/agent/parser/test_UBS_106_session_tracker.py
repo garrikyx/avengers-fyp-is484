@@ -17,6 +17,7 @@ def _keys(timeouts) -> tuple[str, ...]:
     """Session keys from a timed_out() result, for terse assertions."""
     return tuple(t.session_key for t in timeouts)
 
+
 _SENDER = "MAGIC"
 _TARGET = "EXCH1"
 
@@ -28,9 +29,7 @@ def _tracker(timeout: float = 60.0) -> SessionHeartbeatTracker:
 def _observe(
     tracker: SessionHeartbeatTracker, *, at: float, msg_type: str = "Heartbeat"
 ) -> None:
-    tracker.observe(
-        msg_type=msg_type, sender=_SENDER, target=_TARGET, at=at
-    )
+    tracker.observe(msg_type=msg_type, sender=_SENDER, target=_TARGET, at=at)
 
 
 def _key(tracker: SessionHeartbeatTracker) -> str:

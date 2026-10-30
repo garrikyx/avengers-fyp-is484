@@ -16,7 +16,10 @@ def _item(tag: str, *, size: int = 10, age_seconds: float = 0) -> PendingItem:
     """A distinguishable pending item -- `payload` carries `tag` so tests
     can assert order/identity without depending on model equality."""
     return PendingItem(
-        "event", tag, _NOW - timedelta(seconds=age_seconds), size  # type: ignore[arg-type]
+        "event",
+        tag,
+        _NOW - timedelta(seconds=age_seconds),
+        size,  # type: ignore[arg-type]
     )
 
 

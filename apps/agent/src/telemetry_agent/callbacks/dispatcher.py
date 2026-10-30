@@ -25,7 +25,11 @@ from telemetry_agent.callbacks.retry import RetryDecision, classify_http_status
 from telemetry_agent.callbacks.self_metrics import CounterRegistry
 from telemetry_agent.callbacks.signing import sign
 from telemetry_agent.callbacks.sink import CallbackSink
-from telemetry_agent.callbacks.status import DeliveryStatus, DeliveryTracker
+from telemetry_agent.callbacks.status import (
+    DeliveryStatus,
+    DeliveryTracker,
+    notification_key,
+)
 
 
 class CallbackDispatcher:
@@ -48,7 +52,6 @@ class CallbackDispatcher:
         self._tracker = tracker or DeliveryTracker()
         self._on_delivery_settled = on_delivery_settled
         self._logger = logger or logging.getLogger(__name__)
-        self._last_delivery_ids: dict[str, str] = {}
         self._on_failure = on_failure
         self._queue: DropOldestQueue[AlertEvent] = DropOldestQueue(
             config.queue_size,
@@ -70,13 +73,30 @@ class CallbackDispatcher:
     def tracker(self) -> DeliveryTracker:
         return self._tracker
 
+    def _record(
+        self,
+        alert: AlertEvent,
+        status: DeliveryStatus,
+        *,
+        error: str | None = None,
+        delivery_id: str | None = None,
+    ) -> None:
+        """Track `status` against this alert's own notification, not the
+        alert as a whole (see `notification_key`)."""
+        self._tracker.record(
+            alert.alert_id,
+            status,
+            now=datetime.now(UTC),
+            error=error,
+            notification=notification_key(alert),
+            delivery_id=delivery_id,
+        )
+
     def enqueue(self, alert: AlertEvent) -> None:
         """Sync, non-blocking — the entry point a future wiring step calls
         from the same site that calls `RuleEngine.evaluate()`.
         """
-        self._tracker.record(
-            alert.alert_id, DeliveryStatus.PENDING, now=datetime.now(UTC)
-        )
+        self._record(alert, DeliveryStatus.PENDING)
         self._queue.put_dropping_oldest(alert)
 
     async def deliver(self, alert: AlertEvent) -> DeliveryStatus:
@@ -85,11 +105,11 @@ class CallbackDispatcher:
         with its own timeout: a `callback` action (UBS-35, `FR-CBK-014`)
         reuses signing, retry and tracking this way, one run at a time.
         """
-        self._tracker.record(
-            alert.alert_id, DeliveryStatus.PENDING, now=datetime.now(UTC)
-        )
+        self._record(alert, DeliveryStatus.PENDING)
         await self._deliver(alert)
-        record = self._tracker.status_of(alert.alert_id)
+        record = self._tracker.status_of(
+            alert.alert_id, notification=notification_key(alert)
+        )
         return record.status if record is not None else DeliveryStatus.FAILED
 
     async def run(self) -> None:
@@ -127,7 +147,7 @@ class CallbackDispatcher:
         occurrence (`FR-CBK-003`); each attempt gets its own
         `X-Telemetry-Delivery-Id` so Magic can distinguish retries in logs.
         """
-        idempotency_key = f"{alert.alert_id}:{alert.status}:{alert.notification_count}"
+        idempotency_key = notification_key(alert)
         payload = from_alert_event(alert, now=datetime.now(UTC))
         body = payload.model_dump_json(by_alias=True).encode("utf-8")
 
@@ -139,23 +159,15 @@ class CallbackDispatcher:
                 self._config.max_bytes,
             )
             self._counters.increment("callback_failures")
-            self._tracker.record(
-                alert.alert_id,
-                DeliveryStatus.FAILED,
-                now=datetime.now(UTC),
-                error="payload_too_large",
-            )
+            self._record(alert, DeliveryStatus.FAILED, error="payload_too_large")
             self._emit_failure(alert, "payload_too_large", 0, None)
             self._notify_delivery_settled(alert)
             return
 
         for attempt in range(1, self._config.max_attempts + 1):
-            self._tracker.record(
-                alert.alert_id, DeliveryStatus.SENT, now=datetime.now(UTC)
-            )
-            timestamp = str(int(datetime.now(UTC).timestamp()))
             delivery_id = str(uuid.uuid4())
-            self._last_delivery_ids[alert.alert_id] = delivery_id
+            self._record(alert, DeliveryStatus.SENT, delivery_id=delivery_id)
+            timestamp = str(int(datetime.now(UTC).timestamp()))
             headers = {
                 "Content-Type": "application/json",
                 "X-Telemetry-Delivery-Id": delivery_id,
@@ -172,9 +184,7 @@ class CallbackDispatcher:
 
             if decision is RetryDecision.SUCCESS:
                 self._counters.increment("callback_delivered")
-                self._tracker.record(
-                    alert.alert_id, DeliveryStatus.DELIVERED, now=datetime.now(UTC)
-                )
+                self._record(alert, DeliveryStatus.DELIVERED)
                 self._notify_delivery_settled(alert)
                 return
 
@@ -192,12 +202,7 @@ class CallbackDispatcher:
                     result.error_class,
                 )
                 self._counters.increment("callback_failures")
-                self._tracker.record(
-                    alert.alert_id,
-                    DeliveryStatus.FAILED,
-                    now=datetime.now(UTC),
-                    error=failure_reason,
-                )
+                self._record(alert, DeliveryStatus.FAILED, error=failure_reason)
                 self._emit_failure(
                     alert, "permanent_http_failure", attempt, result.status_code
                 )
@@ -214,12 +219,7 @@ class CallbackDispatcher:
                     result.error_class,
                 )
                 self._counters.increment("callback_failures")
-                self._tracker.record(
-                    alert.alert_id,
-                    DeliveryStatus.FAILED,
-                    now=datetime.now(UTC),
-                    error=failure_reason,
-                )
+                self._record(alert, DeliveryStatus.FAILED, error=failure_reason)
                 self._emit_failure(
                     alert, "retries_exhausted", attempt, result.status_code
                 )
@@ -239,19 +239,10 @@ class CallbackDispatcher:
                 result.error_class,
                 delay,
             )
-            self._tracker.record(
-                alert.alert_id,
-                DeliveryStatus.RETRYING,
-                now=datetime.now(UTC),
-                error=failure_reason,
-            )
+            self._record(alert, DeliveryStatus.RETRYING, error=failure_reason)
             await asyncio.sleep(delay)
 
     def _notify_delivery_settled(self, alert: AlertEvent) -> None:
         if self._on_delivery_settled is None:
             return
-        correlation = self._last_delivery_ids.get(alert.alert_id)
-        enriched = enrich_alert_delivery(
-            alert, self._tracker, correlation_id=correlation
-        )
-        self._on_delivery_settled(enriched)
+        self._on_delivery_settled(enrich_alert_delivery(alert, self._tracker))

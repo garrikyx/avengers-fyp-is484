@@ -87,9 +87,7 @@ def run_demo(workdir: Path) -> None:
 
         saved_state = json.loads(registry.read_text())
         saved_fix_state = next(
-            state
-            for state in saved_state
-            if state["source"] == str(fix_log.resolve())
+            state for state in saved_state if state["source"] == str(fix_log.resolve())
         )
         assert saved_fix_state["offset"] == fix_monitor.get_status().offset
         print(f"  Saved FIX offset: {saved_fix_state['offset']}")
@@ -127,7 +125,9 @@ def run_demo(workdir: Path) -> None:
     finally:
         interval_monitor.close()
 
-    print(f"\nAll Log Monitor checks passed. Artifacts retained at: {run_dir.resolve()}")
+    print(
+        f"\nAll Log Monitor checks passed. Artifacts retained at: {run_dir.resolve()}"
+    )
 
 
 def main() -> None:

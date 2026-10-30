@@ -118,9 +118,7 @@ class AlertRouter:
                 continue
             publish_alert = alert
             if self._dispatcher is not None:
-                publish_alert = enrich_alert_delivery(
-                    alert, self._dispatcher.tracker
-                )
+                publish_alert = enrich_alert_delivery(alert, self._dispatcher.tracker)
             if self._guarded(
                 "publish",
                 publish_alert,

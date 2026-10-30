@@ -72,9 +72,7 @@ class HttpsCallbackSink:
             transport=transport,
         )
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> CallbackResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> CallbackResult:
         start = time.monotonic()
         try:
             response = await self._client.post(
@@ -122,9 +120,7 @@ class DryRunCallbackSink:
     def __init__(self, *, logger: logging.Logger | None = None) -> None:
         self._logger = logger or logging.getLogger(__name__)
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> CallbackResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> CallbackResult:
         delivery_id = headers.get("X-Telemetry-Delivery-Id", "unknown")
         self._logger.info(
             "dry-run callback: delivery_id=%s bytes=%d body=%s",

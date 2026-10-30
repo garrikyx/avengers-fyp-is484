@@ -57,15 +57,11 @@ def test_restarted_bucket_marks_the_instance_warming_up_for_the_warmup_window() 
 
     assert store.is_warming_up("magic-prod-01", at=bucket_start) is True
     assert (
-        store.is_warming_up(
-            "magic-prod-01", at=bucket_start + timedelta(seconds=119)
-        )
+        store.is_warming_up("magic-prod-01", at=bucket_start + timedelta(seconds=119))
         is True
     )
     assert (
-        store.is_warming_up(
-            "magic-prod-01", at=bucket_start + timedelta(seconds=121)
-        )
+        store.is_warming_up("magic-prod-01", at=bucket_start + timedelta(seconds=121))
         is False
     )
 

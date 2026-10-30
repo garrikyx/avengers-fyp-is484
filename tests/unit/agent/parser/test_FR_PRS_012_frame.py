@@ -167,9 +167,20 @@ def test_framing_survives_past_the_auto_delimiter_lock(
     framed = 0
     for seq in range(1, total + 1):
         line = (
-            b"8=FIX.4.2" + delim + b"35=0" + delim + b"49=MAGIC" + delim
-            + b"56=EXCH1" + delim + b"34=%d" % seq + delim
-            + b"52=20260101-10:00:00" + delim + b"10=000" + delim
+            b"8=FIX.4.2"
+            + delim
+            + b"35=0"
+            + delim
+            + b"49=MAGIC"
+            + delim
+            + b"56=EXCH1"
+            + delim
+            + b"34=%d" % seq
+            + delim
+            + b"52=20260101-10:00:00"
+            + delim
+            + b"10=000"
+            + delim
         )
         if parser.parse(line, meta).framed:
             framed += 1

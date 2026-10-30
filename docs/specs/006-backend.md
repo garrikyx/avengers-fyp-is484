@@ -114,11 +114,12 @@ anything other than `complete` in its prose answer (`FR-NLQ-010`).
 
 ## 6. Alert store
 
-| ID           | Requirement                                                                                                                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FR-QRY-016` | MUST hold all active alerts and the last `recentAlertLimit` (default 500) resolved alerts per instance, with `firstObservedUtc`, `lastObservedUtc`, `resolvedAtUtc`, `notificationCount` and delivery status. |
-| `FR-QRY-017` | Alert state from agents MUST be merged by `alertId`; a `resolved` update for an unknown `alertId` MUST be stored anyway (agents may have restarted) and flagged `synthetic: true`.                            |
-| `FR-QRY-018` | MUST own the `AgentHeartbeatMissing` rule (`FR-RUL-030`) and expose those alerts identically to agent-generated ones, distinguished by `source: backend`.                                                     |
+| ID           | Requirement                                                                                                                                                                                                                                                                                                                               |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-QRY-016` | MUST hold all active alerts and the last `recentAlertLimit` (default 500) resolved alerts per instance, with `firstObservedUtc`, `lastObservedUtc`, `resolvedAtUtc`, `notificationCount` and delivery status.                                                                                                                             |
+| `FR-QRY-017` | Alert state from agents MUST be merged by `alertId`; a `resolved` update for an unknown `alertId` MUST be stored anyway (agents may have restarted) and flagged `synthetic: true`.                                                                                                                                                        |
+| `FR-QRY-018` | MUST own the `AgentHeartbeatMissing` rule (`FR-RUL-030`) and expose those alerts identically to agent-generated ones, distinguished by `source: backend`.                                                                                                                                                                                 |
+| `FR-QRY-019` | An update with any status other than `resolved` for an `alertId` that is already `resolved` MUST be ignored. The agent gives each occurrence a new `alertId`, so such an update is stale, for example the delivery republish (`FR-CBK-018`) of a firing notification that settles after the alert resolved. It MUST NOT reopen the alert. |
 
 ## 7. Health and self-metrics
 

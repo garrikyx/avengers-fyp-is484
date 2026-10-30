@@ -20,7 +20,7 @@
 # agent.yaml `actions.allowedCommands`; it runs with this fixed argv, no
 # shell, and the alert JSON on stdin. Everything defaults to dryRun: true.
 actions:
-  - name: disk-cleanup        # for HostDiskFull once UBS-129 adds it
+  - name: disk-cleanup # for HostDiskFull once UBS-129 adds it
     type: command
     command: /opt/magic/bin/cleanup-disk
     args: ["--older-than", "7d"]
@@ -224,5 +224,20 @@ rules:
       - severity: critical
         threshold: 5
     window: 5m
+    for: 0s
+    dependsOnLogActivity: false
+
+  # UBS-128 / FR-RUL-023: one Application.log [F] line is already an incident.
+  # [E] lines are counted in app_log_errors but do not fire this rule.
+  - name: AppLogFailure
+    kind: threshold
+    source: counter
+    metric: app_log_errors
+    level: F
+    operator: ">="
+    tiers:
+      - severity: critical
+        threshold: 1
+    window: 1m
     for: 0s
     dependsOnLogActivity: false

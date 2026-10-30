@@ -127,15 +127,15 @@ def render_answer(inp: RenderInput) -> RenderOutput:
             for alert in inp.alerts[:3]:
                 if inp.audience == "executive":
                     parts.append(
-                        f"- {fmt.escape_adaptive_card_text(alert.rule_name)} "
-                        f"({fmt.escape_adaptive_card_text(alert.severity)}). "
+                        f"- {escape_adaptive_card_text(alert.rule_name)} "
+                        f"({escape_adaptive_card_text(alert.severity)}). "
                         f"{fmt.delivery_phrase(alert)}"
                     )
                 else:
                     parts.append(
-                        f"- {fmt.escape_adaptive_card_text(alert.rule_name)} on "
-                        f"{fmt.escape_adaptive_card_text(alert.instance_id)} "
-                        f"({fmt.escape_adaptive_card_text(alert.alert_id)}). "
+                        f"- {escape_adaptive_card_text(alert.rule_name)} on "
+                        f"{escape_adaptive_card_text(alert.instance_id)} "
+                        f"({escape_adaptive_card_text(alert.alert_id)}). "
                         f"{fmt.delivery_phrase(alert)}"
                     )
 

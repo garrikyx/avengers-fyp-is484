@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from telemetry_shared.models.metrics_query import (
     DataCompleteness,
@@ -16,6 +16,9 @@ from telemetry_shared.models.metrics_query import (
 
 from telemetry_backend.config import QueryConfig
 from telemetry_backend.services.query_engine import QueryEngine
+
+if TYPE_CHECKING:
+    import httpx
 
 REPLICA_QUERY_HEADER = "X-Replica-Query"
 
@@ -44,9 +47,7 @@ class ReplicaFanout:
         self, request: MetricsQueryRequest, *, now: datetime | None = None
     ) -> MetricsQueryResponse:
         now = now or datetime.now(UTC)
-        local_response = await self._local.query(
-            request, now=now, skip_fanout=True
-        )
+        local_response = await self._local.query(request, now=now, skip_fanout=True)
 
         peer_tasks = [
             asyncio.wait_for(
@@ -182,7 +183,7 @@ class ReplicaFanout:
 class HttpxFanoutClient:
     """POST metrics queries to peer replicas."""
 
-    def __init__(self, transport: object | None = None) -> None:
+    def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         import httpx
 
         self._client = httpx.AsyncClient(transport=transport, timeout=5.0)

@@ -123,3 +123,94 @@ def test_UBS_34_tracking_one_alert_does_not_affect_another() -> None:
 
     assert tracker.status_of("alert-1").status is DeliveryStatus.DELIVERED  # type: ignore[union-attr]
     assert tracker.status_of("alert-2").status is DeliveryStatus.SENT  # type: ignore[union-attr]
+
+
+def test_UBS_34_a_new_notification_of_the_same_alert_starts_afresh() -> None:
+    """Firing and resolved are two notifications of one `alert_id`. The
+    resolved one took a single attempt; it must not report the firing
+    notification's attempts or error on top of its own."""
+    tracker = DeliveryTracker()
+    now = datetime.now(UTC)
+    tracker.record("alert-1", DeliveryStatus.PENDING, now=now)
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now)
+    tracker.record("alert-1", DeliveryStatus.RETRYING, now=now, error="http_500")
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now)
+    tracker.record("alert-1", DeliveryStatus.DELIVERED, now=now)
+
+    tracker.record("alert-1", DeliveryStatus.PENDING, now=now)
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now)
+    tracker.record("alert-1", DeliveryStatus.DELIVERED, now=now)
+
+    record = tracker.status_of("alert-1")
+    assert record is not None
+    assert record.attempt_count == 1
+    assert record.last_error is None
+
+
+def test_UBS_34_notifications_of_one_alert_in_flight_together_stay_apart() -> None:
+    """A slow firing callback can still be retrying when the resolved one is
+    sent. Each notification keeps its own status and attempt count."""
+    tracker = DeliveryTracker()
+    now = datetime.now(UTC)
+    firing, resolved = "alert-1:firing:1", "alert-1:resolved:1"
+    tracker.record("alert-1", DeliveryStatus.PENDING, now=now, notification=firing)
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now, notification=firing)
+    tracker.record("alert-1", DeliveryStatus.RETRYING, now=now, notification=firing)
+    tracker.record("alert-1", DeliveryStatus.PENDING, now=now, notification=resolved)
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now, notification=resolved)
+    tracker.record("alert-1", DeliveryStatus.DELIVERED, now=now, notification=resolved)
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now, notification=firing)
+    tracker.record("alert-1", DeliveryStatus.DELIVERED, now=now, notification=firing)
+
+    first = tracker.status_of("alert-1", notification=firing)
+    second = tracker.status_of("alert-1", notification=resolved)
+    assert first is not None and second is not None
+    assert (first.status, first.attempt_count) == (DeliveryStatus.DELIVERED, 2)
+    assert (second.status, second.attempt_count) == (DeliveryStatus.DELIVERED, 1)
+
+
+def test_UBS_34_status_of_without_a_notification_is_the_latest_update() -> None:
+    tracker = DeliveryTracker()
+    now = datetime.now(UTC)
+    tracker.record("alert-1", DeliveryStatus.DELIVERED, now=now, notification="n1")
+    tracker.record("alert-1", DeliveryStatus.FAILED, now=now, notification="n2")
+    tracker.record("alert-1", DeliveryStatus.SENT, now=now, notification="n1")
+
+    latest = tracker.status_of("alert-1")
+    assert latest is not None
+    assert latest.status is DeliveryStatus.SENT
+    assert tracker.snapshot()["alert-1"] == latest
+
+
+def test_UBS_34_unknown_notification_has_no_status() -> None:
+    tracker = DeliveryTracker()
+    tracker.record("alert-1", DeliveryStatus.SENT, now=datetime.now(UTC))
+
+    assert tracker.status_of("alert-1", notification="other") is None
+
+
+def test_UBS_34_a_long_firing_alert_keeps_only_recent_notifications() -> None:
+    tracker = DeliveryTracker()
+    now = datetime.now(UTC)
+    for n in range(100):
+        tracker.record(
+            "alert-1", DeliveryStatus.DELIVERED, now=now, notification=f"n{n}"
+        )
+
+    assert tracker.status_of("alert-1", notification="n0") is None
+    assert tracker.status_of("alert-1", notification="n99") is not None
+
+
+def test_UBS_34_the_delivery_id_is_carried_per_notification() -> None:
+    tracker = DeliveryTracker()
+    now = datetime.now(UTC)
+    tracker.record(
+        "a", DeliveryStatus.SENT, now=now, notification="n1", delivery_id="d1"
+    )
+    tracker.record("a", DeliveryStatus.DELIVERED, now=now, notification="n1")
+    tracker.record(
+        "a", DeliveryStatus.SENT, now=now, notification="n2", delivery_id="d2"
+    )
+
+    assert tracker.status_of("a", notification="n1").correlation_id == "d1"  # type: ignore[union-attr]
+    assert tracker.status_of("a", notification="n2").correlation_id == "d2"  # type: ignore[union-attr]

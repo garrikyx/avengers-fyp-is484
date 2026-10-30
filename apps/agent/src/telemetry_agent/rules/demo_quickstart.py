@@ -79,10 +79,9 @@ class _FlakyBackendSink:
     def __init__(self, status: int) -> None:
         self.status = status
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         return PublishResult(status_code=self.status, latency_ms=1.0)
+
 
 # The live rule config, so this demo and `config/rules.yaml` can never drift.
 # parents[5] is the repo root: rules -> telemetry_agent -> src -> agent ->
@@ -216,8 +215,7 @@ class _Demo:
     def order(self, tag: int) -> bytes:
         return (
             b"8=FIX.4.2|35=D|49=MAGIC|56=EXCH1|34=%d|52=20260101-10:00:00|"
-            b"11=C%d|55=AAPL|54=1|40=2|38=100|10=000|"
-            % (self._next_seq(), tag)
+            b"11=C%d|55=AAPL|54=1|40=2|38=100|10=000|" % (self._next_seq(), tag)
         )
 
     def ack(self, tag: int) -> bytes:
@@ -252,8 +250,7 @@ class _Demo:
         """
         return (
             b"8=FIX.4.2|35=9|49=MAGIC|56=EXCH1|34=%d|52=20260101-10:00:00|"
-            b"11=C%d|41=O%d|434=1|102=1|10=000|"
-            % (self._next_seq(), tag, tag)
+            b"11=C%d|41=O%d|434=1|102=1|10=000|" % (self._next_seq(), tag, tag)
         )
 
     def slow_ack(self, tag: int, *, delay_ms: int) -> bytes:
@@ -374,13 +371,9 @@ class _Demo:
         (`FR-RUL-004`). Returns only what changed — the FSM emits on
         transitions, so a still-firing alert stays quiet.
         """
-        self.engine.evaluate(
-            self.snapshot(window), self.now
-        )
+        self.engine.evaluate(self.snapshot(window), self.now)
         self.now += timedelta(seconds=for_seconds + 1)
-        return self.engine.evaluate(
-            self.snapshot(window), self.now
-        )
+        return self.engine.evaluate(self.snapshot(window), self.now)
 
     def tick(self, window: str, *, advance: int = 1) -> list[AlertEvent]:
         """One evaluation a moment later — enough for a tier escalation,
@@ -388,9 +381,7 @@ class _Demo:
         delay (`FR-RUL-022`).
         """
         self.now += timedelta(seconds=advance)
-        return self.engine.evaluate(
-            self.snapshot(window), self.now
-        )
+        return self.engine.evaluate(self.snapshot(window), self.now)
 
     def rule_for_seconds(self, name: str) -> int:
         return next(rule.for_seconds for rule in self.rules if rule.name == name)
@@ -535,12 +526,12 @@ def _heartbeat_timeout_act() -> None:
     lines = [demo.logon(), demo.heartbeat(), demo.heartbeat()]
     demo.feed(lines)
     for _ in lines:
-        tracker.observe(
-            msg_type="Heartbeat", sender="MAGIC", target="EXCH1", at=0.0
-        )
+        tracker.observe(msg_type="Heartbeat", sender="MAGIC", target="EXCH1", at=0.0)
     print(f"  session alive, last heard from at t=0s: {tracker.tracked_sessions()[0]}")
-    print(f"  timeout threshold: {tracker.timeout_seconds:.0f}s "
-          "(health.sessionHeartbeatTimeout, mirrors the backend's)")
+    print(
+        f"  timeout threshold: {tracker.timeout_seconds:.0f}s "
+        "(health.sessionHeartbeatTimeout, mirrors the backend's)"
+    )
 
     # Then the venue goes quiet. No logout, no error line — nothing at all,
     # which is exactly why no per-message rule could ever catch this.
@@ -554,21 +545,21 @@ def _heartbeat_timeout_act() -> None:
         for dims, counters in derive_heartbeat_timeout_counters(
             hits, instance_id=_INSTANCE
         ):
-            demo.aggregator.ingest_agent_counters(
-                dims=dims, counters=counters, at=_T0
-            )
+            demo.aggregator.ingest_agent_counters(dims=dims, counters=counters, at=_T0)
         if hits:
-            print(f"  t={now}s: silent {hits[0].silent_seconds:.0f}s -> "
-                  f"heartbeat_timeouts +1 for {hits[0].session_id}")
+            print(
+                f"  t={now}s: silent {hits[0].silent_seconds:.0f}s -> "
+                f"heartbeat_timeouts +1 for {hits[0].session_id}"
+            )
 
-    print(f"  {ticks} ticks ran, and the counter reads "
-          f"{demo.counters('1m', ('heartbeat_timeouts',))}")
+    print(
+        f"  {ticks} ticks ran, and the counter reads "
+        f"{demo.counters('1m', ('heartbeat_timeouts',))}"
+    )
     print("  One silence, one count — not one per tick. FixSessionDown is")
     print("  critical at >= 1, so an unlatched counter would turn a single")
     print("  dead session into a stream of critical pages.")
-    _show_alerts(
-        demo.settle("1m", for_seconds=demo.rule_for_seconds("FixSessionDown"))
-    )
+    _show_alerts(demo.settle("1m", for_seconds=demo.rule_for_seconds("FixSessionDown")))
 
 
 def _alerts_to_backend_act() -> None:
@@ -580,8 +571,10 @@ def _alerts_to_backend_act() -> None:
     demo = _Demo()
     demo.feed(demo.rejected_orders(51, start=1))
     alerts = demo.settle("1m", for_seconds=demo.rule_for_seconds("RejectSpike"))
-    print(f"  the engine raised {len(alerts)} alert(s): "
-          f"{', '.join(a.rule_name for a in alerts)}")
+    print(
+        f"  the engine raised {len(alerts)} alert(s): "
+        f"{', '.join(a.rule_name for a in alerts)}"
+    )
 
     sent: list[bytes] = []
 
@@ -613,12 +606,20 @@ def _alerts_to_backend_act() -> None:
     print(f"    alerts[]       {len(batch['alerts'])} item(s)")
     first = batch["alerts"][0]
     for key in (
-        "alertId", "ruleName", "severity", "status",
-        "instanceId", "observedValue", "threshold", "matchedCondition",
+        "alertId",
+        "ruleName",
+        "severity",
+        "status",
+        "instanceId",
+        "observedValue",
+        "threshold",
+        "matchedCondition",
     ):
         print(f"      {key:<16} {first[key]}")
-    print(f"    snapshots[]    {len(batch['snapshots'])}  "
-          "(not the rule engine's output — out of scope)")
+    print(
+        f"    snapshots[]    {len(batch['snapshots'])}  "
+        "(not the rule engine's output — out of scope)"
+    )
     print("\n  Same shape as telemetry_shared.models.ingestion.TelemetryBatch,")
     print("  camelCase on the wire. The backend's alert store (UBS-93/94/95)")
     print("  merges it and serves it back from GET /telemetry/alerts.")
@@ -703,9 +704,7 @@ def _alert_storm_act() -> None:
         f"  {len(suppressed)} alerts notified, then the cap held at "
         f"{storm.engine.active_alert_count()} active"
     )
-    print(
-        f"  AlertStorm events emitted: {len(storms)} — the cap pages once, not"
-    )
+    print(f"  AlertStorm events emitted: {len(storms)} — the cap pages once, not")
     print("  once per suppressed alert, so a cascading outage can't self-DoS")
 
 
@@ -759,8 +758,10 @@ def main() -> None:
     critical = demo.tick("5m")
     _show_alerts(critical)
     if warning and critical:
-        print(f"  same alertId across the escalation: "
-              f"{warning[0].alert_id == critical[0].alert_id}")
+        print(
+            f"  same alertId across the escalation: "
+            f"{warning[0].alert_id == critical[0].alert_id}"
+        )
         print("  FR-RUL-022 raises the severity of the alert already open rather")
         print("  than opening a second one — one incident, not two pages")
 
@@ -818,9 +819,7 @@ def main() -> None:
     _step("10. UBS-74 — Magic rejects every callback the agent sends it")
     registry = _run_dispatcher_against_a_broken_magic(4)
     print(f"  dispatcher's own counters: {registry}")
-    AgentCounterSampler(demo.aggregator, instance_id=_INSTANCE).sample(
-        registry, at=_T0
-    )
+    AgentCounterSampler(demo.aggregator, instance_id=_INSTANCE).sample(registry, at=_T0)
     print("  sampled into the aggregator as a delta, not an absolute count —")
     print("  the registry counts since startup, the rule asks 'in the last 5m'")
     _show_alerts(
@@ -851,6 +850,7 @@ def main() -> None:
     )
 
     _step("13. UBS-18 — the log starts emitting lines the parser can't frame")
+
     def rate() -> str:
         return demo.indicator("5m", "parse_error_rate", of="lines read")
 

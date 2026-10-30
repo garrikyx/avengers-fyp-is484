@@ -43,6 +43,10 @@ from telemetry_shared.models.metrics_query import (
     MetricsQueryResponse,
 )
 from telemetry_shared.models.nl_query import NlQueryRequest
+from telemetry_shared.models.trends import (
+    RejectReasonTrendsRequest,
+    RejectReasonTrendsResponse,
+)
 
 from telemetry_backend.api import health as health_api
 from telemetry_backend.api import internal as internal_api
@@ -64,6 +68,7 @@ from telemetry_backend.services.query_engine import (
     QueryTimeoutError,
     QueryValidationError,
 )
+from telemetry_backend.services.reject_reason_trends import RejectReasonTrendService
 from telemetry_backend.services.replica_fanout import (
     REPLICA_QUERY_HEADER,
     HttpxFanoutClient,
@@ -230,6 +235,7 @@ def create_app(
         agent_registry=registry,
         query_config=qconfig,
     )
+    trend_service = RejectReasonTrendService(engine)
     if app_deps.nl_service is None and app_deps.nl_config.enabled:
         app_deps.nl_service = build_nl_service(
             app_deps.nl_config,
@@ -545,6 +551,42 @@ def create_app(
             return await engine.query(
                 body,
                 skip_fanout=skip_fanout,
+                fanout_client=fanout_client,
+            )
+        except QueryValidationError as exc:
+            return _error_response(
+                request,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=exc.code,
+                message=exc.message,
+                details=[ErrorDetail(field=exc.field, issue=exc.issue)],
+            )
+        except QueryTimeoutError:
+            return _error_response(
+                request,
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                code="query_timeout",
+                message="Query exceeded the server-side deadline.",
+                details=[],
+            )
+
+    @app.post(
+        "/telemetry/query/reject-reason-trends",
+        response_model=RejectReasonTrendsResponse,
+        responses={
+            400: {"model": ErrorEnvelope},
+            504: {"model": ErrorEnvelope},
+        },
+    )
+    async def query_reject_reason_trends(
+        request: Request, body: RejectReasonTrendsRequest
+    ) -> RejectReasonTrendsResponse | JSONResponse:
+        """UBS-27: reject reasons rising against the preceding window."""
+        try:
+            return await trend_service.analyse(
+                body,
+                now=datetime.now(UTC),
+                skip_fanout=request.headers.get(REPLICA_QUERY_HEADER) == "1",
                 fanout_client=fanout_client,
             )
         except QueryValidationError as exc:

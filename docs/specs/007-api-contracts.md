@@ -172,6 +172,23 @@ With `series: true`, `groups[].points` is added:
 `FR-QRY-035`: `null` means "no data for this step", `0` means "data present, count
 zero". Conflating the two is a defect.
 
+### 3.1 `POST /telemetry/query/reject-reason-trends` (UBS-27)
+
+`FR-QRY-040`: Identifies reject reasons that are increasing: each `rejectReason`'s
+`orders_rejected` count in the latest `window` against the preceding window of equal
+length. Built on the §3 query path, so retention, filters and fan-out behave the same.
+
+Request (all optional): `window` (default `"15m"`), `threshold` (default `0.5`, i.e.
+more than +50%), `minOccurrences` (default `5`, in the latest window), `filters` (as
+§3).
+
+A reason is `increasing` when `(current − previous) / previous > threshold`, `emerging`
+when it was absent before, `decreasing` below −10%, otherwise `steady`; both rising
+states need `minOccurrences`. `increasing[]` lists the rising reasons, `emerging` first,
+then largest rise first; `reasons[]` lists every reason. When the store does not yet
+cover the whole preceding window, `previousWindowComplete` is `false`, nothing is
+flagged and `caveats` says why.
+
 ## 4. Alerts
 
 ### 4.1 `GET /telemetry/alerts`
@@ -330,10 +347,10 @@ When the question can't be answered as a telemetry query, the response is a
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `reason` | `clarify` (default: no intent matched), `greeting`, `help`, `out_of_scope` (the question isn't about telemetry), or `llm_unavailable` (the LLM timed out or couldn't be reached and no rule matched). |
-| `suggestedQuestions` | Example questions from the intent catalogue. Surfaces may render them as buttons that re-ask the question. Empty if none apply. |
+| Field                | Meaning                                                                                                                                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reason`             | `clarify` (default: no intent matched), `greeting`, `help`, `out_of_scope` (the question isn't about telemetry), or `llm_unavailable` (the LLM timed out or couldn't be reached and no rule matched). |
+| `suggestedQuestions` | Example questions from the intent catalogue. Surfaces may render them as buttons that re-ask the question. Empty if none apply.                                                                       |
 
 Both fields are optional and additive. Clients that ignore them still get `message` and
 `supportedIntents`.

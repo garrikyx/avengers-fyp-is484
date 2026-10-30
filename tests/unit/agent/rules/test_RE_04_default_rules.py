@@ -42,9 +42,9 @@ def _fire(rule: RuleConfig, snapshot: MetricsSnapshot) -> list[AlertEvent]:
     return engine.evaluate(snapshot, t1)
 
 
-def test_default_rules_are_16_unique_names() -> None:
-    assert len(DEFAULT_RULES) == 16
-    assert len({r.name for r in DEFAULT_RULES}) == 16
+def test_default_rules_are_17_unique_names() -> None:
+    assert len(DEFAULT_RULES) == 17
+    assert len({r.name for r in DEFAULT_RULES}) == 17
 
 
 def test_high_reject_rate_fires_warning_then_escalates_to_critical() -> None:
@@ -175,9 +175,7 @@ def test_fix_session_down_fires_on_either_counter() -> None:
 
 def test_backend_unreachable_fires_at_five_consecutive_failures() -> None:
     rule = _rule("BackendUnreachable")
-    outage = make_snapshot(
-        now=_T0, gauges=make_gauges(consecutive_publish_failures=5)
-    )
+    outage = make_snapshot(now=_T0, gauges=make_gauges(consecutive_publish_failures=5))
     fired = _fire(rule, outage)
     assert fired[0].severity == "warning"
     assert fired[0].observed_value == 5
@@ -195,9 +193,7 @@ def test_backend_unreachable_silent_when_publishing_is_healthy() -> None:
     """`_on_commit` zeroes the gauge on the first successful batch — which
     is what resolves the alert, and why this rule needs no window."""
     rule = _rule("BackendUnreachable")
-    healthy = make_snapshot(
-        now=_T0, gauges=make_gauges(consecutive_publish_failures=0)
-    )
+    healthy = make_snapshot(now=_T0, gauges=make_gauges(consecutive_publish_failures=0))
     assert _fire(rule, healthy) == []
 
 

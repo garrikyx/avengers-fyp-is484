@@ -26,9 +26,7 @@ _INSTANCE = "magic-prod-01"
 
 def _aggregator(clock: FakeClock | None = None) -> MetricsAggregator:
     config = AggregatorConfig(metric_dimensions=dict(COUNTER_DIMENSIONS))
-    return MetricsAggregator(
-        config=config, clock=clock or FakeClock(_T0.timestamp())
-    )
+    return MetricsAggregator(config=config, clock=clock or FakeClock(_T0.timestamp()))
 
 
 def _total(aggregator: MetricsAggregator, metric: str) -> Decimal:
@@ -197,9 +195,7 @@ def test_untracked_registry_keys_are_ignored() -> None:
     sampler = AgentCounterSampler(aggregator, instance_id=_INSTANCE)
     # `callback_queue_dropped` is tracked; `some_other_counter` is not
     # declared in COUNTER_DIMENSIONS and would raise if it were ingested.
-    sampler.sample(
-        {"callback_queue_dropped": 2, "some_other_counter": 99}, at=_T0
-    )
+    sampler.sample({"callback_queue_dropped": 2, "some_other_counter": 99}, at=_T0)
     assert _total(aggregator, "callback_queue_dropped") == Decimal(2)
 
 

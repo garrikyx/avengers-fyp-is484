@@ -101,9 +101,7 @@ def test_read_indexes_only_the_requested_span_not_the_whole_ring() -> None:
     counting_ring = _CountingRing(store._rings["target"])
     store._rings["target"] = counting_ring
 
-    groups = store.read(
-        "target", from_utc=now, to_utc=now + timedelta(seconds=10)
-    )
+    groups = store.read("target", from_utc=now, to_utc=now + timedelta(seconds=10))
 
     assert groups and groups[0].counters["orders_submitted"] == 1
     # The requested range spans at most 2 canonical buckets; a full scan

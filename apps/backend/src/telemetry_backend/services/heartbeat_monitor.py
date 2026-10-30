@@ -56,8 +56,7 @@ class HeartbeatMonitor:
             instance_id=instance_id,
             agent_id=agent_id,
             matched_condition=(
-                f"no heartbeat for {age_seconds:.0f}s "
-                f"(threshold {threshold:.0f}s)"
+                f"no heartbeat for {age_seconds:.0f}s (threshold {threshold:.0f}s)"
             ),
             observed_value=age_seconds,
             threshold=threshold,
@@ -79,9 +78,7 @@ class HeartbeatMonitor:
             application=application,
             instance_id=instance_id,
             agent_id=agent_id,
-            matched_condition=(
-                f"heartbeat restored within {threshold:.0f}s threshold"
-            ),
+            matched_condition=(f"heartbeat restored within {threshold:.0f}s threshold"),
             observed_value=0.0,
             threshold=threshold,
             first_observed_utc=now,

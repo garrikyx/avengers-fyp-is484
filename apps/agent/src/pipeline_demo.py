@@ -8,6 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.metrics.demo_sink import DemoMetricsSink
 from telemetry_agent.parser.applog.parser import AppLogParser
@@ -17,7 +18,6 @@ from telemetry_agent.parser.applog.signatures import (
 )
 from telemetry_agent.parser.config import DemoConfig, load_demo_config
 from telemetry_agent.parser.display import print_demo_header, render_demo_line
-from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.parser.fix.identifiers import load_hash_key
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.protocol import Confidence, ParseResult, SourceMeta

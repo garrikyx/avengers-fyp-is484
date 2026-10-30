@@ -4,9 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-_FIX_TS = re.compile(
-    r"^(\d{4})(\d{2})(\d{2})-(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$"
-)
+_FIX_TS = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$")
 
 
 @dataclass(frozen=True, slots=True)

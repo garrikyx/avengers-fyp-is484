@@ -1,0 +1,222 @@
+"""Increasing reject reasons (UBS-27): current window vs. the preceding one.
+
+Built on `QueryEngine.query()` (grouped by `rejectReason`, counter
+`orders_rejected`) rather than reading the Metric Store directly, so
+retention limits, instance filters and replica fan-out behave exactly as for
+`POST /telemetry/query/metrics`.
+
+A reason is **increasing** when its count in the latest window exceeds the
+preceding equal-length window's by more than `threshold`, and **emerging**
+when it was absent before. Both need `min_occurrences` in the latest window.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
+
+from telemetry_shared.models.metrics_query import (
+    MetricsQueryRequest,
+    MetricsQueryResponse,
+    QueryTimeRange,
+)
+from telemetry_shared.models.trends import (
+    ReasonTrend,
+    RejectReasonTrendsRequest,
+    RejectReasonTrendsResponse,
+    TrendDirection,
+)
+
+from telemetry_backend.services.query_engine import QueryEngine, QueryValidationError
+
+if TYPE_CHECKING:
+    from telemetry_backend.services.replica_fanout import FanoutClient
+
+_METRIC = "rejections"  # alias of orders_rejected (telemetry_shared.query.aliases)
+_REASON = "rejectReason"
+_STEADY_BAND = 0.1  # within +/-10% is "steady", not worth a line either way
+_WINDOW_RE = re.compile(r"^(\d+)([smh])$")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
+_EPSILON = timedelta(microseconds=1)
+
+
+def _bad_window(window: str, issue: str) -> QueryValidationError:
+    return QueryValidationError(
+        code="invalid_field",
+        message="window is invalid.",
+        field="window",
+        issue=issue.format(window=window),
+    )
+
+
+def classify(
+    current: int, previous: int, *, threshold: float, min_occurrences: int
+) -> tuple[TrendDirection, float | None]:
+    """Direction and relative change for one reason's two counts."""
+    if previous == 0:
+        change = None
+        direction: TrendDirection = (
+            "emerging" if current >= min_occurrences else "steady"
+        )
+        return direction, change
+    change = (current - previous) / previous
+    if change > threshold and current >= min_occurrences:
+        return "increasing", change
+    if change < -_STEADY_BAND:
+        return "decreasing", change
+    return "steady", change
+
+
+class RejectReasonTrendService:
+    def __init__(self, engine: QueryEngine) -> None:
+        self._engine = engine
+
+    async def analyse(
+        self,
+        request: RejectReasonTrendsRequest,
+        *,
+        now: datetime,
+        skip_fanout: bool = False,
+        fanout_client: FanoutClient | None = None,
+    ) -> RejectReasonTrendsResponse:
+        """Raises `QueryValidationError` for a bad window or filter."""
+        length = self._window_length(request.window)
+        # Windows are half-open and aligned to the store's buckets, and end at
+        # the last *complete* bucket: the store's range reads are bucket-
+        # inclusive at both ends, so sharing a boundary instant would count
+        # that bucket in both windows, and the newest bucket is still filling.
+        bucket = self._engine.bucket_seconds
+        end = datetime.fromtimestamp(now.timestamp() // bucket * bucket, tz=now.tzinfo)
+        current_from, previous_from = end - length, end - 2 * length
+
+        current = await self._counts(
+            request, current_from, end - _EPSILON, skip_fanout, fanout_client, now
+        )
+        previous = await self._counts(
+            request,
+            previous_from,
+            current_from - _EPSILON,
+            skip_fanout,
+            fanout_client,
+            now,
+        )
+
+        complete = self._covers(previous_from, now)
+        reasons = self._trends(current, previous, request)
+        flagged = (
+            sorted(
+                (t for t in reasons if t.trend in ("emerging", "increasing")),
+                key=lambda t: (
+                    t.change_ratio is not None,  # emerging (unbounded) first
+                    -(t.change_ratio or 0.0),
+                    -t.current_count,
+                ),
+            )
+            if complete
+            else []
+        )
+        if not complete:
+            reasons = [t.model_copy(update={"trend": "steady"}) for t in reasons]
+        caveats = (
+            []
+            if complete
+            else [
+                "The Metric Store does not yet cover the whole preceding "
+                f"{request.window} window, so no trend is reported."
+            ]
+        )
+        return RejectReasonTrendsResponse(
+            evaluated_at_utc=now,
+            window=request.window,
+            threshold=request.threshold,
+            min_occurrences=request.min_occurrences,
+            current_from_utc=current_from,
+            current_to_utc=end,
+            previous_from_utc=previous_from,
+            previous_to_utc=current_from,
+            previous_window_complete=complete,
+            increasing=flagged,
+            reasons=reasons,
+            caveats=caveats,
+        )
+
+    def _window_length(self, window: str) -> timedelta:
+        match = _WINDOW_RE.match(window)
+        if match is None:
+            raise _bad_window(window, "cannot parse {window!r}; expected e.g. '15m'")
+        seconds = int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+        bucket = self._engine.bucket_seconds
+        if seconds <= 0 or seconds % bucket != 0:
+            raise _bad_window(
+                window, f"{{window!r}} must be a positive multiple of {bucket}s"
+            )
+        return timedelta(seconds=seconds)
+
+    def _covers(self, start: datetime, now: datetime) -> bool:
+        oldest, _ = self._engine.store.retention_bounds(now=now)
+        return oldest is not None and oldest <= start
+
+    async def _counts(
+        self,
+        request: RejectReasonTrendsRequest,
+        start: datetime,
+        end: datetime,
+        skip_fanout: bool,
+        fanout_client: FanoutClient | None,
+        now: datetime,
+    ) -> dict[str, int]:
+        query = MetricsQueryRequest(
+            time_range=QueryTimeRange(from_utc=start, to_utc=end),
+            filters=request.filters,
+            group_by=[_REASON],
+            metrics=[_METRIC],
+        )
+        try:
+            response = await self._engine.query(
+                query, now=now, skip_fanout=skip_fanout, fanout_client=fanout_client
+            )
+        except QueryValidationError as exc:
+            # The preceding window can lie wholly outside retention while the
+            # latest one does not; that is "no history", not a bad request.
+            if exc.code == "invalid_time_range" and start < end <= now:
+                return {}
+            raise
+        return _by_reason(response)
+
+    @staticmethod
+    def _trends(
+        current: dict[str, int],
+        previous: dict[str, int],
+        request: RejectReasonTrendsRequest,
+    ) -> list[ReasonTrend]:
+        trends: list[ReasonTrend] = []
+        for reason in sorted(current.keys() | previous.keys()):
+            now_count, before = current.get(reason, 0), previous.get(reason, 0)
+            direction, change = classify(
+                now_count,
+                before,
+                threshold=request.threshold,
+                min_occurrences=request.min_occurrences,
+            )
+            trends.append(
+                ReasonTrend(
+                    reject_reason=reason,
+                    current_count=now_count,
+                    previous_count=before,
+                    change_ratio=change,
+                    trend=direction,
+                )
+            )
+        return sorted(trends, key=lambda t: -t.current_count)
+
+
+def _by_reason(response: MetricsQueryResponse) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for group in response.groups:
+        reason = group.dimensions.get(_REASON)
+        value = group.counters.get(_METRIC)
+        if reason is None or not value:
+            continue
+        counts[reason] = counts.get(reason, 0) + int(value)
+    return counts

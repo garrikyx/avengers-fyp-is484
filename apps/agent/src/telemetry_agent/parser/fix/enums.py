@@ -100,7 +100,9 @@ _RAW_SANITIZE = re.compile(r"[^A-Za-z0-9]")
 _MAX_RAW_LEN = 8
 
 
-def normalize_enum(raw: str | None, mapping: dict[str, str]) -> tuple[str | None, str | None]:
+def normalize_enum(
+    raw: str | None, mapping: dict[str, str]
+) -> tuple[str | None, str | None]:
     """Map a raw FIX enum value to a stable name.
 
     Returns (normalized, unknown_token). unknown_token is set when the value

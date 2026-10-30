@@ -248,9 +248,7 @@ def _to_decimal(raw: str | None) -> Decimal | None:
         return None
 
 
-def _parse_transact_time(
-    fields: FixFields, telemetry: FixTelemetry
-) -> datetime | None:
+def _parse_transact_time(fields: FixFields, telemetry: FixTelemetry) -> datetime | None:
     if not fields.transact_time or telemetry.event_time_utc is None:
         return None
     ts = parse_fix_timestamp(fields.transact_time, wall=telemetry.event_time_utc)

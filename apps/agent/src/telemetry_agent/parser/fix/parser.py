@@ -34,7 +34,6 @@ _DEFAULT_REJECT_PATTERNS: list[tuple[str, str]] = [
 
 
 class FixParser:
-
     def __init__(
         self,
         *,
@@ -200,5 +199,6 @@ def _strip_sensitive_fields(fields: FixFields) -> FixFields:
         ref_msg_type=fields.ref_msg_type,
         session_reject_reason=fields.session_reject_reason,
     )
+
 
 register_parser(FixParser())
