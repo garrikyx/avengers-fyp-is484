@@ -47,6 +47,8 @@ Thumbs.db
 CLAUDE.local.md
 # Claude Code local settings (machine-specific hook paths)
 .claude/settings.json
+# Codex hook paths are machine-specific; .codex/config.toml is shared
+.codex/hooks.json
 
 # Simulator-Generated Log Output & Rotation Backups
 /logs/

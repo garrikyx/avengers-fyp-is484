@@ -16,7 +16,7 @@ def test_checkpoints_offsets_while_file_is_still_busy(tmp_path: Path) -> None:
     """A long-running stream must checkpoint before it reaches EOF."""
     log_path = tmp_path / "Fix.log"
     state_path = tmp_path / "offsets.json"
-    log_path.write_text("first\nsecond\n")
+    log_path.write_text("first\nsecond\n", newline="\n")
 
     monitor = LogMonitor(
         log_path,
@@ -37,7 +37,7 @@ def test_checkpoints_offsets_while_file_is_still_busy(tmp_path: Path) -> None:
 def test_rotation_drains_late_writes_from_old_descriptor(tmp_path: Path) -> None:
     """A late write to the renamed file is read during the drain window."""
     active_path = tmp_path / "Application.log"
-    active_path.write_text("old\n")
+    active_path.write_text("old\n", newline="\n")
     monitor = LogMonitor(
         active_path,
         OffsetTracker(tmp_path / "offsets.json"),
@@ -47,10 +47,10 @@ def test_rotation_drains_late_writes_from_old_descriptor(tmp_path: Path) -> None
 
     rotated_path = tmp_path / "Application.log.1"
     active_path.rename(rotated_path)
-    active_path.write_text("new\n")
+    active_path.write_text("new\n", newline="\n")
     assert _line_texts(list(monitor.poll_lines())) == ["new"]
 
-    with rotated_path.open("a") as handle:
+    with rotated_path.open("a", newline="\n") as handle:
         handle.write("late-old\n")
     assert _line_texts(list(monitor.poll_lines())) == ["late-old"]
     monitor.close()
@@ -62,7 +62,7 @@ def test_restart_recovers_retained_rotation_created_while_offline(
     """A restart backfills retained archives before reading the new active log."""
     active_path = tmp_path / "Application.log"
     state_path = tmp_path / "offsets.json"
-    active_path.write_text("before-stop\n")
+    active_path.write_text("before-stop\n", newline="\n")
 
     first_monitor = LogMonitor(active_path, OffsetTracker(state_path))
     assert _line_texts(list(first_monitor.poll_lines())) == ["before-stop"]
@@ -70,9 +70,9 @@ def test_restart_recovers_retained_rotation_created_while_offline(
 
     rotated_path = tmp_path / "Application.log.1"
     active_path.rename(rotated_path)
-    with rotated_path.open("a") as handle:
+    with rotated_path.open("a", newline="\n") as handle:
         handle.write("written-while-offline\n")
-    active_path.write_text("new-active-file\n")
+    active_path.write_text("new-active-file\n", newline="\n")
 
     restarted_monitor = LogMonitor(active_path, OffsetTracker(state_path))
     assert _line_texts(list(restarted_monitor.poll_lines())) == [
@@ -88,7 +88,7 @@ def test_restart_backfills_multiple_rotations_created_while_offline(
     """A restart recovers every retained archive, oldest archive first."""
     active_path = tmp_path / "Application.log"
     state_path = tmp_path / "offsets.json"
-    active_path.write_text("read-before-stop\n")
+    active_path.write_text("read-before-stop\n", newline="\n")
 
     first_monitor = LogMonitor(active_path, OffsetTracker(state_path))
     assert _line_texts(list(first_monitor.poll_lines())) == ["read-before-stop"]
@@ -97,20 +97,22 @@ def test_restart_backfills_multiple_rotations_created_while_offline(
     newest_archive = tmp_path / "Application.log.1"
     oldest_archive = tmp_path / "Application.log.2"
     active_path.replace(newest_archive)
-    with newest_archive.open("a") as handle:
+    with newest_archive.open("a", newline="\n") as handle:
         handle.write("first-offline-line\n")
 
-    active_path.write_text("second-offline-line\n")
+    active_path.write_text("second-offline-line\n", newline="\n")
     newest_archive.replace(oldest_archive)
     active_path.replace(newest_archive)
-    active_path.write_text("active-after-restart\n")
+    active_path.write_text("active-after-restart\n", newline="\n")
 
     # Make the intended chronological order explicit rather than depending on
-    # filesystem timestamp resolution during this test.
+    # filesystem timestamp resolution during this test.  Steps are 1 ms apart
+    # because NTFS stores mtimes in 100 ns ticks, so 1 ns steps collapse.
     timestamp = time.time_ns()
+    step = 1_000_000
     os.utime(oldest_archive, ns=(timestamp, timestamp))
-    os.utime(newest_archive, ns=(timestamp + 1, timestamp + 1))
-    os.utime(active_path, ns=(timestamp + 2, timestamp + 2))
+    os.utime(newest_archive, ns=(timestamp + step, timestamp + step))
+    os.utime(active_path, ns=(timestamp + 2 * step, timestamp + 2 * step))
 
     restarted_monitor = LogMonitor(active_path, OffsetTracker(state_path))
     assert _line_texts(list(restarted_monitor.poll_lines())) == [
@@ -125,11 +127,11 @@ def test_does_not_emit_an_unterminated_line_until_it_is_complete(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "Fix.log"
-    log_path.write_text("partial")
+    log_path.write_text("partial", newline="\n")
     monitor = LogMonitor(log_path, OffsetTracker(tmp_path / "offsets.json"))
 
     assert _line_texts(list(monitor.poll_lines())) == []
-    with log_path.open("a") as handle:
+    with log_path.open("a", newline="\n") as handle:
         handle.write(" line\n")
     assert _line_texts(list(monitor.poll_lines())) == ["partial line"]
     monitor.close()

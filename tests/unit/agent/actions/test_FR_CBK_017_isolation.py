@@ -16,8 +16,7 @@ from telemetry_shared.models.alerts import AlertEvent
 class _Recorder:
     def __init__(self) -> None:
         self.alerts: list[AlertEvent] = []
-        # The router reads delivery state off the dispatcher to enrich the
-        # alert it publishes (FR-CBK-009).
+        # AlertRouter reads the dispatcher's tracker to enrich published alerts.
         self.tracker = DeliveryTracker()
 
     def enqueue(self, alert: AlertEvent) -> None:
