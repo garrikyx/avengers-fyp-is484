@@ -58,9 +58,15 @@ def test_FR_PRS_021_extracted_fields_carry_hashes_not_plaintext() -> None:
     }
     extracted = extract_allowlisted_fields(raw_fields, hash_key=b"key-a")
 
-    assert extracted.cl_ord_id_hash == hash_identifier("UNHASHED_TAG11_CLORDID", b"key-a")
-    assert extracted.orig_cl_ord_id_hash == hash_identifier("UNHASHED_TAG41_ORIGCLORDID", b"key-a")
-    assert extracted.order_id_hash == hash_identifier("UNHASHED_TAG37_ORDERID", b"key-a")
+    assert extracted.cl_ord_id_hash == hash_identifier(
+        "UNHASHED_TAG11_CLORDID", b"key-a"
+    )
+    assert extracted.orig_cl_ord_id_hash == hash_identifier(
+        "UNHASHED_TAG41_ORIGCLORDID", b"key-a"
+    )
+    assert extracted.order_id_hash == hash_identifier(
+        "UNHASHED_TAG37_ORDERID", b"key-a"
+    )
     assert extracted.exec_id_hash == hash_identifier("UNHASHED_TAG17_EXECID", b"key-a")
 
     for value in (
@@ -73,7 +79,9 @@ def test_FR_PRS_021_extracted_fields_carry_hashes_not_plaintext() -> None:
         assert "UNHASHED" not in value
 
 
-def test_FR_PRS_021_no_hash_key_omits_identifiers_rather_than_leaking_plaintext() -> None:
+def test_FR_PRS_021_no_hash_key_omits_identifiers_rather_than_leaking_plaintext() -> (
+    None
+):
     raw_fields = {"11": "UNHASHED_TAG11_CLORDID"}
     extracted = extract_allowlisted_fields(raw_fields, hash_key=None)
     assert extracted.cl_ord_id_hash is None

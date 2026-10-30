@@ -6,6 +6,7 @@ import sys
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from re import Pattern
 
 from telemetry_agent.metrics.demo_sink import DemoMetricsSink
 from telemetry_agent.parser.applog.parser import AppLogParser
@@ -104,7 +105,10 @@ def main() -> None:
     registry = Registry(parsers=parsers)
     unknown = registry.validate_chain(chain)
     if unknown:
-        msg = f"unknown parsers in chain: {unknown}; registered={sorted(registered_names())}"
+        msg = (
+            f"unknown parsers in chain: {unknown}; "
+            f"registered={sorted(registered_names())}"
+        )
         raise SystemExit(msg)
 
     if not args.corpus:
@@ -191,7 +195,7 @@ def _run_corpus_file(
     *,
     registry: Registry,
     parser_chain: list[str],
-    app_log_patterns: list,
+    app_log_patterns: list[Pattern[bytes]],
     line_filter: int | None,
     quiet: bool,
 ) -> None:
@@ -234,7 +238,7 @@ def _run_stdin(
     signature_matcher: SignatureMatcher,
     metrics: DemoMetricsSink,
     *,
-    app_log_patterns: list,
+    app_log_patterns: list[Pattern[bytes]],
     quiet: bool,
 ) -> None:
     for raw in sys.stdin.buffer:
@@ -320,19 +324,19 @@ def _format_line_result(
     elif result.framed:
         parts.append("framed=true")
         parts.append(f"msgType={result.msg_type}")
-        tel = result.telemetry
-        if tel is not None:
-            if tel.normalized_msg_type:
-                parts.append(f"normalizedMsgType={tel.normalized_msg_type}")
-            if tel.effective_reject_reason:
-                parts.append(f"rejectReason={tel.effective_reject_reason}")
-            if tel.reject_reason_label:
-                parts.append(f"rejectLabel={tel.reject_reason_label}")
-            if tel.seq_gap is not None:
-                gap = tel.seq_gap
+        fix_tel = result.telemetry
+        if fix_tel is not None:
+            if fix_tel.normalized_msg_type:
+                parts.append(f"normalizedMsgType={fix_tel.normalized_msg_type}")
+            if fix_tel.effective_reject_reason:
+                parts.append(f"rejectReason={fix_tel.effective_reject_reason}")
+            if fix_tel.reject_reason_label:
+                parts.append(f"rejectLabel={fix_tel.reject_reason_label}")
+            if fix_tel.seq_gap is not None:
+                gap = fix_tel.seq_gap
                 kind = "regression" if gap.is_regression else "gap"
                 parts.append(f"seq_{kind}={gap.gap_size or gap.actual}")
-            if tel.clock_skew:
+            if fix_tel.clock_skew:
                 parts.append("clockSkew=true")
         fields = _fields_dict(result)
         if fields:

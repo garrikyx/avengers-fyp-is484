@@ -84,9 +84,11 @@ def _fire(aggregator: MetricsAggregator) -> list[AlertEvent]:
 
 
 def _rate(aggregator: MetricsAggregator) -> float | None:
-    return snapshot(aggregator, "5m", group_by=(), now=_T0).groups[
-        0
-    ].indicators.parse_error_rate.value
+    return (
+        snapshot(aggregator, "5m", group_by=(), now=_T0)
+        .groups[0]
+        .indicators.parse_error_rate.value
+    )
 
 
 def test_a_clean_log_never_fires() -> None:

@@ -112,7 +112,9 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    _banner(1, "A trader's order lifecycle becomes counters", "MA-01 store + MA-02 counters")
+    _banner(
+        1, "A trader's order lifecycle becomes counters", "MA-01 store + MA-02 counters"
+    )
     _story(
         "A trader submits a limit buy for 100 AAPL. 8ms later the exchange acks "
         "it (ExecType=New). 22ms after that it fills completely (Trade, "
@@ -232,7 +234,9 @@ def main() -> None:
         _line(metric, totals[metric], notes.get(metric, ""))
 
     # ------------------------------------------------------------------
-    _banner(2, "Turning raw reject reasons into canonical labels", "MA-02 reject reasons")
+    _banner(
+        2, "Turning raw reject reasons into canonical labels", "MA-02 reject reasons"
+    )
     _story(
         "Two rejects happened above: the MSFT sell carried a known reason code "
         "(OrderExceedsLimit), and the session Reject only had free text "
@@ -299,7 +303,11 @@ def main() -> None:
         cap_demo.cardinality_folded,
         "expected 2 — GOOG/TSLA/AMZN admitted, NFLX/META folded",
     )
-    _line("__other__ row", by_symbol.get(("__other__",)), "NFLX + META summed under one label")
+    _line(
+        "__other__ row",
+        by_symbol.get(("__other__",)),
+        "NFLX + META summed under one label",
+    )
 
     # ------------------------------------------------------------------
     _banner(4, "Correlating responses back to the right order", "MA-03 correlation")
@@ -376,7 +384,11 @@ def main() -> None:
     )
     stats = correlator.stats
     _result("correlator.stats after all of the above")
-    _line("ttl_evictions", stats.ttl_evictions, "none expired yet (ttl_seconds=5 for this demo)")
+    _line(
+        "ttl_evictions",
+        stats.ttl_evictions,
+        "none expired yet (ttl_seconds=5 for this demo)",
+    )
     _line("cap_evictions", stats.cap_evictions, "max_entries never hit")
     _line("unmatched_orders", stats.unmatched_orders, "ttl_evictions + cap_evictions")
     _line("orphan_responses", stats.orphan_responses, "the C-UNKNOWN ExecutionReport")

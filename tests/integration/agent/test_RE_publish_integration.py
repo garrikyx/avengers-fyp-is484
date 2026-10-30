@@ -58,9 +58,7 @@ def _rule(name: str) -> RuleConfig:
 
 def _publisher(sink: _ScriptedSink, **overrides: object) -> BackendPublisher:
     config = parse_publish_config({"endpoint": _ENDPOINT, **overrides})
-    return BackendPublisher(
-        sink, config, agent_id=_AGENT, application="Magic"
-    )
+    return BackendPublisher(sink, config, agent_id=_AGENT, application="Magic")
 
 
 def _snapshot_payload() -> Snapshot:

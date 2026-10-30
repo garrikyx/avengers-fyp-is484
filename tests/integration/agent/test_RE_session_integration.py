@@ -143,9 +143,9 @@ def _ingest_timeouts(
     _ingest_tick(aggregator, _tracker_fed(lines), now=after_seconds)
 
 
-def _fire(rule_names: tuple[str, ...], aggregator: MetricsAggregator, window: str) -> (
-    list[AlertEvent]
-):
+def _fire(
+    rule_names: tuple[str, ...], aggregator: MetricsAggregator, window: str
+) -> list[AlertEvent]:
     rules = tuple(_rule(name) for name in rule_names)
     engine = RuleEngine(
         rules=rules,

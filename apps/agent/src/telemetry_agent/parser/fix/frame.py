@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 SOH = b"\x01"
 
 
-class DelimiterMode(str, Enum):
+class DelimiterMode(StrEnum):
     AUTO = "auto"
     SOH = "soh"
     PIPE = "pipe"

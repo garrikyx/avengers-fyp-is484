@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from telemetry_shared.models.metrics_query import (
     MetricsQueryRequest,
@@ -28,6 +29,9 @@ from telemetry_shared.models.trends import (
 )
 
 from telemetry_backend.services.query_engine import QueryEngine, QueryValidationError
+
+if TYPE_CHECKING:
+    from telemetry_backend.services.replica_fanout import FanoutClient
 
 _METRIC = "rejections"  # alias of orders_rejected (telemetry_shared.query.aliases)
 _REASON = "rejectReason"
@@ -74,7 +78,7 @@ class RejectReasonTrendService:
         *,
         now: datetime,
         skip_fanout: bool = False,
-        fanout_client: object | None = None,
+        fanout_client: FanoutClient | None = None,
     ) -> RejectReasonTrendsResponse:
         """Raises `QueryValidationError` for a bad window or filter."""
         length = self._window_length(request.window)
@@ -159,7 +163,7 @@ class RejectReasonTrendService:
         start: datetime,
         end: datetime,
         skip_fanout: bool,
-        fanout_client: object | None,
+        fanout_client: FanoutClient | None,
         now: datetime,
     ) -> dict[str, int]:
         query = MetricsQueryRequest(

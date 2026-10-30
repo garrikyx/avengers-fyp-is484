@@ -126,6 +126,4 @@ def test_UBS_94_batch_ingestion_makes_alerts_queryable() -> None:
             time.sleep(0.01)
         listed = client.get("/telemetry/alerts?ruleName=HighRejectRate")
         assert listed.status_code == 200
-        assert any(
-            item["alertId"] == "from-batch" for item in listed.json()["alerts"]
-        )
+        assert any(item["alertId"] == "from-batch" for item in listed.json()["alerts"])

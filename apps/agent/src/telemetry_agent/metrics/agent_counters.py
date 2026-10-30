@@ -77,6 +77,4 @@ class AgentCounterSampler:
                 deltas[metric] = Decimal(delta)
         if not deltas:
             return
-        self._aggregator.ingest_agent_counters(
-            dims=self._dims, counters=deltas, at=at
-        )
+        self._aggregator.ingest_agent_counters(dims=self._dims, counters=deltas, at=at)

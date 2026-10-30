@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypeVar
 
 from telemetry_agent.parser.protocol import Confidence, Parser
 
 _PARSERS: dict[str, Parser] = {}
-P = TypeVar("P", bound=Parser)
 
 
-def register_parser(parser: P) -> P:
+def register_parser[P: Parser](parser: P) -> P:
     """Register a parser at import time"""
     key = parser.name()
     if key in _PARSERS:

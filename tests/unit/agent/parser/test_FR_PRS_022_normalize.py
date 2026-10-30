@@ -33,5 +33,7 @@ def test_FR_PRS_022_unclassified_increments_flag() -> None:
 def test_FR_PRS_022_cardinality_overflow() -> None:
     seen = {f"label_{i}" for i in range(50)}
     patterns = compile_reject_patterns([("label_new", r"overflow token")])
-    label, _ = match_reject_label("overflow token here", patterns, max_labels=50, seen_labels=seen)
+    label, _ = match_reject_label(
+        "overflow token here", patterns, max_labels=50, seen_labels=seen
+    )
     assert label == "__other__"

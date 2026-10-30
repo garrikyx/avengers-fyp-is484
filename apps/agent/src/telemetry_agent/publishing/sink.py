@@ -95,9 +95,7 @@ class HttpsPublishSink:
             transport=transport,
         )
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         wire_body, gzipped = _maybe_gzip(body, self._compress_threshold)
         request_headers = dict(headers)
         request_headers["Authorization"] = f"Bearer {self._token}"
@@ -144,9 +142,7 @@ class DryRunPublishSink:
     def __init__(self, *, logger: logging.Logger | None = None) -> None:
         self._logger = logger or logging.getLogger(__name__)
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         self._logger.info("dry-run publish: bytes=%d", len(body))
         return PublishResult(
             status_code=202, latency_ms=0.0, response_snippet="dry-run"

@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from telemetry_shared.metrics import (
     Histogram,
@@ -34,6 +35,9 @@ from telemetry_shared.query.aliases import (
 from telemetry_backend.config import QueryConfig, StreamProcessorConfig
 from telemetry_backend.services.agent_registry import AgentRegistry
 from telemetry_backend.services.metric_store import MetricStore
+
+if TYPE_CHECKING:
+    from telemetry_backend.services.replica_fanout import FanoutClient
 from telemetry_backend.services.stream_processor import StreamProcessor
 
 _RELATIVE_RE = re.compile(r"^(\d+)(s|m|h)$")
@@ -119,7 +123,7 @@ class QueryEngine:
         *,
         now: datetime | None = None,
         skip_fanout: bool = False,
-        fanout_client: object | None = None,
+        fanout_client: FanoutClient | None = None,
     ) -> MetricsQueryResponse:
         now = now or datetime.now(UTC)
         if (
@@ -418,7 +422,9 @@ class QueryEngine:
                 )
             for key, acc in accumulated.items():
                 if key and key not in present:
-                    nulls = {name: None for name in request.metrics}
+                    nulls: dict[str, int | float | None] = {
+                        name: None for name in request.metrics
+                    }
                     acc.series_points.append((ts, nulls))
 
     def _metric_values_from_group(

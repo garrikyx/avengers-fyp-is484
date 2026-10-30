@@ -65,9 +65,7 @@ def test_buffer_bytes_must_be_positive() -> None:
 
 def test_retry_jitter_must_be_in_valid_range() -> None:
     with pytest.raises(PublishConfigError, match="jitter"):
-        parse_publish_config(
-            {"endpoint": _ENDPOINT, "retry": {"jitter": 1.5}}
-        )
+        parse_publish_config({"endpoint": _ENDPOINT, "retry": {"jitter": 1.5}})
 
 
 def test_retry_fields_are_configurable() -> None:

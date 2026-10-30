@@ -31,9 +31,7 @@ class _HangingSink:
     connection to a firewalled host. `send()` never returns within any
     timeframe this test could wait for."""
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         await asyncio.sleep(3600)
         raise AssertionError("unreachable")  # pragma: no cover
 

@@ -48,9 +48,7 @@ class _ScriptedSink:
         self._endpoint = endpoint
         self._attempts: dict[str, int] = {}
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> CallbackResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> CallbackResult:
         text = body.decode("utf-8")
         print(f"  >> POST {self._endpoint}")
         for name in ("X-Telemetry-Delivery-Id", "X-Telemetry-Idempotency-Key"):

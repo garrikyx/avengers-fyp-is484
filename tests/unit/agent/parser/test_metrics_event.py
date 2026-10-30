@@ -156,9 +156,9 @@ def test_missing_comp_ids_fall_back_to_unknown_session_id() -> None:
 # treats each as "first message for this session" and never reports a gap.
 
 
-def _session_counters(*lines: bytes, read_at: datetime | None = None) -> list[
-    dict[str, Decimal]
-]:
+def _session_counters(
+    *lines: bytes, read_at: datetime | None = None
+) -> list[dict[str, Decimal]]:
     parser = FixParser(hash_key=_KEY)
     meta = _meta(read_at=read_at) if read_at is not None else _meta()
     out: list[dict[str, Decimal]] = []

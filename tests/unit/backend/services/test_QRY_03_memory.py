@@ -200,9 +200,7 @@ def test_merges_within_the_throttle_interval_do_not_re_check_memory(
     assert calls == 1
 
 
-def test_estimated_memory_bytes_counts_an_idle_instances_allocated_ring_shell() -> (
-    None
-):
+def test_estimated_memory_bytes_counts_an_idle_instances_allocated_ring_shell() -> None:
     """`_get_or_create_instance` eagerly allocates a full-`capacity` ring of
     real `_CanonicalBucket` objects the moment an instance is first touched,
     regardless of how much data it ever sends. Once this instance's one

@@ -98,9 +98,7 @@ class HealthThresholds:
         if self.rolling_window_seconds < 1:
             raise HealthConfigError("health.rollingWindow must be >= 1s")
         if self.session_heartbeat_timeout_seconds <= 0:
-            raise HealthConfigError(
-                "health.sessionHeartbeatTimeout must be > 0"
-            )
+            raise HealthConfigError("health.sessionHeartbeatTimeout must be > 0")
 
 
 # --- YAML shape -------------------------------------------------------------

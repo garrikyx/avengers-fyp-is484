@@ -29,9 +29,7 @@ class _FakeSink:
         self._script = deque(script)
         self.calls = 0
 
-    async def send(
-        self, *, body: bytes, headers: Mapping[str, str]
-    ) -> PublishResult:
+    async def send(self, *, body: bytes, headers: Mapping[str, str]) -> PublishResult:
         self.calls += 1
         if self._script:
             return self._script.popleft()
@@ -127,9 +125,7 @@ def test_backoff_resets_after_a_successful_commit() -> None:
 
 
 def test_data_stays_buffered_through_repeated_backoff() -> None:
-    sink = _FakeSink(
-        [PublishResult(status_code=503, latency_ms=1.0) for _ in range(3)]
-    )
+    sink = _FakeSink([PublishResult(status_code=503, latency_ms=1.0) for _ in range(3)])
     publisher = BackendPublisher(
         sink, _config(), agent_id=AGENT_ID, application=APPLICATION
     )
@@ -169,9 +165,7 @@ def test_buffer_overflow_counts_on_both_the_internal_counter_and_the_hook() -> N
 
 
 def test_age_eviction_runs_on_each_publish_tick() -> None:
-    config = parse_publish_config(
-        {"endpoint": _ENDPOINT, "bufferMaxAge": "60s"}
-    )
+    config = parse_publish_config({"endpoint": _ENDPOINT, "bufferMaxAge": "60s"})
     dropped = 0
 
     def on_drop() -> None:
