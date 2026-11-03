@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -22,7 +23,9 @@ def _open_shared(path: Path) -> TextIO:
     the monitor relies on: the descriptor keeps following the renamed file.
     A missing path still raises ``FileNotFoundError``.
     """
-    if os.name != "nt":
+    # sys.platform, not os.name: mypy only narrows on sys.platform, so this
+    # keeps the Windows-only calls below from failing type checks elsewhere.
+    if sys.platform != "win32":
         return open(path, encoding="utf-8", errors="replace")
 
     import ctypes
