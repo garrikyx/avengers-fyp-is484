@@ -135,6 +135,7 @@ def main() -> None:
     summary = {
         "lines": 0,
         "fix": 0,
+        "binary": 0,
         "app_log": 0,
         "unsupported": 0,
         "framed": 0,
@@ -359,6 +360,8 @@ def _update_summary(summary: dict[str, int], result: ParseResult) -> None:
     summary["lines"] += 1
     if result.classification == LineClassification.FIX:
         summary["fix"] += 1
+    elif result.classification == LineClassification.BINARY:
+        summary["binary"] += 1
     elif result.classification == LineClassification.APP_LOG:
         summary["app_log"] += 1
     else:

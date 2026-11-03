@@ -71,6 +71,14 @@ Required cases:
 `FR-TST-003`: A fuzz target MUST run over arbitrary bytes asserting no panic, no
 unbounded allocation, and no emission of input bytes into any event field.
 
+### 3.1 Magic binary cases (Day-2, `FR-PRS-040`–`046`)
+
+Synthetic frames only, built from an invented magic prefix. Required cases: a frame at
+line start and after a text prefix, magic beyond `binaryDetectWindow`, FIX lines not
+claimed, garbage and invalid UTF-8 not claimed, empty `binaryMagic` never claims, chain
+order, a truncated frame, an unsupported version byte, and the `FR-TST-003` fuzz target.
+Classification cases exist (UBS-50); truncated/version/fuzz cases arrive with UBS-51.
+
 ### 3.2 Log monitor harness
 
 `FR-TST-004`: A test harness MUST simulate, on both Linux and Windows CI runners:

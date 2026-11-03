@@ -158,3 +158,36 @@ def test_invalid_log_stall_threshold_is_rejected(tmp_path: Path, value: str) -> 
         load_agent_config(
             _write(tmp_path, _MINIMAL + f"  logStallThreshold: {value}\n")
         )
+
+
+def test_binary_parsing_defaults_to_disabled(tmp_path: Path) -> None:
+    """FR-PRS-046: no `binaryMagic` means magic-binary never joins the chain."""
+    cfg = load_agent_config(_write(tmp_path, _MINIMAL))
+
+    assert cfg.parsing.binary_magic == b""
+    assert cfg.parsing.binary_detect_window == 64
+
+
+def test_binary_magic_is_read_as_hex(tmp_path: Path) -> None:
+    text = _MINIMAL + "parsing:\n  binaryMagic: '4d414731'\n  binaryDetectWindow: 32\n"
+    cfg = load_agent_config(_write(tmp_path, text))
+
+    assert cfg.parsing.binary_magic == b"MAG1"
+    assert cfg.parsing.binary_detect_window == 32
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "binaryMagic: 'zz'",
+        "binaryMagic: '4d4'",
+        "binaryDetectWindow: 0",
+        "binaryMagic: '4d414731'\n  binaryDetectWindow: 2",
+    ],
+)
+def test_invalid_binary_parsing_settings_are_rejected(
+    tmp_path: Path, section: str
+) -> None:
+    text = _MINIMAL + f"parsing:\n  {section}\n"
+    with pytest.raises(AgentConfigError, match="parsing"):
+        load_agent_config(_write(tmp_path, text))
