@@ -67,6 +67,8 @@ logs:
 
 parsing:
   maxClockSkew: 5m
+  binaryMagic: "" # FR-PRS-046: hex prefix; empty disables magic-binary
+  binaryDetectWindow: 64 # FR-PRS-041: bytes searched for the prefix
   maxRejectReasonLabels: 50
   rejectReasonPatterns: # FR-PRS-022, applied to normalised tag 58
     - label: price_exceeds_limit

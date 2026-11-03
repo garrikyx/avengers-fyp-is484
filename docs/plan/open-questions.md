@@ -133,6 +133,10 @@ tags, direction markers, encoding and rotation before onboarding. Simulator
 compatibility is POC acceptance, not proof of full production compatibility. References:
 specs 003, 004, 005 and apps/simulator/log_specifications.md.
 
+**Binary protocol (Day-2, UBS-49) — open.** Needed from UBS/Magic: protocol
+documentation, sanitised sample frames (no production data), and how frames are written
+to the log (raw bytes vs hex/base64). Spec 003 §11 holds the placeholders.
+
 ## Q-9 — Trading hours, calendar and timezones
 
 **Decision (team, 2026-10-16).** Singapore weekdays 08:30–17:30 are a demo schedule
