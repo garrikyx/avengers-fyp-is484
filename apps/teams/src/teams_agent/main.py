@@ -27,6 +27,13 @@ from microsoft_agents.hosting.core import (
 from teams_agent.backend_client import NlBackendClient
 from teams_agent.bot import register_handlers
 from teams_agent.config import TeamsBotConfig
+from teams_agent.notify import (
+    NOTIFY_PATH,
+    ConversationStore,
+    NotifyConfig,
+    NotifyHandler,
+    register_conversation_capture,
+)
 
 
 @web.middleware
@@ -34,13 +41,18 @@ async def _authorize(
     request: web.Request,
     handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> web.StreamResponse:
-    """Teams JWT validation on every route except the liveness probe."""
-    if request.path == "/healthz":
+    """Teams JWT validation on every route except the liveness probe and the
+    backend's notify route, which checks its own bearer token (UBS-120)."""
+    if request.path in {"/healthz", NOTIFY_PATH}:
         return await handler(request)
     return await jwt_authorization_middleware(request, handler)  # type: ignore[no-any-return]
 
 
-def create_app(config: TeamsBotConfig, sdk_config: dict[str, Any]) -> web.Application:
+def create_app(
+    config: TeamsBotConfig,
+    sdk_config: dict[str, Any],
+    notify_config: NotifyConfig | None = None,
+) -> web.Application:
     storage = MemoryStorage()
     connections = MsalConnectionManager(**sdk_config)
     adapter = CloudAdapter(connection_manager=connections)
@@ -56,6 +68,23 @@ def create_app(config: TeamsBotConfig, sdk_config: dict[str, Any]) -> web.Applic
     )
     register_handlers(agent_app, NlBackendClient(http), config)
 
+    # UBS-120: remember the group chat, and post alert cards into it.
+    notify = notify_config or NotifyConfig.from_env()
+    conversations = ConversationStore(
+        notify.state_path,
+        pinned_conversation_id=notify.conversation_id,
+        allow_personal=notify.allow_personal,
+    )
+    register_conversation_capture(agent_app, conversations)
+    default_connection = connections.get_default_connection_configuration()
+    notify_handler = NotifyHandler(
+        adapter=adapter,
+        app_id=getattr(default_connection, "CLIENT_ID", None) or "",
+        store=conversations,
+        config=notify,
+        anonymous=bool(getattr(default_connection, "ANONYMOUS_ALLOWED", False)),
+    )
+
     async def close_backend_client(_app: web.Application) -> AsyncIterator[None]:
         yield
         await http.aclose()
@@ -70,7 +99,8 @@ def create_app(config: TeamsBotConfig, sdk_config: dict[str, Any]) -> web.Applic
     web_app = web.Application(middlewares=[_authorize])
     web_app.router.add_post("/api/messages", messages)
     web_app.router.add_get("/healthz", healthz)
-    web_app["agent_configuration"] = connections.get_default_connection_configuration()
+    web_app.router.add_post(NOTIFY_PATH, notify_handler.handle)
+    web_app["agent_configuration"] = default_connection
     web_app.cleanup_ctx.append(close_backend_client)
     return web_app
 

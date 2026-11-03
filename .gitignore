@@ -57,6 +57,7 @@ CLAUDE.local.md
 *.log.*
 offsets.json
 /.agent-state/
+/.teams-state/
 
 #graphify
 graphify-out/cost.json

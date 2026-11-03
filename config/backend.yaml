@@ -22,3 +22,13 @@ nl:
     warmUp: true             # load the model at backend startup
     structuredOutput: true   # JSON Schema constrained output
     requireApiKey: false     # local Ollama: no env key
+
+# Push firing/resolved alerts into the team's Teams group chat (UBS-120). Off by
+# default. Turning it on needs the Teams bot running (apps/teams) and the same secret in
+# MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN for both the backend and the bot. See
+# apps/teams/README.md "Alert notifications".
+notifications:
+  teams:
+    enabled: false
+    endpoint: http://127.0.0.1:3978/api/notify   # https required unless localhost
+    timeout: 5s

@@ -61,6 +61,13 @@ from telemetry_backend.config import (
 from telemetry_backend.deps import AppDeps
 from telemetry_backend.nl.factory import build_nl_service
 from telemetry_backend.nl.intents import build_intents_response
+from telemetry_backend.services.alert_notifier import (
+    AlertNotifier,
+    HttpNotifySink,
+    NotifyingAlertStore,
+    load_teams_notify_config,
+    notify_token,
+)
 from telemetry_backend.services.ingest_guard import Duplicate, RateLimited
 from telemetry_backend.services.ingestion import AcceptedIngestion, IngestionService
 from telemetry_backend.services.query_engine import (
@@ -244,12 +251,17 @@ def create_app(
             stream_config=stream._config,
         )
     nl_service = app_deps.nl_service
+    notifier = store.notifier if isinstance(store, NotifyingAlertStore) else None
     fanout_client: HttpxFanoutClient | None = None
     if qconfig.query_mode == "fanout" and qconfig.replica_registry:
         fanout_client = HttpxFanoutClient()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # UBS-120: the notifier sends from this loop; merges hand it
+        # transitions from the ingestion worker and the heartbeat thread.
+        if notifier is not None:
+            notifier.start()
         worker = asyncio.create_task(ingestion.run(), name="telemetry-ingestion")
         heartbeat_task: asyncio.Task[None] | None = None
         if monitor is not None:
@@ -286,6 +298,8 @@ def create_app(
                 await fanout_client.aclose()
             if nl_service is not None:
                 await nl_service.aclose()
+            if notifier is not None:
+                await notifier.aclose()
 
     app = FastAPI(title="Telemetry Backend", lifespan=lifespan)
     app.state.ingestion = ingestion
@@ -843,12 +857,35 @@ def main() -> None:
         config = load_backend_health_config(args.config)
         nl_config = load_nl_config(args.config)
         ensure_nl_llm_credentials(nl_config)
+        notify_config = load_teams_notify_config(args.config)
+        token = notify_token() if notify_config.enabled else None
     except BackendConfigError as exc:
         raise SystemExit(f"config error: {exc}") from exc
     if args.check_config:
-        print(f"config ok: {config}, nl={nl_config}")
+        print(f"config ok: {config}, nl={nl_config}, notifications={notify_config}")
         return
+    notifier: AlertNotifier | None = None
+    if token is not None:
+        # UBS-120: every alert merge goes through this store, so each
+        # firing/resolved transition becomes one Teams card.
+        notifier = AlertNotifier(
+            HttpNotifySink(
+                notify_config.endpoint,
+                token,
+                timeout_seconds=notify_config.timeout_seconds,
+            ),
+            notify_config,
+        )
+        deps = AppDeps(
+            config=config,
+            nl_config=nl_config,
+            alert_store=NotifyingAlertStore(notifier),
+        )
+        deps.self_metrics.registry.register(notifier.collector())
+        logger.info("teams notifications -> %s", notify_config.endpoint)
+    else:
+        deps = AppDeps(config=config, nl_config=nl_config)
     try:
-        asyncio.run(_serve(AppDeps(config=config, nl_config=nl_config), args.log_level))
+        asyncio.run(_serve(deps, args.log_level))
     except KeyboardInterrupt:
         pass

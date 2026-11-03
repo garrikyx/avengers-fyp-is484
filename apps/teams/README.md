@@ -118,6 +118,42 @@ the backend falls back to keyword matching or replies with suggested questions.
 Some answers (latency, sessions, trend) are short one-liners until UBS-99's full answer
 renderer lands.
 
+## Alert notifications (UBS-120)
+
+The backend can push a card into one Teams chat whenever an alert **fires** and when it
+**resolves**: agent alerts (e.g. `HighRejectRate`) and the backend's own
+`AgentHeartbeatMissing`. One card per firing and one per resolve; renotifies, severity
+changes and repeats post nothing. The backend posts to this bot's `POST /api/notify`
+with a shared secret, and the bot sends the card into the chat it has remembered. Teams
+never reads the backend's stores.
+
+**Turn it on locally (Agents Playground):**
+
+1. Pick a secret and use it in **both** the backend's and the bot's terminals:
+   `export MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN=<anything long>`.
+2. In `config/backend.yaml` set `notifications.teams.enabled: true`, then start the
+   backend (step 1 above). Without the token it refuses to start, by design.
+3. Start the bot (step 4) with `TEAMS_NOTIFY_ALLOW_PERSONAL=true` as well. The Playground
+   is a 1:1 chat, and the bot otherwise only remembers group chats.
+4. Open the Playground (step 5) and **send any message**. That is how the bot learns
+   which chat to post into. It is saved in `.teams-state/conversation.json`, so it
+   survives a restart.
+5. Trigger an alert: stop the agent for more than 60s for `AgentHeartbeatMissing`, then
+   start it again for the resolved card.
+
+**Real Teams group chat:** do the "Real Teams" steps below, add the bot to the team's
+group chat, and send one message there (or @mention it). Leave
+`TEAMS_NOTIFY_ALLOW_PERSONAL` unset. If the bot is in several group chats, pin the one
+to use with `TEAMS_NOTIFY_CONVERSATION_ID` (the chat's `19:...@thread.v2` id, shown in
+the bot log when it is remembered).
+
+If the backend logs `no group chat registered`, step 4 hasn't happened yet. Outcomes are
+on the backend's internal `/metrics` as `telemetry_backend_teams_notifications_total`.
+
+Known gap: an agent that goes missing a **second** time does not alert again, because
+`AgentHeartbeatMissing` reuses one alert ID per agent. This is tracked as a bug, and a
+strict `xfail` test (`test_a_second_outage_of_the_same_agent_posts_again`) marks it.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -131,6 +167,10 @@ renderer lands.
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | | Azure app (client) ID |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | | Azure app secret, never commit |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | | Azure tenant ID |
+| `MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN` | | Shared secret the backend sends on `POST /api/notify`; unset closes the route |
+| `TEAMS_NOTIFY_STATE_PATH` | `.teams-state/conversation.json` | Where the remembered chat is saved |
+| `TEAMS_NOTIFY_CONVERSATION_ID` | | Only use this group chat for alerts |
+| `TEAMS_NOTIFY_ALLOW_PERSONAL` | `false` | Also accept a 1:1 chat (Agents Playground, demos only) |
 
 A `.env` file in the working directory is loaded automatically (git-ignored; see
 `.env.example`).
