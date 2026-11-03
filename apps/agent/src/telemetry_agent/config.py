@@ -11,7 +11,8 @@ the two sections nothing else reads yet (`logs:`, `pipeline:`):
     actions: {allowedCommands}      -> actions.config (the `actions:` block
                                        itself lives in the rules file)
     logs: {paths, stateDir, appLogPatterns}
-    parsing: {errorSignatures, maxDynamicSignatureLabels}
+    parsing: {errorSignatures, maxDynamicSignatureLabels, binaryDetectWindow,
+              binaryMagic}
     pipeline: {parseWorkers, evaluationInterval}
 
 Log paths and the state dir resolve against the directory the agent is
@@ -82,6 +83,8 @@ class _ParsingYaml(_Section):
     )
     error_signatures: list[_SignatureYaml] = []
     max_dynamic_signature_labels: int = 50
+    binary_detect_window: int = 64
+    binary_magic: str = ""  # hex; empty disables magic-binary (FR-PRS-046)
 
 
 class _PipelineYaml(_Section):
@@ -113,6 +116,8 @@ class LogsConfig:
 class ParsingConfig:
     error_signatures: tuple[tuple[str, str], ...]  # (label, match) pairs
     max_dynamic_signature_labels: int
+    binary_detect_window: int = 64
+    binary_magic: bytes = b""
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +227,14 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
             ) from exc
     if parsing.max_dynamic_signature_labels < 1:
         raise AgentConfigError("parsing: maxDynamicSignatureLabels must be >= 1")
+    if parsing.binary_detect_window < 1:
+        raise AgentConfigError("parsing: binaryDetectWindow must be >= 1")
+    try:
+        binary_magic = bytes.fromhex(parsing.binary_magic)
+    except ValueError as exc:
+        raise AgentConfigError(f"parsing: binaryMagic: invalid hex: {exc}") from exc
+    if len(binary_magic) > parsing.binary_detect_window:
+        raise AgentConfigError("parsing: binaryMagic is longer than binaryDetectWindow")
 
     pipeline: _PipelineYaml = _section(raw, "pipeline", _PipelineYaml)
     if pipeline.parse_workers < 1:
@@ -252,6 +265,8 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
                 (sig.label, sig.match) for sig in parsing.error_signatures
             ),
             max_dynamic_signature_labels=parsing.max_dynamic_signature_labels,
+            binary_detect_window=parsing.binary_detect_window,
+            binary_magic=binary_magic,
         ),
         parse_workers=pipeline.parse_workers,
         evaluation_interval_seconds=interval,

@@ -1,6 +1,6 @@
 # 003 — Parser Engine and FIX Parsing
 
-Status: Draft · Owner: TBD · Last updated: 2026-10-16
+Status: Draft · Owner: TBD · Last updated: 2026-11-03
 
 Day-1 supports FIX 4.2 and 4.4 tag=value messages embedded in text log lines. The parser
 interface is configurable per file set so parsers for other text log formats or binary
@@ -25,9 +25,12 @@ by the monitor at enqueue time.
 
 1. **`fix`** — the line contains a `8=FIX` (or `8=FIXT`) token followed by a delimiter
    and a `35=` tag within `fixDetectWindow` bytes (default 256).
-2. **`app_log`** — the line matches a configured application log pattern (level,
+2. **`binary`** — Day-2 only (§11): the configured `binaryMagic` prefix occurs within
+   `binaryDetectWindow` bytes and the line was not classified `fix`. Disabled while
+   `binaryMagic` is empty.
+3. **`app_log`** — the line matches a configured application log pattern (level,
    timestamp, message). Used for error-signature rules and log-activity liveness only.
-3. **`unsupported`** — anything else. Counted in `parser.unsupported_lines`, then
+4. **`unsupported`** — anything else. Counted in `parser.unsupported_lines`, then
    discarded.
 
 `FR-PRS-011`: Classification MUST be substring/prefix based and MUST NOT run a regex
@@ -216,3 +219,32 @@ parser corpus described in [012-testing-strategy.md](./012-testing-strategy.md) 
 including: SOH and pipe delimiters, prefixed log lines, split messages, missing tags,
 unknown enums, truncated lines, skewed clocks, sequence gaps, and a fuzz target over
 arbitrary bytes that asserts no panic and no allocation blow-up.
+
+## 11. Magic binary protocol (Day-2)
+
+Status: **Draft**. Every `TBD(vendor)` below is blocked on Magic/vendor protocol
+documentation and sanitised sample frames (UBS-49); nothing here describes the real wire
+format. Corpus fixtures MUST be synthetic (`FR-TST-002`).
+
+| ID           | Requirement                                                                                                                                                                                                                                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FR-PRS-040` | Frame layout: magic/header bytes, version byte, length field, message-type field, payload, trailer/checksum, byte order and string encoding are `TBD(vendor)`. The layout table is completed before UBS-51 starts.                                                                                                           |
+| `FR-PRS-041` | Detection MUST be bounded: the `magic-binary` parser's `classify()` returns `HIGH` only when `binaryMagic` occurs within the first `binaryDetectWindow` bytes (default 64) and the line is not classified `fix`. It MUST NOT run a regex, and an empty `binaryMagic` (the default) MUST NOT claim any input.                  |
+| `FR-PRS-042` | Frame boundaries and resynchronisation after a corrupt or truncated frame are `TBD(vendor)`. **Assumption:** frames are raw bytes embedded in the log, starting at a line start or after a text prefix.                                                                                                                      |
+| `FR-PRS-043` | Decoded fields MUST map onto the existing §4 allowlist (`FR-PRS-020`); the allowlist is unchanged. Adding a binary-only field requires an ADR.                                                                                                                                                                                |
+| `FR-PRS-044` | The `FR-PRS-018` closed reason set is extended for binary with `bad_frame_header`, `unsupported_binary_version` and `frame_truncated`. These are not emitted until UBS-51 implements decoding.                                                                                                                              |
+| `FR-PRS-045` | Identifier hashing (`FR-PRS-021`) and text normalisation (`FR-PRS-022`) apply unchanged to decoded binary fields. Raw frame bytes MUST NOT be copied into any event, metric label or log message.                                                                                                                          |
+| `FR-PRS-046` | `magic-binary` is selected per file set by name in the `parsers` chain (`FR-PRS-031`); the agent adds it after `fix` only when `parsing.binaryMagic` is non-empty. Config keys: `parsing.binaryMagic` (hex string, default empty) and `parsing.binaryDetectWindow` (default 64).                                              |
+
+**Implemented (UBS-50):** classification only (`FR-PRS-041`, `FR-PRS-046`). `parse()`
+returns a `binary` result with no fields. Framing and decoding are UBS-51.
+
+**Blocking finding for UBS-51.** The log monitor reads files in text mode
+(`encoding="utf-8", errors="replace"`) and splits on `\n`/`\r`, so raw binary bytes are
+altered before any parser sees them. Real support needs either a byte-mode read path or
+a hex/base64 text encoding in the logs. Decide once sample frames show how Magic writes
+them.
+
+**ADR conditions.** An ADR is required if binary support needs per-message events
+(reversing the ADR 0003 batching assumption), a new data boundary, or any change to the
+`FR-PRS-020` allowlist or ADR 0004. None is proposed here.
