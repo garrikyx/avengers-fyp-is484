@@ -11,6 +11,8 @@ dependencies = [
     "httpx",
     "prometheus-client>=0.20",
     "telemetry-shared",
+    # Windows has no system tz database; zoneinfo needs this (UBS-139).
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.scripts]
