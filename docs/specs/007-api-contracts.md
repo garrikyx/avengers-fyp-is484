@@ -311,6 +311,7 @@ exposed on a public listener.
     "metrics": ["orders_submitted", "orders_rejected", "rejectRate"]
   },
   "data": { "…": "the structured metrics response used to build the answer" },
+  "rejectReasonTrends": null,
   "citations": [
     { "type": "metrics_query", "queryId": "q-8f21" },
     { "type": "alert", "alertId": "alert-1024" }
@@ -327,6 +328,9 @@ exposed on a public listener.
   }]
 }
 ```
+
+`rejectReasonTrends` is non-null only for the `reject_reason_trend` intent (spec 008
+`FR-NLQ-031`): it is the §3.1 response the answer's numbers come from.
 
 `FR-NLQ-020`: The response MUST always include `interpretedQuery` and `data`. An answer
 the user cannot verify against numbers is not acceptable for operational use.

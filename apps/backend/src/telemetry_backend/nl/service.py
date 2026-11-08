@@ -14,6 +14,7 @@ from telemetry_shared.models.alerts_query import AlertRecord
 from telemetry_shared.models.metrics_query import (
     MetricsQueryRequest,
     MetricsQueryResponse,
+    QueryTimeRange,
 )
 from telemetry_shared.models.nl_query import (
     ClarificationReason,
@@ -22,6 +23,10 @@ from telemetry_shared.models.nl_query import (
     NlClarificationResponse,
     NlQueryContext,
     NlQueryResponse,
+)
+from telemetry_shared.models.trends import (
+    RejectReasonTrendsRequest,
+    RejectReasonTrendsResponse,
 )
 
 from telemetry_backend.config import NlConfig
@@ -60,7 +65,8 @@ from telemetry_backend.nl.validator import (
     validate_interpreted_query,
 )
 from telemetry_backend.services.alert_store import AlertStore
-from telemetry_backend.services.query_engine import QueryEngine
+from telemetry_backend.services.query_engine import QueryEngine, QueryValidationError
+from telemetry_backend.services.reject_reason_trends import RejectReasonTrendService
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +86,11 @@ class NlQueryService:
         alert_store: AlertStore,
         llm: LlmSlotFiller,
         max_range_seconds: int,
+        trend_service: RejectReasonTrendService | None = None,
     ) -> None:
         self._config = config
         self._engine = query_engine
+        self._trends = trend_service or RejectReasonTrendService(query_engine)
         self._alert_store = alert_store
         self._llm = llm
         self._max_range_seconds = max_range_seconds
@@ -226,6 +234,27 @@ class NlQueryService:
         else:
             data = await self._engine.query(metrics_request, now=now)
 
+        trends: RejectReasonTrendsResponse | None = None
+        if intent == "reject_reason_trend":
+            try:
+                trends = await self._trends.analyse(
+                    RejectReasonTrendsRequest(
+                        window=_trend_window(validated.interpreted.time_range),
+                        filters=validated.interpreted.filters,
+                    ),
+                    now=now,
+                )
+            except QueryValidationError as exc:
+                return NlQueryOutcome(
+                    kind="clarification",
+                    answer=_clarification(
+                        "The interpreted query was invalid. "
+                        "Please clarify your question.",
+                        details=[f"{exc.field}: {exc.issue}"],
+                    ),
+                )
+            caveats.extend(c for c in trends.caveats if c not in caveats)
+
         alerts, citations = self._alerts_for_intent(
             intent,
             interpreted=validated.interpreted,
@@ -241,6 +270,7 @@ class NlQueryService:
                 intent=intent,
                 data=data,
                 baseline_data=baseline_data,
+                trends=trends,
                 audience=context.audience,
                 alerts=tuple(alerts),
                 application=str(
@@ -267,6 +297,7 @@ class NlQueryService:
             source=source,
             interpreted_query=validated.interpreted,
             data=data,
+            reject_reason_trends=trends,
             citations=citations,
             caveats=caveats,
             chart_rows=rendered.chart_rows,
@@ -345,6 +376,15 @@ class NlQueryService:
         if intent == "alert_status":
             return alerts, citations
         return alerts, citations
+
+
+def _trend_window(time_range: QueryTimeRange) -> str:
+    """The compared window's length: the asked-for range, e.g. `30m`, or its span."""
+    if time_range.last is not None:
+        return time_range.last
+    assert time_range.from_utc is not None and time_range.to_utc is not None
+    seconds = int((time_range.to_utc - time_range.from_utc).total_seconds())
+    return f"{seconds}s"
 
 
 def _filter_instance(filters: dict[str, str | list[str]]) -> str | None:

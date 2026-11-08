@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from telemetry_shared.models.metrics_query import MetricsQueryResponse
+from telemetry_shared.models.trends import RejectReasonTrendsResponse
 
 _NUMERIC_TOKEN = re.compile(r"\b\d+(?:\.\d+)?%?\b")
 
@@ -60,8 +61,25 @@ def _numbers_from_data(data: MetricsQueryResponse) -> set[str]:
     return found
 
 
-def assert_answer_numbers_in_data(answer: str, data: MetricsQueryResponse) -> None:
+def _numbers_from_trends(trends: RejectReasonTrendsResponse) -> set[str]:
+    """Counts, change percentages and the thresholds a trend answer may quote."""
+    found = {str(trends.min_occurrences), f"{round(trends.threshold * 100)}"}
+    for reason in trends.reasons:
+        found.add(str(reason.current_count))
+        found.add(str(reason.previous_count))
+        if reason.change_ratio is not None:
+            found.add(f"{round(reason.change_ratio * 100)}")
+    return found
+
+
+def assert_answer_numbers_in_data(
+    answer: str,
+    data: MetricsQueryResponse,
+    trends: RejectReasonTrendsResponse | None = None,
+) -> None:
     allowed = _numbers_from_data(data)
+    if trends is not None:
+        allowed |= _numbers_from_trends(trends)
     for token in numeric_tokens_in_text(answer):
         bare = token.rstrip("%")
         if token.endswith("%"):

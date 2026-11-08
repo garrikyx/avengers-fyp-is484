@@ -52,6 +52,27 @@ _PATTERNS: tuple[_IntentPattern, ...] = (
         priority=10,
     ),
     _IntentPattern(
+        "reject_reason_trend",
+        (
+            re.compile(
+                r"reject(?:ion)? reasons?\b.*"
+                r"(?:increas|ris(?:e|ing)|going up|growing|climbing|trending up"
+                r"|emerging|spiking)",
+                re.I,
+            ),
+            re.compile(
+                r"(?:emerging|new|increasing|rising) reject(?:ion)? reasons?", re.I
+            ),
+            re.compile(
+                r"(?:driving|behind|causing) (?:the )?(?:rise in )?reject(?:s|ions)?"
+                r".*\bup\b",
+                re.I,
+            ),
+        ),
+        (re.compile(r"reject(?:ion)? reasons?", re.I),),
+        priority=10,
+    ),
+    _IntentPattern(
         "rejection_summary",
         (
             re.compile(r"why are .* reject", re.I),
