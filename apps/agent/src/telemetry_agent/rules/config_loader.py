@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import signal
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -449,5 +450,10 @@ class SighupRuleReloader:
         drops the returned `resolved` events. A running agent should
         instead register `RuleEvaluator.request_reload` with
         `loop.add_signal_handler(SIGHUP, ...)`, which defers the reload to
-        the next evaluation tick and routes those events (UBS-113)."""
+        the next evaluation tick and routes those events (UBS-113).
+
+        Raises `NotImplementedError` on Windows, which has no SIGHUP; use
+        the rules file's mtime check (`reload_check_seconds`) there."""
+        if sys.platform == "win32":
+            raise NotImplementedError("SIGHUP reload is POSIX-only")
         signal.signal(signal.SIGHUP, lambda *_: self.reload())
