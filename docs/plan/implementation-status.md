@@ -226,6 +226,36 @@ is now an agent dependency (`types-psutil` for mypy). Decisions and limits:
 - **`NFR-PERF-003`:** sampling every 30s in a worker thread with bounded state; tests
   check that, not a load test with an RSS assertion.
 
+## Magic process liveness (UBS-130)
+
+| ID      | Story                                       | Requirement                                                                                 | Status         | Verified by                                                                                                                                                                              |
+| ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-130 | `magic_process_up` gauge, `ApplicationDown` | `FR-HLT-014` (spec 002 §7.1), `FR-MET-034` (spec 004 §4.7), spec 005 §1.2 `ApplicationDown` | Done on branch | `tests/unit/agent/health/test_UBS_130_process_liveness.py`, `tests/unit/agent/rules/test_UBS_130_application_down.py`, `tests/integration/agent/test_UBS_130_application_down_alerts.py` |
+
+Builds on the UBS-129 Host Monitor: `HostSampler.process_names()` (+ `PsutilSampler`,
+which asks `psutil.process_iter` for the `name` attribute only), a step in
+`HostMonitor.sample_once`, `Gauges.magic_process_up`, and `ApplicationDown` in
+`rules/defaults.py` and `config/rules.yaml` (critical, `== 0`, 30s hold,
+`dependsOnLogActivity: false`, so `NoLogActivity` does not silence it). Decisions and
+limits:
+
+- **Exact name, no case folding.** `host.process.name` must equal a running process's
+  name exactly (`magic.exe` does not match `magic.exe.bak` or `notmagic.exe`). Command
+  lines, paths and arguments are never read. On Windows, set the name with the casing
+  the OS reports.
+- **Empty name = off.** No gauge, no process-list read, no error counted, rule inactive.
+  The shipped `agent.yaml` leaves it empty (the name is UBS-specific).
+- **Limitation: an unreadable process list omits the gauge (no alert).** The sampler
+  raising (permissions, platform) counts `host_sample_errors` and drops
+  `magic_process_up` rather than reporting 0, so a host where the agent cannot list
+  processes never raises `ApplicationDown`. A firing alert whose gauge turns unreadable
+  resolves after `resolveAfter` (engine treats "no data" as clear).
+- **Timing.** With the 30s default `sampleInterval` and the 30s hold, the alert fires on
+  the second consecutive 0 sample. Resolution uses the default `resolveAfter` of 300s;
+  the spec is silent on a shorter value.
+- **Only the process list is checked**, not that Magic is healthy; a hung but running
+  process is still `up`.
+
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 
 | ID     | Story                                    | Requirement                                                                                                                                         | Status                                                   | Verified by                                                                                            |

@@ -223,6 +223,21 @@ rules:
     for: 2m
     dependsOnLogActivity: false
 
+  # ApplicationDown (UBS-130, FR-HLT-014): magic_process_up is 1/0 by exact
+  # executable name (agent.yaml host.process.name). It is omitted while that name
+  # is empty or the process list is unreadable, so the rule stays inactive. A dead
+  # process is when logs go quiet, so NoLogActivity must not silence it.
+  - name: ApplicationDown
+    kind: threshold
+    source: gauge
+    metric: magic_process_up
+    operator: "=="
+    tiers:
+      - severity: critical
+        threshold: 0
+    for: 30s
+    dependsOnLogActivity: false
+
   # Signature rules (spec 005 §1, UBS-122): `signature` is a label from
   # agent.yaml `parsing.errorSignatures`; each rule counts only its own
   # pattern. Warn on the first match — one OOM or lost DB connection is

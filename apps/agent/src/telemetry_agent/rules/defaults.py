@@ -1,4 +1,4 @@
-"""RE-03: the 19 default rules (spec 005 §1.2).
+"""RE-03: the 20 default rules (spec 005 §1.2).
 
 Concrete `RuleConfig` values, used as the **fallback** by
 `telemetry_agent.rules.config_loader.load_rules()` when `config/rules.yaml`
@@ -223,6 +223,22 @@ DEFAULT_RULES: tuple[RuleConfig, ...] = (
         tiers=(_tier("warning", 0.90), _tier("critical", 0.95)),
         window=None,
         for_seconds=120,
+        depends_on_log_activity=False,
+    ),
+    # UBS-130 / FR-HLT-014: Magic's process is not running (spec 005 §1.2,
+    # critical for 30s). Inactive while `host.process.name` is empty (the Magic
+    # executable name is UBS-specific) or the process list is unreadable: the
+    # gauge is then omitted. `depends_on_log_activity=False`: a dead process is
+    # exactly when logs go quiet, so NoLogActivity must not silence this.
+    RuleConfig(
+        name="ApplicationDown",
+        kind=RuleKind.THRESHOLD,
+        source=ValueSource.GAUGE,
+        metric="magic_process_up",
+        operator="==",
+        tiers=(_tier("critical", 0),),
+        window=None,
+        for_seconds=30,
         depends_on_log_activity=False,
     ),
     RuleConfig(

@@ -62,6 +62,7 @@ def make_gauges(
     consecutive_publish_failures: int | None = None,
     host_disk_used_ratio: float | None = None,
     host_memory_used_ratio: float | None = None,
+    magic_process_up: float | None = None,
 ) -> Gauges:
     return Gauges(
         pending_orders=pending_orders,
@@ -70,6 +71,7 @@ def make_gauges(
         consecutive_publish_failures=consecutive_publish_failures,
         host_disk_used_ratio=host_disk_used_ratio,
         host_memory_used_ratio=host_memory_used_ratio,
+        magic_process_up=magic_process_up,
     )
 
 

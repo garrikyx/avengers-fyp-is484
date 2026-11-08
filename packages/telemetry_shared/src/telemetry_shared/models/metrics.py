@@ -91,6 +91,11 @@ class Gauges(CamelModel):
     # gauge is the worst (highest) mount, since gauges carry no dimensions.
     host_disk_used_ratio: float | None = None
     host_memory_used_ratio: float | None = None
+    # FR-HLT-014 / FR-MET-034 (UBS-130): 1.0 if the configured Magic process is
+    # running, 0.0 if not. `None` means `host.process.name` is empty or the
+    # process list was unreadable, never "Magic is down": `ApplicationDown`
+    # stays inactive.
+    magic_process_up: float | None = None
 
 
 class WindowBounds(CamelModel):

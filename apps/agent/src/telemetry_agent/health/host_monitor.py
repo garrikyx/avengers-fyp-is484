@@ -14,6 +14,17 @@ Every `host.sampleInterval` the monitor samples
 - `host_memory_used_ratio`: (total - available) / total physical memory.
 - the agent process's own RSS and CPU, for the heartbeat `resourceUsage`.
 
+UBS-130 adds `magic_process_up` (FR-HLT-014): 1.0 if a running process's
+executable name equals `host.process.name` exactly, else 0.0. The match is by
+name only: no command line, executable path or argument is ever read, and no
+case folding is applied (spec 002 says "exact executable name"). While
+`host.process.name` is empty the gauge is not reported, nothing is read and
+nothing is counted, so `ApplicationDown` stays inactive. If the process list
+cannot be read, the gauge is omitted (and `host_sample_errors` counted), never
+0: an unreadable list is "no data", not "Magic is down". The consequence is
+that a host where the agent may not list processes never raises
+`ApplicationDown`.
+
 **Omit, never zero (FR-MET-034, FR-HLT-015).** A read that fails (permission,
 platform) leaves that gauge out of `gauges()` and increments
 `host_sample_errors`; the other reads and the agent carry on. A rule then sees
@@ -36,7 +47,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Protocol
@@ -46,6 +57,7 @@ from telemetry_shared.models.health import ResourceUsage
 
 DISK_GAUGE = "host_disk_used_ratio"
 MEMORY_GAUGE = "host_memory_used_ratio"
+PROCESS_GAUGE = "magic_process_up"
 SAMPLE_ERRORS = "host_sample_errors"
 
 DEFAULT_SAMPLE_INTERVAL_SECONDS = 30.0
@@ -76,6 +88,11 @@ class HostSampler(Protocol):
 
     def own_usage(self) -> tuple[float, float]:
         """(rss_mb, cpu_percent) of the agent process itself."""
+        ...
+
+    def process_names(self) -> Iterable[str]:
+        """Executable names of the running processes (FR-HLT-014). Names
+        only: an implementation must not read command lines."""
         ...
 
 
@@ -141,6 +158,11 @@ class HostMonitor:
             if memory is not None:
                 gauges[MEMORY_GAUGE] = memory
 
+        if self._config.process_name:
+            up = self._read_process_up(self._config.process_name)
+            if up is not None:
+                gauges[PROCESS_GAUGE] = up
+
         usage: ResourceUsage | None = None
         try:
             rss_mb, cpu_percent = self._sampler.own_usage()
@@ -155,6 +177,13 @@ class HostMonitor:
             return _ratio(read())
         except Exception:
             self._record_error("host gauge")
+            return None
+
+    def _read_process_up(self, name: str) -> float | None:
+        try:
+            return 1.0 if name in set(self._sampler.process_names()) else 0.0
+        except Exception:
+            self._record_error("process list")
             return None
 
     def _record_error(self, what: str) -> None:
@@ -202,6 +231,17 @@ class PsutilSampler:
         if memory.total <= 0:
             raise ValueError("no physical memory reported")
         return float((memory.total - memory.available) / memory.total)
+
+    def process_names(self) -> Iterable[str]:
+        names: list[str] = []
+        # `attrs=["name"]` fetches only the name; cmdline/exe are never read.
+        for proc in self._psutil.process_iter(attrs=["name"]):
+            # A process can exit or deny access mid-iteration; psutil then
+            # leaves the attribute None. Skip it rather than fail the list.
+            name = proc.info.get("name")
+            if name:
+                names.append(name)
+        return names
 
     def own_usage(self) -> tuple[float, float]:
         rss_mb = self._process.memory_info().rss / (1024 * 1024)

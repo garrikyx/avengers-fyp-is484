@@ -52,6 +52,7 @@ def _build_gauges(
         consecutive_publish_failures=consecutive_publish_failures,
         host_disk_used_ratio=host.get("host_disk_used_ratio"),
         host_memory_used_ratio=host.get("host_memory_used_ratio"),
+        magic_process_up=host.get("magic_process_up"),
     )
 
 

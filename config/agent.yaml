@@ -76,7 +76,10 @@ host:
   diskPaths: ["."]
   memory: true # host_memory_used_ratio
   process:
-    name: "" # exact executable name; empty = no magic_process_up (UBS-130)
+    # Exact executable name of Magic's process (never the command line), e.g.
+    # "magic.exe". UBS-specific, so not invented here: empty = no
+    # magic_process_up gauge and ApplicationDown stays inactive (FR-HLT-014).
+    name: ""
 
 rules:
   path: rules.yaml # next to this file
