@@ -262,13 +262,13 @@ before creating new modules.
 
 Install these before running anything:
 
-| Tool | Version | Why | Install |
-| --- | --- | --- | --- |
-| [uv](https://docs.astral.sh/uv/) | latest | Python 3.14 and every package in the workspace | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Tool                                  | Version      | Why                                                                              | Install                                                                                                                  |
+| ------------------------------------- | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [uv](https://docs.astral.sh/uv/)      | latest       | Python 3.14 and every package in the workspace                                   | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                                                                       |
 | [Ollama](https://ollama.com/download) | 0.5 or later | Local LLM for natural-language questions the rule matcher can't parse (spec 008) | macOS: `brew install ollama` or the app; Windows: the installer; Linux: `curl -fsSL https://ollama.com/install.sh \| sh` |
-| `llama3.2` model | | The model `config/backend.yaml` uses (about 2 GB) | `make ollama-setup` (or `ollama pull llama3.2`) |
-| Node.js | 20 or later | Only for the Teams Agents Playground and the MCP Inspector (`npx`) | [nodejs.org](https://nodejs.org) |
-| `make`, `curl` | | Shortcuts and checks below | Preinstalled on macOS/Linux; on Windows, run the commands from the `Makefile` directly |
+| `llama3.2` model                      |              | The model `config/backend.yaml` uses (about 2 GB)                                | `make ollama-setup` (or `ollama pull llama3.2`)                                                                          |
+| Node.js                               | 20 or later  | Only for the Teams Agents Playground and the MCP Inspector (`npx`)               | [nodejs.org](https://nodejs.org)                                                                                         |
+| `make`, `curl`                        |              | Shortcuts and checks below                                                       | Preinstalled on macOS/Linux; on Windows, run the commands from the `Makefile` directly                                   |
 
 Then make sure Ollama is running (open the Ollama app, or run `ollama serve`) and check:
 
@@ -316,6 +316,9 @@ make parser-demo
 
 # Lint
 make lint
+
+# Everything CI runs (ruff check, ruff format --check, mypy, pytest)
+make ci
 ```
 
 Or without Make:
