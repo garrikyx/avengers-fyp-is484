@@ -38,6 +38,7 @@ def test_each_intent_has_a_matching_phrase() -> None:
         "parse_health": "failing to parse anything",
         "compare_period": "rejects worse than yesterday",
         "trend": "show rejects over the last hour",
+        "reject_reason_trend": "which reject reasons are increasing",
     }
     for intent, question in samples.items():
         match = match_rules(
