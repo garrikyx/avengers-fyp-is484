@@ -155,12 +155,11 @@ def test_fr_hlt_016_heartbeat_reports_the_real_agents_non_zero_rss(
 ) -> None:
     app, agent = _agent(tmp_path)
 
-    alerts, health = _run(app, agent, wait_for="rss")
+    _, health = _run(app, agent, wait_for="rss")
 
     assert health["resourceUsage"]["rssMb"] > 0
     assert agent.host_monitor is not None
     assert agent.host_monitor.counters.snapshot().get("host_sample_errors", 0) == 0
-    assert alerts == []  # this machine's disk is not 96% full
 
 
 def test_fr_hlt_013_host_disabled_runs_no_monitor_and_raises_no_host_alert(

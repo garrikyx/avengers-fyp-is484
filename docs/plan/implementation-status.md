@@ -215,8 +215,9 @@ is now an agent dependency (`types-psutil` for mypy). Decisions and limits:
   `resolveAfter`, since the engine treats "no data" as "condition clear".
 - **Shipped `diskPaths: ["."]`**, not spec 010's `/var/log/magic`, so dev machines
   (incl. Windows) can read it. The config model default stays the spec's
-  `/var/log/magic`. Set it to Magic's log filesystem on the host. Memory is
-  `(total - available) / total`.
+  `/var/log/magic`. Set it to Magic's log filesystem on the host. The disk ratio is
+  `1 - free / total` (space the agent's user can still write; `used / total` under-reads
+  on APFS) and memory is `(total - available) / total`.
 - **Heartbeat `resourceUsage`** now carries the agent's RSS (MB) and CPU. With
   `host.enabled: false` or a failed read it still goes out as zeros, because the
   ingestion model has no null for it; `activeTasks` is not measured.

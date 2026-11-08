@@ -6,7 +6,7 @@ command line, never Magic logs.
 
 Every `host.sampleInterval` the monitor samples
 
-- `host_disk_used_ratio`: used / total bytes of each `host.diskPaths`
+- `host_disk_used_ratio`: 1 - free / total bytes of each `host.diskPaths`
   filesystem. The wire `Snapshot.gauges` and the rule engine's `Gauges` are
   flat (no dimensions), so the single gauge is the **worst mount** (the
   maximum); spec 004's `mount` dimension is not carried. One full filesystem
@@ -191,7 +191,11 @@ class PsutilSampler:
         usage = self._psutil.disk_usage(path)
         if usage.total <= 0:
             raise ValueError(f"filesystem for {path!r} reports no capacity")
-        return float(usage.used / usage.total)
+        # Space the agent's user can still write, not `used / total`: on APFS
+        # `used` is per-volume while `free` is shared across the container, and
+        # on ext4 `free` already excludes the root-reserved blocks. This is the
+        # same free/total pair FR-HLT-013 names.
+        return float(1.0 - usage.free / usage.total)
 
     def memory_used_ratio(self) -> float:
         memory = self._psutil.virtual_memory()
