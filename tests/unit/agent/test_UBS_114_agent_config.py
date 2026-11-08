@@ -191,3 +191,58 @@ def test_invalid_binary_parsing_settings_are_rejected(
     text = _MINIMAL + f"parsing:\n  {section}\n"
     with pytest.raises(AgentConfigError, match="parsing"):
         load_agent_config(_write(tmp_path, text))
+
+
+# --- UBS-129: host: (spec 010, FR-HLT-013) ---------------------------------
+
+
+def test_host_defaults_follow_spec_010(tmp_path: Path) -> None:
+    host = load_agent_config(_write(tmp_path, _MINIMAL)).host
+
+    assert host.enabled is True
+    assert host.sample_interval_seconds == 30.0
+    assert host.disk_paths == ("/var/log/magic",)
+    assert host.memory is True
+    assert host.process_name == ""
+
+
+def test_host_block_is_read(tmp_path: Path) -> None:
+    host = load_agent_config(
+        _write(
+            tmp_path,
+            _MINIMAL + "host:\n  enabled: false\n  sampleInterval: 5s\n"
+            "  diskPaths: ['/a', '/b']\n  memory: false\n"
+            "  process:\n    name: magic.exe\n",
+        )
+    ).host
+
+    assert host.enabled is False
+    assert host.sample_interval_seconds == 5.0
+    assert host.disk_paths == ("/a", "/b")
+    assert host.memory is False
+    assert host.process_name == "magic.exe"
+
+
+def test_the_shipped_config_uses_a_disk_path_that_exists_on_dev_machines() -> None:
+    host = load_agent_config(REPO_ROOT / "config" / "agent.yaml").host
+
+    assert host.enabled is True
+    assert host.sample_interval_seconds == 30.0
+    assert host.process_name == ""  # UBS-specific, left empty (spec 010)
+    assert host.disk_paths
+    assert all(Path(p).exists() for p in host.disk_paths)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "host:\n  sampleInterval: 0s\n",
+        "host:\n  sampleInterval: nonsense\n",
+        "host:\n  diskPaths: ['/a','/b','/c','/d','/e','/f','/g','/h','/i']\n",
+        "host:\n  diskPaths: ['']\n",
+        "host:\n  unknownKey: 1\n",
+    ],
+)
+def test_invalid_host_settings_are_rejected(tmp_path: Path, block: str) -> None:
+    with pytest.raises(AgentConfigError, match="host"):
+        load_agent_config(_write(tmp_path, _MINIMAL + block))

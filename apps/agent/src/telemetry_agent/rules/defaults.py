@@ -1,4 +1,4 @@
-"""RE-03: the 17 default rules (spec 005 §1.2).
+"""RE-03: the 19 default rules (spec 005 §1.2).
 
 Concrete `RuleConfig` values, used as the **fallback** by
 `telemetry_agent.rules.config_loader.load_rules()` when `config/rules.yaml`
@@ -196,6 +196,33 @@ DEFAULT_RULES: tuple[RuleConfig, ...] = (
         operator=">=",
         tiers=(_tier("warning", 5),),
         window=None,
+        depends_on_log_activity=False,
+    ),
+    # UBS-129 / FR-MET-034: Host Monitor gauges (spec 005 §1.2). Thresholds are
+    # provisional common defaults, not UBS values (Q-5). Both rules ship always
+    # and stay inactive while the gauge is omitted (`host.enabled: false` or an
+    # unreadable read). `depends_on_log_activity=False`: a full disk is exactly
+    # when logging may go quiet, and that must not silence the alert.
+    RuleConfig(
+        name="HostDiskFull",
+        kind=RuleKind.THRESHOLD,
+        source=ValueSource.GAUGE,
+        metric="host_disk_used_ratio",
+        operator=">",
+        tiers=(_tier("warning", 0.85), _tier("critical", 0.95)),
+        window=None,
+        for_seconds=60,
+        depends_on_log_activity=False,
+    ),
+    RuleConfig(
+        name="HostMemoryHigh",
+        kind=RuleKind.THRESHOLD,
+        source=ValueSource.GAUGE,
+        metric="host_memory_used_ratio",
+        operator=">",
+        tiers=(_tier("warning", 0.90), _tier("critical", 0.95)),
+        window=None,
+        for_seconds=120,
         depends_on_log_activity=False,
     ),
     RuleConfig(

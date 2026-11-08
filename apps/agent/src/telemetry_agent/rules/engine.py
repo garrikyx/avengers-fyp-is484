@@ -247,6 +247,12 @@ def _metric_context(
             context["count"] = summary.count
             if summary.avg is not None:
                 context["avg"] = summary.avg
+    elif rule.source is ValueSource.GAUGE:
+        # A gauge is not a counter: reporting `counters.get(..., 0)` here would
+        # show a fabricated 0.0 beside the real observed value.
+        gauge = _read_gauge(rule, snapshot)
+        if gauge is not None:
+            context[rule.metric] = float(gauge)
     else:
         context[rule.metric] = float(group.counters.get(rule.metric, Decimal(0)))
         for extra in rule.extra_counters:

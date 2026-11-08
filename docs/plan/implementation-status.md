@@ -154,8 +154,9 @@ an mtime trigger since UBS-35.
 
 Code: `apps/agent/src/telemetry_agent/actions/` (catalogue + runner),
 `pipeline/backtest.py` (test mode), `--test-rule` in `main.py`. The `disk-cleanup`
-example action is unbound until UBS-129 adds `HostDiskFull`. The reload now runs in the
-real agent: on SIGHUP, and on a `rules.yaml` mtime change.
+example action is still unbound; `HostDiskFull` exists since UBS-129 but binding it is a
+rule-file decision (ADR 0008). The reload now runs in the real agent: on SIGHUP, and on
+a `rules.yaml` mtime change.
 
 ## D2 anomaly detection (UBS-25–29)
 
@@ -186,6 +187,43 @@ Code: optional `level:` on `threshold` rules (`rules/types.py`,
 admission is first-come under `maxSeriesPerBucket`, so if a bucket is already full when
 the first `[F]` line arrives it folds to `__other__` and the rule does not match;
 `cardinality_folded` is the signal.
+
+## Host Monitor (UBS-129)
+
+| ID      | Story                                                                               | Requirement                                                                            | Status         | Verified by                                                                                                                                                                                                     |
+| ------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-129 | Host disk/memory gauges, `HostDiskFull`/`HostMemoryHigh`, heartbeat `resourceUsage` | `FR-HLT-013`/`015`/`016` (spec 002 §7.1), `FR-MET-034` (spec 004 §4.7), `NFR-PERF-003` | Done on branch | `tests/unit/agent/health/test_UBS_129_*.py`, `tests/unit/agent/rules/test_UBS_129_host_rules.py`, `tests/integration/agent/test_UBS_129_host_alerts.py`, `tests/integration/test_UBS_129_agent_host_monitor.py` |
+
+Code: `health/host_monitor.py` (`HostMonitor`, `HostSampler` protocol, `PsutilSampler`),
+`host:` in `config.py` and `config/agent.yaml`, `HostDiskFull` and `HostMemoryHigh` in
+`rules/defaults.py` and `config/rules.yaml`, `Gauges.host_*` fields, `host_gauges`
+plumbing in `metrics/snapshot.py`, `pipeline/evaluator.py` and
+`publishing/snapshot_bridge.py`, `HealthReporter.set_resource_usage_provider`. `psutil`
+is now an agent dependency (`types-psutil` for mypy). Decisions and limits:
+
+- **Flat gauges.** `Gauges` and the wire `Snapshot.gauges` have no dimensions, so
+  `host_disk_used_ratio` is the worst (maximum) mount across `host.diskPaths`; spec
+  004's `mount` dimension is not carried. Per-mount detail would need a wire change.
+- **Spec holds, not the engine default.** `HostDiskFull` holds 1m, `HostMemoryHigh` 2m
+  (spec 005 §1.2). Both set `dependsOnLogActivity: false` so `NoLogActivity` does not
+  silence them.
+- **Rules always ship**; they stay inactive while the gauge is omitted
+  (`host.enabled: false` or an unreadable read), rather than being filtered at load.
+- **Omit, never zero.** A failed read drops that gauge (and the previous value) and
+  counts `host_sample_errors` on the monitor's own registry (logged at shutdown; not yet
+  a queryable metric). A firing alert whose gauge becomes unreadable resolves after
+  `resolveAfter`, since the engine treats "no data" as "condition clear".
+- **Shipped `diskPaths: ["."]`**, not spec 010's `/var/log/magic`, so dev machines
+  (incl. Windows) can read it. The config model default stays the spec's
+  `/var/log/magic`. Set it to Magic's log filesystem on the host. Memory is
+  `(total - available) / total`.
+- **Heartbeat `resourceUsage`** now carries the agent's RSS (MB) and CPU. With
+  `host.enabled: false` or a failed read it still goes out as zeros, because the
+  ingestion model has no null for it; `activeTasks` is not measured.
+- **Alert `metricContext`** for gauge rules now carries the gauge value instead of a
+  fabricated `0.0` counter (also fixes `BackendUnreachable`, `PendingOrderTimeout`).
+- **`NFR-PERF-003`:** sampling every 30s in a worker thread with bounded state; tests
+  check that, not a load test with an RSS assertion.
 
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 

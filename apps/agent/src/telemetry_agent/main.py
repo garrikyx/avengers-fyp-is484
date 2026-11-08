@@ -20,6 +20,10 @@ What runs, and on which thread:
                       CallbackDispatcher -> Magic callback endpoint
                       ActionRunner -> a rule's actions on pending->firing,
                       one at a time (UBS-35, spec 005 s5)
+                      HostMonitor every host.sampleInterval (UBS-129): each
+                      blocking OS read runs in a worker thread, off the
+                      parsing path; the evaluator, snapshot emitter and
+                      heartbeat only read its latest immutable sample
 
 The pipeline thread and the loop share the metrics and health state, which is
 not thread-safe; everything that touches it from the loop holds
@@ -65,6 +69,11 @@ from telemetry_agent.config import (
     AgentConfig,
     AgentConfigError,
     load_agent_config,
+)
+from telemetry_agent.health.host_monitor import (
+    HostMonitor,
+    HostSampler,
+    PsutilSampler,
 )
 from telemetry_agent.health.publishing import (
     connect_reporter_to_publisher,
@@ -124,6 +133,7 @@ class Agent:
     engine: RuleEngine
     evaluator: RuleEvaluator
     actions: ActionRunner
+    host_monitor: HostMonitor | None = None  # None when `host.enabled: false`
 
 
 def _is_local(url: str) -> bool:
@@ -147,9 +157,11 @@ def build_agent(
     callback_transport: httpx.AsyncBaseTransport | None = None,
     started_at: datetime | None = None,
     env: Mapping[str, str] | None = None,
+    host_sampler: HostSampler | None = None,
 ) -> Agent:
-    """Wire every component from config. Transports, the engine start time
-    and the environment are injectable for tests; production passes none."""
+    """Wire every component from config. Transports, the engine start time,
+    the environment and the host sampler are injectable for tests; production
+    passes none."""
     env = os.environ if env is None else env
     local = _is_local(cfg.publish.endpoint) and (
         cfg.callbacks is None or _is_local(cfg.callbacks.endpoint)
@@ -226,6 +238,12 @@ def build_agent(
     )
     with ingestor.lock:
         connect_reporter_to_publisher(reporter, publisher)
+    # --- host monitor (own task; UBS-129) ------------------------------------------
+    host_monitor: HostMonitor | None = None
+    if cfg.host.enabled:
+        host_monitor = HostMonitor(cfg.host, host_sampler or PsutilSampler())
+        with ingestor.lock:
+            reporter.set_resource_usage_provider(host_monitor.resource_usage)
     events = EventEmitter(
         publisher,
         agent_id=cfg.agent_id,
@@ -348,6 +366,7 @@ def build_agent(
         monotonic=ingestor.monotonic,
         counters=evaluator_counters,
         event_emitter=events,
+        host_gauges=host_monitor.gauges if host_monitor is not None else None,
         snapshot_emitter=SnapshotEmitter(
             ingestor.aggregator,
             publisher,
@@ -357,6 +376,7 @@ def build_agent(
             instance_id=cfg.instance_id,
             correlator=ingestor.correlator,
             counters=evaluator_counters,
+            host_gauges=host_monitor.gauges if host_monitor is not None else None,
         ),
     )
     return Agent(
@@ -374,6 +394,7 @@ def build_agent(
         engine=engine,
         evaluator=evaluator,
         actions=actions,
+        host_monitor=host_monitor,
     )
 
 
@@ -404,10 +425,15 @@ async def run_agent(agent: Agent, stop: asyncio.Event) -> None:
     pipeline.add_done_callback(_pipeline_died)
     delivery = asyncio.create_task(agent.dispatcher.run()) if agent.dispatcher else None
     action_runs = asyncio.create_task(agent.actions.run())
+    host = (
+        asyncio.create_task(agent.host_monitor.run(stop))
+        if agent.host_monitor
+        else None
+    )
     try:
         await asyncio.gather(agent.publisher.run(stop), agent.evaluator.run(stop))
     finally:
-        await _shutdown(agent, halt, pipeline, delivery, action_runs)
+        await _shutdown(agent, halt, pipeline, delivery, action_runs, host)
 
 
 async def _shutdown(
@@ -416,6 +442,7 @@ async def _shutdown(
     pipeline: asyncio.Task[None],
     delivery: asyncio.Task[None] | None,
     action_runs: asyncio.Task[None] | None = None,
+    host: asyncio.Task[None] | None = None,
 ) -> None:
     halt.set()
     with contextlib.suppress(Exception):
@@ -431,7 +458,7 @@ async def _shutdown(
     # One last batch so the final heartbeat and any routed alerts go out.
     with contextlib.suppress(Exception):
         await asyncio.wait_for(agent.publisher.publish_once(), SHUTDOWN_GRACE_SECONDS)
-    for task in (delivery, action_runs):
+    for task in (delivery, action_runs, host):
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -453,6 +480,8 @@ async def _shutdown(
         if agent.ingestor.event_emitter is not None
         else {},
     )
+    if agent.host_monitor is not None:
+        logger.info("host monitor %s", agent.host_monitor.counters.snapshot())
 
 
 def _install_signals(

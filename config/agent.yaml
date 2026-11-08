@@ -17,13 +17,13 @@ agent:
   version: 0.1.0
 
 heartbeat:
-  interval: 10s              # FR-HLT-001; rides in every publisher batch
+  interval: 10s # FR-HLT-001; rides in every publisher batch
 
 health:
-  readLagDegraded: 5s        # spec 011 s1.1
+  readLagDegraded: 5s # spec 011 s1.1
   parseErrorRateDegraded: 0.01
   parseErrorRateUnhealthy: 0.25
-  rollingWindow: 5m          # `...Last5Min` heartbeat fields
+  rollingWindow: 5m # `...Last5Min` heartbeat fields
   publishQueueHighWatermark: 10
   publishQueueCriticalWatermark: 100
   callbackFailuresDegraded: 1
@@ -38,13 +38,13 @@ logs:
   paths:
     - ./logs/Application.log
     - ./logs/Fix.log
-  stateDir: ./.agent-state   # offsets.json lives here (UBS-23)
-  appLogPatterns:            # sponsor/Magic Application.log line shape
+  stateDir: ./.agent-state # offsets.json lives here (UBS-23)
+  appLogPatterns: # sponsor/Magic Application.log line shape
     - '^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]+\]'
 
 # --- Application.log error signatures (UBS-116; spec 010 `parsing:`) ---
 parsing:
-  errorSignatures:           # counted as app_error_signatures{error_signature}
+  errorSignatures: # counted as app_error_signatures{error_signature}
     - label: out_of_memory
       match: "OutOfMemoryError|std::bad_alloc"
     - label: db_connection_lost
@@ -56,16 +56,31 @@ parsing:
       match: "timed out after"
     - label: venue_connection_failed
       match: "failed to complete connection"
-  maxDynamicSignatureLabels: 50   # cap on `%`-templated labels -> __other__
+  maxDynamicSignatureLabels: 50 # cap on `%`-templated labels -> __other__
 
 # --- Parser pipeline + rule evaluation (UBS-48/49, UBS-112, UBS-113) ---
 pipeline:
-  parseWorkers: 1            # FixParser keeps per-session state: one worker
-  evaluationInterval: 10s    # RuleEvaluator tick
+  parseWorkers: 1 # FixParser keeps per-session state: one worker
+  evaluationInterval: 10s # RuleEvaluator tick
+
+# --- Host Monitor (UBS-129; spec 010 `host:`, spec 002 s7.1) ---
+# Samples OS counters only (never file contents). Feeds the host_* gauges behind
+# HostDiskFull / HostMemoryHigh and the heartbeat's resourceUsage.
+host:
+  enabled: true
+  sampleInterval: 30s # FR-HLT-013
+  # Spec default is /var/log/magic, which only exists on the Magic host. "."
+  # (the filesystem the agent starts on) is readable on any dev machine; on
+  # the Magic host set it to Magic's log filesystem. host_disk_used_ratio
+  # reports the worst of these (max 8).
+  diskPaths: ["."]
+  memory: true # host_memory_used_ratio
+  process:
+    name: "" # exact executable name; empty = no magic_process_up (UBS-130)
 
 rules:
-  path: rules.yaml           # next to this file
-  reloadCheckInterval: 10s   # reload on mtime change (UBS-35); SIGHUP works too
+  path: rules.yaml # next to this file
+  reloadCheckInterval: 10s # reload on mtime change (UBS-35); SIGHUP works too
 
 # --- Rule actions (UBS-35; spec 005 s5, ADR 0008) ---
 # The operator's allowlist: a rule in rules.yaml can only run a command listed
@@ -79,14 +94,14 @@ publish:
   enabled: true
   endpoint: http://127.0.0.1:8080/telemetry/batch
   # ^ Metrics, events, alerts and the heartbeat share this batch endpoint.
-  allowInsecureEndpoint: true          # LOCAL DEV ONLY (plain http)
+  allowInsecureEndpoint: true # LOCAL DEV ONLY (plain http)
   dryRun: false
   interval: 10s
   connectTimeout: 3s
   timeout: 10s
   maxBatchItems: 500
-  compressThreshold: 4096              # gzip above 4 KiB; backend accepts gzip
-  bufferBytes: 67108864                # 64 MiB, memory only (FR-PUB-008)
+  compressThreshold: 4096 # gzip above 4 KiB; backend accepts gzip
+  bufferBytes: 67108864 # 64 MiB, memory only (FR-PUB-008)
   bufferMaxAge: 15m
   haltProbeInterval: 5m
   retry: { base: 1s, factor: 2, cap: 60s, jitter: 0.2 }
@@ -96,7 +111,7 @@ publish:
 callbacks:
   enabled: true
   endpoint: http://127.0.0.1:9000/magic/callbacks/telemetry-alerts
-  allowInsecureCallback: true          # LOCAL DEV ONLY (plain http)
+  allowInsecureCallback: true # LOCAL DEV ONLY (plain http)
   dryRun: false
   connectTimeout: 3s
   timeout: 10s

@@ -31,7 +31,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from typing import Any
@@ -101,6 +101,7 @@ class RuleEvaluator:
         logger: logging.Logger | None = None,
         snapshot_emitter: SnapshotEmitter | None = None,
         event_emitter: EventEmitter | None = None,
+        host_gauges: Callable[[], Mapping[str, float]] | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be > 0")
@@ -124,6 +125,9 @@ class RuleEvaluator:
         self._next_reload_check: float | None = None
         self._snapshot_emitter = snapshot_emitter
         self._event_emitter = event_emitter
+        # UBS-129: the Host Monitor's latest gauges (FR-MET-034); read-only,
+        # sampled on its own thread, so no lock is needed here.
+        self._host_gauges = host_gauges
         # One sampler per registry: `AgentCounterSampler` keeps a baseline,
         # and sharing one would diff each registry against the other's.
         self._callback_sampler = AgentCounterSampler(
@@ -251,6 +255,7 @@ class RuleEvaluator:
             if self._publisher is not None
             else None
         )
+        host_gauges = self._host_gauges() if self._host_gauges is not None else None
         signature_windows = {
             r.window for r in self._engine.rules if r.kind is RuleKind.SIGNATURE
         }
@@ -270,6 +275,7 @@ class RuleEvaluator:
                     correlator=self._correlator,
                     now=now,
                     consecutive_publish_failures=failures,
+                    host_gauges=host_gauges,
                 )
                 changed.extend(self._engine.evaluate(snap, now))
         return changed

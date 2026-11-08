@@ -22,8 +22,11 @@ asks for it.
    The status itself survives.
 2. Unmeasured signals are sent as `0`, which the backend cannot distinguish
    from a measured zero.
-3. `resourceUsage` is required there and unmeasured here, so it is sent as
-   zeros rather than omitted.
+3. `resourceUsage` is required there. Since UBS-129 the Host Monitor measures
+   the agent's own RSS and CPU (FR-HLT-016) and that is what is sent. Only when
+   there is no measurement (`host.enabled: false`, or the read failed) is it
+   still sent as zeros, because the ingestion model has no null for it; the
+   same reversal as above would fix that. `activeTasks` is not measured.
 
 Reversing is a small change once the team settles the contract: make the
 optional fields `| None = None` in `ingestion.Heartbeat` and have

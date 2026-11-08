@@ -85,6 +85,12 @@ class Gauges(CamelModel):
     # reads this rather than a windowed `publish_failures` count, which
     # exponential backoff makes unusable (spec 005 §1.2).
     consecutive_publish_failures: int | None = None
+    # FR-MET-034 (UBS-129): Host Monitor gauges. `None` (the default) means
+    # the Host Monitor could not read it or is off, never "0% used": a rule
+    # reads `insufficient_data` rather than a false "disk empty". The disk
+    # gauge is the worst (highest) mount, since gauges carry no dimensions.
+    host_disk_used_ratio: float | None = None
+    host_memory_used_ratio: float | None = None
 
 
 class WindowBounds(CamelModel):

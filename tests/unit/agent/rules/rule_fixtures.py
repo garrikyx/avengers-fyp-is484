@@ -60,12 +60,16 @@ def make_gauges(
     oldest_pending_age_seconds: float | None = None,
     seconds_since_last_event: float | None = None,
     consecutive_publish_failures: int | None = None,
+    host_disk_used_ratio: float | None = None,
+    host_memory_used_ratio: float | None = None,
 ) -> Gauges:
     return Gauges(
         pending_orders=pending_orders,
         oldest_pending_age_seconds=oldest_pending_age_seconds,
         seconds_since_last_event=seconds_since_last_event,
         consecutive_publish_failures=consecutive_publish_failures,
+        host_disk_used_ratio=host_disk_used_ratio,
+        host_memory_used_ratio=host_memory_used_ratio,
     )
 
 

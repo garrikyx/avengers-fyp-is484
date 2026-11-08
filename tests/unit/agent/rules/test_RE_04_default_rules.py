@@ -42,9 +42,9 @@ def _fire(rule: RuleConfig, snapshot: MetricsSnapshot) -> list[AlertEvent]:
     return engine.evaluate(snapshot, t1)
 
 
-def test_default_rules_are_17_unique_names() -> None:
-    assert len(DEFAULT_RULES) == 17
-    assert len({r.name for r in DEFAULT_RULES}) == 17
+def test_default_rules_are_19_unique_names() -> None:
+    assert len(DEFAULT_RULES) == 19  # 17 + HostDiskFull, HostMemoryHigh (UBS-129)
+    assert len({r.name for r in DEFAULT_RULES}) == 19
 
 
 def test_high_reject_rate_fires_warning_then_escalates_to_critical() -> None:
