@@ -55,6 +55,7 @@ def _numbers_from_data(data: MetricsQueryResponse) -> set[str]:
     effective = data.effective_time_range
     for dt in (effective.from_utc, effective.to_utc, data.evaluated_at_utc):
         found.add(str(dt.year))
+        found.add(f"{dt.month:02d}")
         found.add(f"{dt.day:02d}")
         found.add(f"{dt.hour:02d}")
         found.add(f"{dt.minute:02d}")
