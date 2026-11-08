@@ -254,3 +254,36 @@ def test_reason_names_are_escaped() -> None:
     response = _ask(service)
     assert "<b>" not in response.answer
     assert "&lt;b&gt;x&lt;/b&gt;" in response.answer
+
+
+def test_absolute_time_range_is_fitted_not_rejected() -> None:
+    service = _service(
+        previous={"OrderExceedsLimit": 10}, current={"OrderExceedsLimit": 35}
+    )
+    response = _ask(service, "Which reject reasons are increasing today?")
+    trends = response.reject_reason_trends
+    assert trends is not None
+    # Each window is at most half the retention (the previous one must fit too).
+    assert trends.current_to_utc - trends.current_from_utc <= timedelta(hours=3)
+
+
+def test_answer_states_the_windows_it_compared() -> None:
+    service = _service(
+        previous={"OrderExceedsLimit": 10}, current={"OrderExceedsLimit": 35}
+    )
+    response = _ask(service)
+    trends = response.reject_reason_trends
+    assert trends is not None
+    assert f"{trends.previous_from_utc:%Y-%m-%d %H:%M}" in response.answer
+    assert "Data covers" not in response.answer
+
+
+def test_incidental_increase_wording_does_not_steal_other_intents() -> None:
+    match = match_rules(
+        "Show reject reasons, did rejects increase vs yesterday?",
+        context=_CONTEXT,
+        config=_CONFIG,
+        now=NOW,
+        max_range_seconds=21_600,
+    )
+    assert match is None or match.intent != "reject_reason_trend"

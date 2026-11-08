@@ -115,6 +115,16 @@ def _reject_reason_trend_parts(
     return parts, rows
 
 
+def _trend_windows_sentence(trends: RejectReasonTrendsResponse) -> str:
+    def span(start: datetime, end: datetime) -> str:
+        return f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC"
+
+    return (
+        f"Compared {span(trends.current_from_utc, trends.current_to_utc)} "
+        f"with {span(trends.previous_from_utc, trends.previous_to_utc)}."
+    )
+
+
 def render_answer(inp: RenderInput) -> RenderOutput:
     """Build deterministic prose from query results only."""
     now = inp.now or inp.data.evaluated_at_utc
@@ -251,7 +261,11 @@ def render_answer(inp: RenderInput) -> RenderOutput:
     else:
         parts.append("Query completed.")
 
-    parts.append(fmt.effective_range_sentence(inp.data.effective_time_range))
+    if inp.intent == "reject_reason_trend" and inp.trends is not None:
+        # The trend compares bucket-aligned windows, not the requested range.
+        parts.append(_trend_windows_sentence(inp.trends))
+    else:
+        parts.append(fmt.effective_range_sentence(inp.data.effective_time_range))
     _append_caveats(parts, inp)
 
     answer = " ".join(p for p in parts if p).strip()

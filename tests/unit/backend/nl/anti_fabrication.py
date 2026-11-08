@@ -69,6 +69,16 @@ def _numbers_from_trends(trends: RejectReasonTrendsResponse) -> set[str]:
         found.add(str(reason.previous_count))
         if reason.change_ratio is not None:
             found.add(f"{round(reason.change_ratio * 100)}")
+    for dt in (
+        trends.current_from_utc,
+        trends.current_to_utc,
+        trends.previous_from_utc,
+        trends.previous_to_utc,
+    ):
+        found.update(
+            {str(dt.year), f"{dt.month:02d}", f"{dt.day:02d}"}
+            | {f"{dt.hour:02d}", f"{dt.minute:02d}"}
+        )
     return found
 
 

@@ -55,7 +55,8 @@ _PATTERNS: tuple[_IntentPattern, ...] = (
         "reject_reason_trend",
         (
             re.compile(
-                r"reject(?:ion)? reasons?\b.*"
+                r"reject(?:ion)? reasons?\s+(?:(?:are|is|have been|has been)\s+)?"
+                r"(?:(?:now|currently)\s+)?"
                 r"(?:increas|ris(?:e|ing)|going up|growing|climbing|trending up"
                 r"|emerging|spiking)",
                 re.I,

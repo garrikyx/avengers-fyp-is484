@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -69,6 +70,17 @@ from telemetry_backend.services.query_engine import QueryEngine, QueryValidation
 from telemetry_backend.services.reject_reason_trends import RejectReasonTrendService
 
 logger = logging.getLogger(__name__)
+
+_RELATIVE_RE = re.compile(r"^(\d+)([smh])$")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
+
+
+def _window_text(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,11 +248,11 @@ class NlQueryService:
 
         trends: RejectReasonTrendsResponse | None = None
         if intent == "reject_reason_trend":
+            window, adjusted = self._trend_window(validated.interpreted.time_range)
             try:
                 trends = await self._trends.analyse(
                     RejectReasonTrendsRequest(
-                        window=_trend_window(validated.interpreted.time_range),
-                        filters=validated.interpreted.filters,
+                        window=window, filters=validated.interpreted.filters
                     ),
                     now=now,
                 )
@@ -252,6 +264,11 @@ class NlQueryService:
                         "Please clarify your question.",
                         details=[f"{exc.field}: {exc.issue}"],
                     ),
+                )
+            if adjusted:
+                caveats.append(
+                    f"Compared the last {window} against the {window} before: the "
+                    "requested range was fitted to whole buckets within retention."
                 )
             caveats.extend(c for c in trends.caveats if c not in caveats)
 
@@ -323,6 +340,26 @@ class NlQueryService:
         )
         return interpreted, time_caveats
 
+    def _trend_window(self, time_range: QueryTimeRange) -> tuple[str, bool]:
+        """Length of each compared window, as the trend API takes it.
+
+        The asked-for range's length, fitted to whole buckets and to half the
+        retention (the preceding window must fit too). Returns whether it was
+        adjusted so the answer can say so.
+        """
+        if time_range.last is not None:
+            match = _RELATIVE_RE.match(time_range.last)
+            if match is None:
+                return time_range.last, False  # the trend API rejects it
+            asked = int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+        else:
+            assert time_range.from_utc is not None and time_range.to_utc is not None
+            asked = int((time_range.to_utc - time_range.from_utc).total_seconds())
+        bucket = self._engine.bucket_seconds
+        fitted = max(bucket, min(asked, self._max_range_seconds // 2))
+        fitted -= fitted % bucket
+        return _window_text(fitted), fitted != asked
+
     async def warm_up(self) -> None:
         """Load the model before the first question (startup background task)."""
         if self._config.llm.warm_up and isinstance(self._llm, ManagedLlmSlotFiller):
@@ -376,15 +413,6 @@ class NlQueryService:
         if intent == "alert_status":
             return alerts, citations
         return alerts, citations
-
-
-def _trend_window(time_range: QueryTimeRange) -> str:
-    """The compared window's length: the asked-for range, e.g. `30m`, or its span."""
-    if time_range.last is not None:
-        return time_range.last
-    assert time_range.from_utc is not None and time_range.to_utc is not None
-    seconds = int((time_range.to_utc - time_range.from_utc).total_seconds())
-    return f"{seconds}s"
 
 
 def _filter_instance(filters: dict[str, str | list[str]]) -> str | None:

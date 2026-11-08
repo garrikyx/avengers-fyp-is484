@@ -42,13 +42,15 @@ Consequences:
 Its optional slots are `timeRange`, `application` and `instanceId`. The `timeRange` slot
 sets the length of each compared window (default `last 30m`, so the latest 30 minutes
 against the 30 before, stated per `FR-NLQ-014`); an absolute range contributes only its
-length, and the comparison always ends at the latest complete bucket. `threshold` and
-`minOccurrences` take the API defaults and are not slots. The answer lists the
-`increasing` reasons (emerging first, then largest rise) with their counts and relative
-change, taken only from the trend payload (`FR-NLQ-009`). If the store does not cover
-the preceding window it says there is not enough history instead of reporting "no
-increase". The response carries the payload as `rejectReasonTrends`; `data` is the
-metrics query over the latest window, grouped by `rejectReason`.
+length. The length is fitted to whole buckets and to at most half the retention window
+(the preceding window must fit too), with a caveat when adjusted, and the comparison
+always ends at the latest complete bucket. `threshold` and `minOccurrences` take the API
+defaults and are not slots. The answer lists the `increasing` reasons (emerging first,
+then largest rise) with their counts and relative change, taken only from the trend
+payload (`FR-NLQ-009`). If the store does not cover the preceding window it says there
+is not enough history instead of reporting "no increase". The response carries the
+payload as `rejectReasonTrends`; `data` is the metrics query over the latest window,
+grouped by `rejectReason`.
 
 `FR-NLQ-004`: Each intent MUST have a fixed set of required and optional slots
 (`timeRange`, `application`, `instanceId`, `session`, `symbol`, `groupBy`, `step`) and a
