@@ -52,5 +52,5 @@ jobs:
       # FR-TST-001 / UBS-146: report-only for now, never fails the build.
       - name: Requirement coverage report
         if: ${{ !cancelled() && runner.os == 'Linux' }}
-        run:
+        run: |
           uv run python scripts/requirement_coverage.py | tee -a "$GITHUB_STEP_SUMMARY"
