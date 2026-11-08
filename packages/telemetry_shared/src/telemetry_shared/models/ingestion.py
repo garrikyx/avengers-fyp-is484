@@ -44,7 +44,8 @@ class HeartbeatFile(CamelModel):
 class ResourceUsage(CamelModel):
     rss_mb: float = Field(ge=0)
     cpu_percent: float = Field(ge=0)
-    active_tasks: int = Field(ge=0)
+    # Optional: an agent that does not measure it omits it rather than sending 0.
+    active_tasks: int | None = Field(default=None, ge=0)
 
 
 class Heartbeat(CamelModel):
@@ -64,7 +65,9 @@ class Heartbeat(CamelModel):
     publish_buffer_bytes: int = Field(ge=0)
     dropped_events_last5_min: int = Field(ge=0)
     active_alert_count: int = Field(ge=0)
-    resource_usage: ResourceUsage
+    # Omitted when the agent has no measurement (`host.enabled: false`, or the
+    # read failed): a gap is never reported as 0 MB / 0 % (FR-HLT-004).
+    resource_usage: ResourceUsage | None = None
 
 
 class TelemetryBatch(CamelModel):

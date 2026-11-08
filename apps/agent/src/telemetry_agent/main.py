@@ -68,6 +68,7 @@ from telemetry_agent.config import (
     DEFAULT_CONFIG_PATH,
     AgentConfig,
     AgentConfigError,
+    host_rule_filter,
     load_agent_config,
 )
 from telemetry_agent.health.host_monitor import (
@@ -240,8 +241,10 @@ def build_agent(
         connect_reporter_to_publisher(reporter, publisher)
     # --- host monitor (own task; UBS-129) ------------------------------------------
     host_monitor: HostMonitor | None = None
+    host_gauges = None  # what the evaluator and snapshot emitter read
     if cfg.host.enabled:
         host_monitor = HostMonitor(cfg.host, host_sampler or PsutilSampler())
+        host_gauges = host_monitor.gauges
         with ingestor.lock:
             reporter.set_resource_usage_provider(host_monitor.resource_usage)
     events = EventEmitter(
@@ -359,14 +362,20 @@ def build_agent(
         session_tracker=ingestor.session_tracker,
         publisher=publisher,
         dispatcher=dispatcher,
-        reloader=SighupRuleReloader(engine, cfg.rules_path, stage=stage_actions),
+        reloader=SighupRuleReloader(
+            engine,
+            cfg.rules_path,
+            stage=stage_actions,
+            keep=host_rule_filter(cfg.host),
+        ),
         interval_seconds=cfg.evaluation_interval_seconds,
         reload_check_seconds=cfg.rules_reload_check_seconds,
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
         counters=evaluator_counters,
         event_emitter=events,
-        host_gauges=host_monitor.gauges if host_monitor is not None else None,
+        host_gauges=host_gauges,
+        host_counters=host_monitor.counters if host_monitor is not None else None,
         snapshot_emitter=SnapshotEmitter(
             ingestor.aggregator,
             publisher,
@@ -376,7 +385,7 @@ def build_agent(
             instance_id=cfg.instance_id,
             correlator=ingestor.correlator,
             counters=evaluator_counters,
-            host_gauges=host_monitor.gauges if host_monitor is not None else None,
+            host_gauges=host_gauges,
         ),
     )
     return Agent(

@@ -22,11 +22,10 @@ asks for it.
    The status itself survives.
 2. Unmeasured signals are sent as `0`, which the backend cannot distinguish
    from a measured zero.
-3. `resourceUsage` is required there. Since UBS-129 the Host Monitor measures
-   the agent's own RSS and CPU (FR-HLT-016) and that is what is sent. Only when
-   there is no measurement (`host.enabled: false`, or the read failed) is it
-   still sent as zeros, because the ingestion model has no null for it; the
-   same reversal as above would fix that. `activeTasks` is not measured.
+3. `resourceUsage` is optional there. Since UBS-129 the Host Monitor measures
+   the agent's own RSS, CPU and event-loop task count (FR-HLT-016) and that is
+   what is sent. When there is no measurement (`host.enabled: false`, or the
+   read failed) it is omitted, never sent as zeros (FR-HLT-004).
 
 Reversing is a small change once the team settles the contract: make the
 optional fields `| None = None` in `ingestion.Heartbeat` and have
@@ -72,14 +71,16 @@ def to_ingestion_heartbeat(
     ]
 
     usage = heartbeat.resource_usage
-    resource_usage = ResourceUsage(
-        rss_mb=usage.rss_mb if usage and usage.rss_mb is not None else 0.0,
-        cpu_percent=usage.cpu_percent
-        if usage and usage.cpu_percent is not None
-        else 0.0,
-        active_tasks=usage.active_tasks
-        if usage and usage.active_tasks is not None
-        else 0,
+    resource_usage = (
+        ResourceUsage(
+            rss_mb=usage.rss_mb,
+            cpu_percent=usage.cpu_percent,
+            active_tasks=usage.active_tasks,
+        )
+        if usage is not None
+        and usage.rss_mb is not None
+        and usage.cpu_percent is not None
+        else None  # a gap is omitted, not fabricated as zeros
     )
 
     return Heartbeat(

@@ -6,9 +6,14 @@ docstring) — these helpers exist purely to keep individual tests terse.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
+from telemetry_agent.rules.config_loader import load_rules
+from telemetry_agent.rules.defaults import DEFAULT_RULES
+from telemetry_agent.rules.engine import RuleEngine
+from telemetry_agent.rules.types import RuleConfig
 from telemetry_shared.models.metrics import (
     Gauges,
     Indicator,
@@ -20,6 +25,26 @@ from telemetry_shared.models.metrics import (
 )
 
 WINDOW_SECONDS = {"1m": 60, "5m": 300, "15m": 900}
+
+T0 = datetime(2026, 6, 12, 4, 0, 0, tzinfo=UTC)
+RULES_YAML = Path(__file__).resolve().parents[4] / "config" / "rules.yaml"
+
+
+def shipped_rule(source: str, name: str) -> RuleConfig:
+    """`name` from `DEFAULT_RULES` ("defaults") or the shipped rules.yaml."""
+    rules = DEFAULT_RULES if source == "defaults" else load_rules(RULES_YAML)
+    return next(r for r in rules if r.name == name)
+
+
+def single_rule_engine(rule: RuleConfig) -> RuleEngine:
+    """An engine running only `rule`, past its startup grace at `T0`."""
+    return RuleEngine(
+        rules=(rule,),
+        instance_id="magic-prod-01",
+        application="Magic",
+        agent_id="agent-1",
+        started_at=T0 - timedelta(hours=1),
+    )
 
 
 def make_indicator(

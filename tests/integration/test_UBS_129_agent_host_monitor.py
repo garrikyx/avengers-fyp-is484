@@ -4,9 +4,13 @@
 
     stubbed sampler at 0.96 disk -> HostDiskFull critical in the backend
       (FR-HLT-013, FR-MET-034)
-    real psutil sampler           -> heartbeat resourceUsage.rssMb > 0
-      (FR-HLT-016)
-    host.enabled: false           -> no monitor, no host alert
+    stubbed sampler at 0.40 disk  -> heartbeat resourceUsage (84 MB RSS, measured
+      activeTasks) and no alert (FR-HLT-016); the real psutil sampler is smoke
+      tested in tests/unit/agent/health/test_UBS_129_resource_usage.py
+    host.enabled: false           -> no monitor, no host alert, resourceUsage
+      omitted (null), never zeros (FR-HLT-004)
+
+Every sampler here is a stub, so the assertions do not depend on the machine.
 """
 
 from __future__ import annotations
@@ -60,8 +64,11 @@ rules:
 
 
 class _StubSampler:
+    def __init__(self, disk: float = 0.96) -> None:
+        self.disk = disk
+
     def disk_used_ratio(self, path: str) -> float:
-        return 0.96
+        return self.disk
 
     def memory_used_ratio(self) -> float:
         return 0.5
@@ -69,9 +76,12 @@ class _StubSampler:
     def own_usage(self) -> tuple[float, float]:
         return 84.0, 1.8
 
+    def process_running(self, name: str) -> bool:
+        return True
+
 
 def _agent(
-    tmp_path: Path, *, enabled: bool = True, stub: bool = False
+    tmp_path: Path, *, enabled: bool = True, sampler: _StubSampler | None = None
 ) -> tuple[Any, Agent]:
     (tmp_path / "rules.yaml").write_text(_RULES, encoding="utf-8")
     config_path = tmp_path / "agent.yaml"
@@ -95,7 +105,7 @@ def _agent(
             "MAGIC_TELEMETRY_PUBLISH_TOKEN": "e2e-token",
             "MAGIC_TELEMETRY_CALLBACK_SECRET": "e2e-secret",
         },
-        host_sampler=_StubSampler() if stub else None,
+        host_sampler=sampler,
     )
     return app, agent
 
@@ -122,9 +132,14 @@ def _run(app: Any, agent: Agent, *, wait_for: str) -> tuple[list[Any], dict[str,
                 rss = (health.get("resourceUsage") or {}).get("rssMb")
                 if (wait_for == "alert" and alerts) or (wait_for == "rss" and rss):
                     break
-            if wait_for == "none":
+            # Let a few more sample/evaluate/publish cycles run, so "no alert" is
+            # a statement about steady state and not about the first tick.
+            if wait_for != "alert":
                 await asyncio.sleep(1.5)
                 alerts = (await client.get("/telemetry/alerts")).json()["alerts"]
+                health = (
+                    await client.get(f"/telemetry/health/agents/{AGENT_ID}")
+                ).json()
         finally:
             stop.set()
             await asyncio.wait_for(running, 15)
@@ -138,7 +153,7 @@ def _run(app: Any, agent: Agent, *, wait_for: str) -> tuple[list[Any], dict[str,
 def test_fr_met_034_stubbed_disk_at_0_96_fires_host_disk_full_in_the_backend(
     tmp_path: Path,
 ) -> None:
-    app, agent = _agent(tmp_path, stub=True)
+    app, agent = _agent(tmp_path, sampler=_StubSampler(0.96))
 
     alerts, _ = _run(app, agent, wait_for="alert")
 
@@ -150,14 +165,17 @@ def test_fr_met_034_stubbed_disk_at_0_96_fires_host_disk_full_in_the_backend(
     assert agent.host_monitor.counters.snapshot().get("host_sample_errors", 0) == 0
 
 
-def test_fr_hlt_016_heartbeat_reports_the_real_agents_non_zero_rss(
+def test_fr_hlt_016_heartbeat_reports_the_agents_own_usage_and_nothing_alerts(
     tmp_path: Path,
 ) -> None:
-    app, agent = _agent(tmp_path)
+    app, agent = _agent(tmp_path, sampler=_StubSampler(0.40))
 
-    _, health = _run(app, agent, wait_for="rss")
+    alerts, health = _run(app, agent, wait_for="rss")
 
-    assert health["resourceUsage"]["rssMb"] > 0
+    assert health["resourceUsage"]["rssMb"] == 84.0
+    assert health["resourceUsage"]["cpuPercent"] == 1.8
+    assert health["resourceUsage"]["activeTasks"] >= 1  # the loop's own tasks
+    assert alerts == []  # deterministic: the stub is far below every threshold
     assert agent.host_monitor is not None
     assert agent.host_monitor.counters.snapshot().get("host_sample_errors", 0) == 0
 
@@ -165,9 +183,20 @@ def test_fr_hlt_016_heartbeat_reports_the_real_agents_non_zero_rss(
 def test_fr_hlt_013_host_disabled_runs_no_monitor_and_raises_no_host_alert(
     tmp_path: Path,
 ) -> None:
-    app, agent = _agent(tmp_path, enabled=False, stub=True)
+    app, agent = _agent(tmp_path, enabled=False, sampler=_StubSampler())
     assert agent.host_monitor is None
 
     alerts, _ = _run(app, agent, wait_for="none")
 
     assert alerts == []
+
+
+def test_fr_hlt_004_host_disabled_heartbeat_omits_resource_usage_not_zeros(
+    tmp_path: Path,
+) -> None:
+    app, agent = _agent(tmp_path, enabled=False)
+
+    _, health = _run(app, agent, wait_for="none")
+
+    assert health["status"] in {"healthy", "degraded", "unhealthy"}  # it did report
+    assert health["resourceUsage"] is None

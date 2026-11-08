@@ -273,6 +273,10 @@ transitions). `404` with `code: "not_found"` if unknown or evicted.
 }
 ```
 
+`resourceUsage` is `null` when the agent has no measurement (`host.enabled: false` or
+the read failed), and `activeTasks` is `null` when not measured; an unmeasured value is
+never reported as `0` (`FR-HLT-004`).
+
 `FR-HLT-011`: File paths are the only path-like data the API returns. They are
 configured values, never user input, and MUST NOT be interpolated into any filesystem
 operation on the backend.

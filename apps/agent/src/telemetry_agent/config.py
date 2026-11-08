@@ -27,6 +27,7 @@ hash key come from the environment (see `.env.example`).
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,12 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
+from telemetry_shared.metrics.host import (
+    HOST_DISK_USED_RATIO,
+    HOST_GAUGES,
+    HOST_MEMORY_USED_RATIO,
+    MAGIC_PROCESS_UP,
+)
 
 from telemetry_agent.actions.config import (
     ActionDef,
@@ -50,12 +57,11 @@ from telemetry_agent.health.config import (
 from telemetry_agent.health.host_monitor import (
     DEFAULT_DISK_PATHS,
     DEFAULT_SAMPLE_INTERVAL_SECONDS,
-    MAX_DISK_PATHS,
     HostConfig,
 )
 from telemetry_agent.publishing.config import PublishConfig, parse_publish_config
 from telemetry_agent.rules.config_loader import load_rules
-from telemetry_agent.rules.types import RuleConfig
+from telemetry_agent.rules.types import RuleConfig, ValueSource
 
 DEFAULT_CONFIG_PATH = Path("config/agent.yaml")
 
@@ -174,6 +180,43 @@ def _section(raw: dict[str, Any], name: str, model: type[_Section]) -> Any:
         raise AgentConfigError(f"{name}: {exc}") from exc
 
 
+def _load_host(raw: dict[str, Any]) -> HostConfig:
+    """`host:` -> `HostConfig`, which owns the value checks (`ValueError`)."""
+    section: _HostYaml = _section(raw, "host", _HostYaml)
+    try:
+        return HostConfig(
+            enabled=section.enabled,
+            sample_interval_seconds=parse_duration_seconds(section.sample_interval),
+            disk_paths=tuple(section.disk_paths),
+            memory=section.memory,
+            process_name=section.process.name,
+        )
+    except Exception as exc:
+        raise AgentConfigError(f"host: {exc}") from exc
+
+
+def host_rule_filter(host: HostConfig) -> Callable[[RuleConfig], bool]:
+    """spec 005 §1.2: `HostDiskFull`, `HostMemoryHigh` and `ApplicationDown`
+    load only when the `host` block enables the matching gauge. Keyed on the
+    gauge a rule reads, so a custom rule on one of these gauges follows the same
+    rule; every other rule is kept. The reloader applies the same filter, so a
+    reload cannot bring a disabled host rule back."""
+    enabled: set[str] = set()
+    if host.enabled:
+        if host.disk_paths:
+            enabled.add(HOST_DISK_USED_RATIO)
+        if host.memory:
+            enabled.add(HOST_MEMORY_USED_RATIO)
+        if host.process_name:
+            enabled.add(MAGIC_PROCESS_UP)
+
+    def keep(rule: RuleConfig) -> bool:
+        reads_host = rule.source is ValueSource.GAUGE and rule.metric in HOST_GAUGES
+        return not reads_host or rule.metric in enabled
+
+    return keep
+
+
 def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     file = Path(path)
     if not file.is_file():
@@ -220,8 +263,9 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     except Exception as exc:
         raise AgentConfigError(f"actions: {exc}") from exc
 
+    host = _load_host(raw)
     try:
-        rules = load_rules(rules_path)
+        rules = load_rules(rules_path, keep=host_rule_filter(host))
         actions = load_action_catalogue(rules_path, allowed_commands=allowed_commands)
     except Exception as exc:
         raise AgentConfigError(f"rules: {exc}") from exc
@@ -267,18 +311,6 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     if interval <= 0:
         raise AgentConfigError("pipeline: evaluationInterval must be > 0")
 
-    host_section: _HostYaml = _section(raw, "host", _HostYaml)
-    try:
-        host_interval = parse_duration_seconds(host_section.sample_interval)
-    except Exception as exc:
-        raise AgentConfigError(f"host: sampleInterval: {exc}") from exc
-    if not 0 < host_interval < float("inf"):
-        raise AgentConfigError("host: sampleInterval must be finite and > 0")
-    if len(host_section.disk_paths) > MAX_DISK_PATHS:
-        raise AgentConfigError(f"host: diskPaths lists more than {MAX_DISK_PATHS}")
-    if any(not p.strip() for p in host_section.disk_paths):
-        raise AgentConfigError("host: diskPaths entries must be non-empty paths")
-
     return AgentConfig(
         source=file,
         heartbeat=heartbeat,
@@ -306,11 +338,5 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
         actions=actions,
         allowed_commands=allowed_commands,
         rules_reload_check_seconds=reload_check,
-        host=HostConfig(
-            enabled=host_section.enabled,
-            sample_interval_seconds=host_interval,
-            disk_paths=tuple(host_section.disk_paths),
-            memory=host_section.memory,
-            process_name=host_section.process.name,
-        ),
+        host=host,
     )

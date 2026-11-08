@@ -24,6 +24,11 @@ from telemetry_shared.metrics import (
     build_latency_summary,
     compute_indicators,
 )
+from telemetry_shared.metrics.host import (
+    HOST_DISK_USED_RATIO,
+    HOST_MEMORY_USED_RATIO,
+    MAGIC_PROCESS_UP,
+)
 from telemetry_shared.models.metrics import (
     Gauges,
     MetricsGroup,
@@ -50,9 +55,9 @@ def _build_gauges(
         oldest_pending_age_seconds=oldest_pending_age_seconds,
         seconds_since_last_event=aggregator.seconds_since_last_event(),
         consecutive_publish_failures=consecutive_publish_failures,
-        host_disk_used_ratio=host.get("host_disk_used_ratio"),
-        host_memory_used_ratio=host.get("host_memory_used_ratio"),
-        magic_process_up=host.get("magic_process_up"),
+        host_disk_used_ratio=host.get(HOST_DISK_USED_RATIO),
+        host_memory_used_ratio=host.get(HOST_MEMORY_USED_RATIO),
+        magic_process_up=host.get(MAGIC_PROCESS_UP),
     )
 
 

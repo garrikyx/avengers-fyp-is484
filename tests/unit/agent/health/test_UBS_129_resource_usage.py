@@ -40,7 +40,32 @@ def test_fr_hlt_016_heartbeat_carries_the_providers_rss_and_cpu() -> None:
 
     assert heartbeat.resource_usage == usage
     wire = to_ingestion_heartbeat(heartbeat)
+    assert wire.resource_usage is not None
     assert (wire.resource_usage.rss_mb, wire.resource_usage.cpu_percent) == (84.0, 1.8)
+    assert wire.resource_usage.active_tasks is None  # unmeasured, not 0
+
+
+def test_fr_hlt_016_active_tasks_ride_the_wire_when_measured() -> None:
+    reporter = _reporter()
+    usage = ResourceUsage(rss_mb=84.0, cpu_percent=1.8, active_tasks=42)
+    reporter.set_resource_usage_provider(lambda: usage)
+
+    wire = to_ingestion_heartbeat(reporter.build_heartbeat())
+
+    assert wire.resource_usage is not None
+    assert wire.resource_usage.active_tasks == 42
+
+
+def test_fr_hlt_004_an_unmeasured_resource_usage_is_omitted_not_sent_as_zeros() -> None:
+    wire = to_ingestion_heartbeat(_reporter().build_heartbeat())
+    assert wire.resource_usage is None
+    assert "resourceUsage" not in wire.model_dump(by_alias=True, exclude_none=True)
+
+
+def test_fr_hlt_004_a_partly_measured_resource_usage_is_omitted_whole() -> None:
+    reporter = _reporter()
+    reporter.set_resource_usage_provider(lambda: ResourceUsage(rss_mb=84.0))
+    assert to_ingestion_heartbeat(reporter.build_heartbeat()).resource_usage is None
 
 
 def test_fr_hlt_016_a_provider_with_nothing_yet_stays_unmeasured() -> None:
@@ -58,6 +83,7 @@ def test_fr_hlt_016_real_sampler_reports_non_zero_rss_through_the_heartbeat() ->
 
     wire = to_ingestion_heartbeat(reporter.build_heartbeat())
 
+    assert wire.resource_usage is not None
     assert wire.resource_usage.rss_mb > 0
     assert wire.resource_usage.cpu_percent >= 0
     assert monitor.counters.snapshot().get("host_sample_errors", 0) == 0

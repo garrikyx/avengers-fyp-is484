@@ -42,6 +42,7 @@ from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.common.self_metrics import CounterRegistry
 from telemetry_agent.metrics.agent_counters import (
     DEFAULT_AGENT_METRICS,
+    HOST_AGENT_METRICS,
     PUBLISH_AGENT_METRICS,
     AgentCounterSampler,
 )
@@ -102,6 +103,7 @@ class RuleEvaluator:
         snapshot_emitter: SnapshotEmitter | None = None,
         event_emitter: EventEmitter | None = None,
         host_gauges: Callable[[], Mapping[str, float]] | None = None,
+        host_counters: CounterRegistry | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be > 0")
@@ -128,6 +130,9 @@ class RuleEvaluator:
         # UBS-129: the Host Monitor's latest gauges (FR-MET-034); read-only,
         # sampled on its own thread, so no lock is needed here.
         self._host_gauges = host_gauges
+        # UBS-129: the Host Monitor's own registry (`host_sample_errors`),
+        # bridged into the aggregator so failed reads are queryable.
+        self._host_counters = host_counters
         # One sampler per registry: `AgentCounterSampler` keeps a baseline,
         # and sharing one would diff each registry against the other's.
         self._callback_sampler = AgentCounterSampler(
@@ -135,6 +140,9 @@ class RuleEvaluator:
         )
         self._publish_sampler = AgentCounterSampler(
             aggregator, instance_id=instance_id, metrics=PUBLISH_AGENT_METRICS
+        )
+        self._host_sampler = AgentCounterSampler(
+            aggregator, instance_id=instance_id, metrics=HOST_AGENT_METRICS
         )
 
     @property
@@ -244,6 +252,8 @@ class RuleEvaluator:
             self._callback_sampler.sample(self._dispatcher.counters.snapshot(), at=now)
         if self._publisher is not None:
             self._publish_sampler.sample(self._publisher.counters.snapshot(), at=now)
+        if self._host_counters is not None:
+            self._host_sampler.sample(self._host_counters.snapshot(), at=now)
 
     def _evaluate(self, now: datetime) -> list[AlertEvent]:
         windows = sorted({r.window for r in self._engine.rules if r.window is not None})

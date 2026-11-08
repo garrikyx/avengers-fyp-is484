@@ -361,13 +361,21 @@ def load_anomaly_rules(path: Path) -> tuple[RuleConfig, ...]:
     return tuple(rules)
 
 
-def load_rules(path: Path) -> tuple[RuleConfig, ...]:
+def load_rules(
+    path: Path, *, keep: Callable[[RuleConfig], bool] | None = None
+) -> tuple[RuleConfig, ...]:
     """`DEFAULT_RULES` if `path` doesn't exist; otherwise the parsed file
     (raising `RuleConfigError` if it exists but is malformed — a present-
     but-broken file never silently falls back to defaults). The sibling
     `anomaly.yaml`'s rules are appended either way.
+
+    `keep`, when given, drops the rules it rejects from the file/default set
+    (spec 005 §1.2: the host rules load only when the `host` block enables their
+    gauge; `telemetry_agent.config.host_rule_filter`).
     """
     base = DEFAULT_RULES if not path.exists() else load_rules_from_yaml(path)
+    if keep is not None:
+        base = tuple(r for r in base if keep(r))
     anomaly = load_anomaly_rules(anomaly_path_for(path))
     clash = {r.name for r in base} & {r.name for r in anomaly}
     if clash:
@@ -402,10 +410,12 @@ class SighupRuleReloader:
         path: Path,
         *,
         stage: ReloadStage | None = None,
+        keep: Callable[[RuleConfig], bool] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._engine = engine
         self._path = path
+        self._keep = keep
         self._stage = stage
         self._logger = logger or logging.getLogger(__name__)
         self._mtime = self._read_mtime()
@@ -429,7 +439,7 @@ class SighupRuleReloader:
         """
         self._mtime = self._read_mtime()
         try:
-            new_rules = load_rules(self._path)
+            new_rules = load_rules(self._path, keep=self._keep)
             commit = self._stage(self._path) if self._stage is not None else None
         except RuleConfigError as exc:
             self._logger.error(

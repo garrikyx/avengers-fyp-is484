@@ -4,41 +4,31 @@ Both rule sources are checked: `DEFAULT_RULES` (the fallback) and the shipped
 `config/rules.yaml` (the live source of truth) must agree.
 """
 
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import timedelta
 
 import pytest
-from rule_fixtures import make_gauges, make_snapshot
-from telemetry_agent.rules.config_loader import load_rules
-from telemetry_agent.rules.defaults import DEFAULT_RULES
-from telemetry_agent.rules.engine import RuleEngine
+from rule_fixtures import (
+    T0,
+    make_gauges,
+    make_snapshot,
+    shipped_rule,
+    single_rule_engine,
+)
 from telemetry_agent.rules.types import RuleConfig, RuleKind, ValueSource
 from telemetry_shared.models.alerts import AlertEvent
 
-_T0 = datetime(2026, 6, 12, 4, 0, 0, tzinfo=UTC)
-_RULES_YAML = Path(__file__).resolve().parents[4] / "config" / "rules.yaml"
-
-
-def _rules(source: str, name: str) -> RuleConfig:
-    rules = DEFAULT_RULES if source == "defaults" else load_rules(_RULES_YAML)
-    return next(r for r in rules if r.name == name)
+_rules = shipped_rule
 
 
 def _evaluate_held(
     rule: RuleConfig, **gauges: float | None
 ) -> tuple[list[AlertEvent], list[AlertEvent]]:
     """(on first sight, after the `for` hold) for a gauge-only snapshot."""
-    engine = RuleEngine(
-        rules=(rule,),
-        instance_id="magic-prod-01",
-        application="Magic",
-        agent_id="agent-1",
-        started_at=_T0 - timedelta(hours=1),
-    )
+    engine = single_rule_engine(rule)
 
-    snap = make_snapshot(now=_T0, gauges=make_gauges(**gauges))
-    first = engine.evaluate(snap, _T0)
-    later = engine.evaluate(snap, _T0 + timedelta(seconds=rule.for_seconds))
+    snap = make_snapshot(now=T0, gauges=make_gauges(**gauges))
+    first = engine.evaluate(snap, T0)
+    later = engine.evaluate(snap, T0 + timedelta(seconds=rule.for_seconds))
     return first, later
 
 

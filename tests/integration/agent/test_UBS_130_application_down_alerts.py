@@ -9,14 +9,14 @@ Covers FR-HLT-014, FR-MET-034 and the ticket's done-when:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from telemetry_agent.callbacks.config import parse_callbacks_config
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import CallbackResult
-from telemetry_agent.config import load_agent_config
+from telemetry_agent.config import host_rule_filter, load_agent_config
 from telemetry_agent.health.host_monitor import HostConfig, HostMonitor
 from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.pipeline.evaluator import RuleEvaluator
@@ -25,6 +25,7 @@ from telemetry_agent.publishing.config import parse_publish_config
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import PublishResult
 from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
+from telemetry_agent.rules.config_loader import load_rules
 from telemetry_agent.rules.engine import RuleEngine
 from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.ingestion import TelemetryBatch
@@ -49,10 +50,10 @@ class _Sampler:
     def own_usage(self) -> tuple[float, float]:
         return 84.0, 1.8
 
-    def process_names(self) -> Iterable[str]:
+    def process_running(self, name: str) -> bool:
         if isinstance(self.names, Exception):
             raise self.names
-        return self.names
+        return name in set(self.names)
 
 
 class _NullCallbackSink:
@@ -74,10 +75,8 @@ class _Agent:
         cfg = load_agent_config(_REPO_ROOT / "config" / "agent.yaml")
         self.now = _T0
         self.sampler = _Sampler()
-        self.monitor = HostMonitor(
-            HostConfig(disk_paths=("/data",), process_name=process_name),
-            self.sampler,
-        )
+        host = HostConfig(disk_paths=("/data",), process_name=process_name)
+        self.monitor = HostMonitor(host, self.sampler)
         self.ingestor = MetricsIngestor.build_default(
             clock=lambda: self.now.timestamp(), monotonic=lambda: 0.0
         )
@@ -93,8 +92,12 @@ class _Agent:
             parse_callbacks_config({"endpoint": "https://magic.example/cb"}),
             b"secret",
         )
+        # The shipped rules, filtered as build_agent does for this host block.
+        rules = load_rules(
+            _REPO_ROOT / "config" / "rules.yaml", keep=host_rule_filter(host)
+        )
         engine = RuleEngine(
-            cfg.rules,
+            rules,
             instance_id=cfg.instance_id,
             application=_APP,
             agent_id=cfg.agent_id,
@@ -127,6 +130,7 @@ class _Agent:
             monotonic=lambda: 0.0,
             lock=self.ingestor.lock,
             host_gauges=self.monitor.gauges,
+            host_counters=self.monitor.counters,
         )
 
     def published_snapshots(self) -> list[Snapshot]:
@@ -203,6 +207,23 @@ def test_fr_met_034_unreadable_process_list_is_not_an_alert() -> None:
 
     assert "magic_process_up" not in agent.monitor.gauges()
     assert agent.monitor.counters.snapshot()["host_sample_errors"] == 5
+
+
+def test_fr_met_034_unreadable_process_list_does_not_resolve_a_firing_alert() -> None:
+    """The list becoming unreadable is "no data", not "Magic is back": the
+    alert stays firing past `resolveAfter`, and resolves once Magic is seen."""
+    agent = _Agent()
+    agent.sampler.names = ["sshd"]
+    agent.tick()
+    assert agent.tick(31) == [("ApplicationDown", "critical", "firing")]
+
+    agent.sampler.names = PermissionError("denied")
+    for _ in range(12):  # 12 x 60s, far beyond resolveAfter (300s)
+        assert agent.tick(60) == []
+
+    agent.sampler.names = ["sshd", _MAGIC]
+    assert agent.tick(1) == []  # FIRING -> RESOLVING
+    assert agent.tick(301) == [("ApplicationDown", "critical", "resolved")]
 
 
 def test_fr_met_034_wire_snapshot_carries_magic_process_up() -> None:

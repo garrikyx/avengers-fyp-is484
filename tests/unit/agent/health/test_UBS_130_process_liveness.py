@@ -5,10 +5,13 @@ The sampler is stubbed with a process-name list; these tests never touch psutil.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
 
 import pytest
-from telemetry_agent.health.host_monitor import HostConfig, HostMonitor
+from telemetry_agent.health.host_monitor import HostConfig, HostMonitor, PsutilSampler
 
 
 class StubSampler:
@@ -25,11 +28,11 @@ class StubSampler:
     def own_usage(self) -> tuple[float, float]:
         return 84.0, 1.8
 
-    def process_names(self) -> Iterable[str]:
+    def process_running(self, name: str) -> bool:
         self.process_reads += 1
         if isinstance(self.names, Exception):
             raise self.names
-        return self.names
+        return name in set(self.names)
 
 
 def _monitor(sampler: StubSampler, process_name: str = "magic.exe") -> HostMonitor:
@@ -94,32 +97,101 @@ def test_fr_met_034_a_failed_read_does_not_keep_the_previous_up_value() -> None:
     assert "magic_process_up" not in monitor.gauges()
 
 
-def test_fr_hlt_014_psutil_sampler_lists_this_process_by_name() -> None:
-    import os
+def _fake_proc(root: Path, comms: dict[int, str | None]) -> Path:
+    """A fake /proc: `comm` (kernel name) and `cmdline` (sentinel) per pid. A
+    pid mapped to None has no readable `comm`, like a process that just exited."""
+    for pid, comm in comms.items():
+        pdir = root / str(pid)
+        pdir.mkdir(parents=True)
+        (pdir / "cmdline").write_bytes(b"/opt/secret --password=hunter2\x00")
+        if comm is not None:
+            (pdir / "comm").write_text(comm + "\n")
+    (root / "self").mkdir()  # non-numeric entries are not processes
+    return root
 
-    import psutil
-    from telemetry_agent.health.host_monitor import PsutilSampler
 
-    names = set(PsutilSampler().process_names())
-    assert psutil.Process(os.getpid()).name() in names
+def _linux(root: Path) -> PsutilSampler:
+    return PsutilSampler(platform="linux", proc_root=root)
 
 
-def test_fr_hlt_014_psutil_sampler_requests_only_the_name_attribute(
+def test_fr_hlt_014_linux_reads_comm_and_never_the_command_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fake_proc(tmp_path, {1: "init", 42: "magic.exe"})
+    opened: list[str] = []
+    real_read_text = Path.read_text
+
+    def spy(self: Path, *args: Any, **kwargs: Any) -> str:
+        opened.append(self.name)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spy)
+    sampler = _linux(root)
+    assert sampler.process_running("magic.exe") is True
+    assert sampler.process_running("sshd") is False
+    assert opened and set(opened) == {"comm"}
+
+
+def test_fr_hlt_014_linux_names_over_15_chars_match_the_kernel_truncation(
+    tmp_path: Path,
+) -> None:
+    # The kernel keeps 15 characters of the executable name in `comm`.
+    root = _fake_proc(tmp_path, {7: "magic-trading-e"})
+    sampler = _linux(root)
+    assert sampler.process_running("magic-trading-engine") is True
+    assert sampler.process_running("magic-trading-other") is False
+    assert sampler.process_running("magic") is False
+
+
+def test_fr_hlt_014_a_process_that_exits_mid_scan_is_skipped(tmp_path: Path) -> None:
+    root = _fake_proc(tmp_path, {1: "init", 2: None, 3: "magic.exe"})
+    assert _linux(root).process_running("magic.exe") is True
+
+
+def test_fr_hlt_014_an_empty_process_list_is_unreadable_not_down(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(OSError):
+        _linux(_fake_proc(tmp_path, {})).process_running("magic.exe")
+
+
+def test_fr_hlt_014_all_names_unreadable_is_unreadable_not_down(
+    tmp_path: Path,
+) -> None:
+    root = _fake_proc(tmp_path, {1: None, 2: None})
+    with pytest.raises(OSError):
+        _linux(root).process_running("magic.exe")
+
+
+def test_fr_hlt_014_missing_proc_root_is_unreadable_not_down(tmp_path: Path) -> None:
+    with pytest.raises(OSError):
+        _linux(tmp_path / "nope").process_running("magic.exe")
+
+
+def test_fr_hlt_014_real_sampler_never_reads_a_command_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import psutil
-    from telemetry_agent.health.host_monitor import PsutilSampler
 
-    requested: list[object] = []
+    def forbidden(self: object) -> list[str]:
+        raise AssertionError("the command line must never be read")
 
-    class _Proc:
-        def __init__(self, name: str | None) -> None:
-            self.info = {"name": name}
+    monkeypatch.setattr(psutil.Process, "cmdline", forbidden)
+    sampler = PsutilSampler()
+    if sys.platform.startswith("linux"):
+        own = Path("/proc/self/comm").read_text().strip()
+    elif sys.platform == "win32":
+        own = psutil.Process().name()
+    else:
+        # psutil's own name()/exe() fall back to cmdline() on POSIX, so macOS
+        # and BSD are unsupported: unreadable (omitted), never read or "down".
+        with pytest.raises(OSError):
+            sampler.process_running("anything")
+        return
+    assert sampler.process_running(own) is True
+    assert sampler.process_running("no-such-executable-xyz") is False
 
-    def fake_process_iter(attrs: list[str] | None = None) -> list[_Proc]:
-        requested.append(attrs)
-        return [_Proc("magic.exe"), _Proc(None)]  # None: access denied mid-scan
 
-    monkeypatch.setattr(psutil, "process_iter", fake_process_iter)
-    assert list(PsutilSampler().process_names()) == ["magic.exe"]
-    assert requested == [["name"]]  # never cmdline / exe (FR-HLT-014)
+def test_fr_hlt_014_unsupported_platform_is_unreadable_not_down() -> None:
+    with pytest.raises(OSError):
+        PsutilSampler(platform="darwin").process_running("magic")

@@ -38,12 +38,14 @@ _APP = "Magic"
 class _Sampler:
     def __init__(self) -> None:
         self.disk: float | Exception = 0.40
+        self.mounts: dict[str, float | Exception] = {}  # per-path override
         self.memory: float | Exception = 0.50
 
     def disk_used_ratio(self, path: str) -> float:
-        if isinstance(self.disk, Exception):
-            raise self.disk
-        return self.disk
+        value = self.mounts.get(path, self.disk)
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def memory_used_ratio(self) -> float:
         if isinstance(self.memory, Exception):
@@ -52,6 +54,9 @@ class _Sampler:
 
     def own_usage(self) -> tuple[float, float]:
         return 84.0, 1.8
+
+    def process_running(self, name: str) -> bool:
+        return True
 
 
 class _NullCallbackSink:
@@ -69,11 +74,11 @@ class _CapturingSink:
 
 
 class _Agent:
-    def __init__(self) -> None:
+    def __init__(self, disk_paths: tuple[str, ...] = ("/data",)) -> None:
         cfg = load_agent_config(_REPO_ROOT / "config" / "agent.yaml")
         self.now = _T0
         self.sampler = _Sampler()
-        self.monitor = HostMonitor(HostConfig(disk_paths=("/data",)), self.sampler)
+        self.monitor = HostMonitor(HostConfig(disk_paths=disk_paths), self.sampler)
         self.ingestor = MetricsIngestor.build_default(
             clock=lambda: self.now.timestamp(), monotonic=lambda: 0.0
         )
@@ -123,6 +128,7 @@ class _Agent:
             monotonic=lambda: 0.0,
             lock=self.ingestor.lock,
             host_gauges=self.monitor.gauges,
+            host_counters=self.monitor.counters,
         )
 
     def published_snapshots(self) -> list[Snapshot]:
@@ -195,3 +201,56 @@ def test_fr_met_034_wire_snapshot_carries_host_gauges_and_omits_unread_ones() ->
     gauges = agent.published_snapshots()[-1].gauges
     assert gauges["host_disk_used_ratio"] == 0.77
     assert "host_memory_used_ratio" not in gauges  # omitted, never 0
+
+
+def test_fr_hlt_015_host_sample_errors_is_a_queryable_counter() -> None:
+    """Failed reads reach the aggregator (so a rule or the backend can see
+    them), not just a shutdown log line."""
+    agent = _Agent()
+    agent.sampler.disk = PermissionError("denied")
+
+    for _ in range(3):
+        agent.tick(10)
+
+    rows = agent.ingestor.aggregator.snapshot("5m", ())
+    errors = sum(row.counters.get("host_sample_errors", 0) for row in rows.values())
+    assert errors == 3  # one unreadable mount per tick; memory read fine
+
+    # The emitter's first call publishes the latest closed bucket: the one the
+    # last failing tick (one error) fell in.
+    agent.emitter.emit(agent.now + timedelta(seconds=10))
+    wire = [
+        entry.counters["host_sample_errors"]
+        for snap in agent.published_snapshots()
+        for entry in snap.series
+        if "host_sample_errors" in entry.counters
+    ]
+    assert sum(wire) == 1
+
+
+def test_fr_met_034_wire_snapshot_carries_each_mount_and_the_worst_one() -> None:
+    agent = _Agent(disk_paths=("/data", "/logs"))
+    agent.sampler.mounts = {"/data": 0.30, "/logs": 0.91}
+    agent.monitor.sample_once()
+
+    agent.emitter.emit(_T0 + timedelta(seconds=25))
+
+    gauges = agent.published_snapshots()[-1].gauges
+    assert gauges["host_disk_used_ratio"] == 0.91
+    assert gauges["host_disk_used_ratio:/data"] == 0.30
+    assert gauges["host_disk_used_ratio:/logs"] == 0.91
+
+
+def test_fr_met_034_unreadable_host_gauge_does_not_resolve_a_firing_alert() -> None:
+    agent = _Agent()
+    agent.sampler.disk = 0.96
+    agent.tick()
+    assert agent.tick(61) == [("HostDiskFull", "critical", "firing")]
+
+    agent.sampler.disk = PermissionError("denied")
+    for _ in range(12):  # 12 x 60s, far beyond resolveAfter (300s)
+        assert agent.tick(60) == []
+
+    agent.sampler.disk = 0.40
+    assert agent.tick(1) == []  # FIRING -> RESOLVING
+    assert agent.tick(301) == [("HostDiskFull", "critical", "resolved")]

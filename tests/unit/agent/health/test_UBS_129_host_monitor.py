@@ -7,9 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import tracemalloc
 
 import pytest
-from telemetry_agent.health.host_monitor import HostConfig, HostMonitor
+from telemetry_agent.health.host_monitor import (
+    HostConfig,
+    HostMonitor,
+    default_disk_paths,
+)
 
 
 class StubSampler:
@@ -52,6 +57,7 @@ def test_fr_met_034_reports_disk_and_memory_ratios() -> None:
     monitor.sample_once()
     assert monitor.gauges() == {
         "host_disk_used_ratio": 0.40,
+        "host_disk_used_ratio:/data": 0.40,
         "host_memory_used_ratio": 0.62,
     }
 
@@ -60,6 +66,15 @@ def test_fr_met_034_disk_gauge_is_the_worst_mount() -> None:
     monitor = _monitor(StubSampler(disks={"/a": 0.2, "/b": 0.96, "/c": 0.5}))
     monitor.sample_once()
     assert monitor.gauges()["host_disk_used_ratio"] == 0.96
+
+
+def test_fr_met_034_each_readable_mount_is_carried_under_its_own_key() -> None:
+    monitor = _monitor(StubSampler(disks={"/a": 0.2, "C:\\": 0.96}))
+    monitor.sample_once()
+    gauges = monitor.gauges()
+    assert gauges["host_disk_used_ratio:/a"] == 0.2
+    assert gauges["host_disk_used_ratio:C:\\"] == 0.96  # the mount is verbatim
+    assert gauges["host_disk_used_ratio"] == 0.96  # what HostDiskFull reads
 
 
 def test_fr_met_034_nothing_is_reported_before_the_first_sample() -> None:
@@ -86,12 +101,28 @@ def test_fr_hlt_015_one_bad_mount_does_not_hide_the_readable_ones() -> None:
     assert monitor.counters.snapshot()["host_sample_errors"] == 1
 
 
+def test_fr_met_034_a_partly_unreadable_disk_is_visible_not_silently_healthy() -> None:
+    """The unreadable mount has no per-mount gauge (never 0) and is counted on
+    every tick, so the maximum is known to be over the readable mounts only."""
+    monitor = _monitor(StubSampler(disks={"/a": PermissionError("x"), "/b": 0.3}))
+    for _ in range(3):
+        monitor.sample_once()
+    gauges = monitor.gauges()
+    assert "host_disk_used_ratio:/a" not in gauges
+    assert gauges["host_disk_used_ratio:/b"] == 0.3
+    assert gauges["host_disk_used_ratio"] == 0.3  # max over readable mounts
+    assert monitor.counters.snapshot()["host_sample_errors"] == 3
+
+
 def test_fr_hlt_015_unreadable_memory_is_omitted_and_other_gauges_survive() -> None:
     monitor = _monitor(
         StubSampler(disks={"/data": 0.4}, memory=NotImplementedError("platform"))
     )
     monitor.sample_once()
-    assert monitor.gauges() == {"host_disk_used_ratio": 0.4}
+    assert monitor.gauges() == {
+        "host_disk_used_ratio": 0.4,
+        "host_disk_used_ratio:/data": 0.4,
+    }
     assert monitor.counters.snapshot()["host_sample_errors"] == 1
 
 
@@ -113,6 +144,7 @@ def test_fr_met_034_ratios_are_clamped_to_unit_interval() -> None:
     monitor.sample_once()
     assert monitor.gauges() == {
         "host_disk_used_ratio": 1.0,
+        "host_disk_used_ratio:/data": 1.0,
         "host_memory_used_ratio": 0.0,
     }
 
@@ -124,6 +156,26 @@ def test_fr_hlt_016_resource_usage_reports_own_rss_and_cpu() -> None:
     usage = monitor.resource_usage()
     assert usage is not None
     assert (usage.rss_mb, usage.cpu_percent) == (84.0, 1.8)
+    assert usage.active_tasks is None  # not measured outside run(): never 0
+
+
+def test_fr_hlt_016_run_measures_the_event_loop_task_count() -> None:
+    monitor = HostMonitor(
+        HostConfig(disk_paths=("/data",), sample_interval_seconds=0.01),
+        StubSampler(disks={"/data": 0.4}),
+    )
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(monitor.run(stop))
+        await asyncio.sleep(0.05)
+        stop.set()
+        await asyncio.wait_for(task, 1)
+
+    asyncio.run(scenario())
+    usage = monitor.resource_usage()
+    assert usage is not None
+    assert usage.active_tasks is not None and usage.active_tasks >= 1
 
 
 def test_fr_hlt_016_failed_usage_read_is_none_and_counted() -> None:
@@ -186,19 +238,62 @@ def test_nfr_perf_003_state_is_bounded_however_long_it_runs() -> None:
     monitor = _monitor(StubSampler(disks={"/a": 0.2, "/b": 0.3}))
     for _ in range(1000):
         monitor.sample_once()
-    assert len(monitor.gauges()) == 2  # one disk gauge, one memory gauge
+    # one worst-mount gauge, two per-mount gauges, one memory gauge
+    assert len(monitor.gauges()) == 4
     assert monitor.counters.snapshot() == {}  # nothing accumulates on success
+
+
+def test_nfr_perf_003_memory_does_not_grow_with_the_number_of_samples() -> None:
+    """Lightweight stand-in for the RSS budget (150 MB, spec 009): the Host
+    Monitor keeps one immutable sample, so allocations after a warm-up must not
+    scale with run length. `tracemalloc` counts Python allocations exactly, so
+    unlike an RSS reading this is not flaky."""
+
+    class FailingMount(StubSampler):
+        def disk_used_ratio(self, path: str) -> float:
+            if path == "/b":
+                raise OSError("x")  # a new exception each time: no shared traceback
+            return 0.2
+
+    monitor = _monitor(FailingMount(disks={"/a": 0.2, "/b": 0.2}, memory=0.5))
+    for _ in range(200):  # warm-up: caches, the counter key, interned strings
+        monitor.sample_once()
+    tracemalloc.start()
+    try:
+        before, _ = tracemalloc.get_traced_memory()
+        for _ in range(20_000):
+            monitor.sample_once(active_tasks=5)
+        after, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # 20,000 retained samples would be tens of MB; one is a few KB.
+    assert after - before < 64 * 1024
 
 
 def test_fr_hlt_013_config_defaults_follow_spec_010() -> None:
     cfg = HostConfig()
     assert cfg.enabled is True
     assert cfg.sample_interval_seconds == 30.0
-    assert cfg.disk_paths == ("/var/log/magic",)
+    assert cfg.disk_paths == default_disk_paths()
     assert cfg.memory is True
     assert cfg.process_name == ""
 
 
-def test_fr_hlt_013_non_positive_interval_is_rejected() -> None:
+def test_fr_hlt_013_default_disk_path_is_spec_010s_except_on_windows() -> None:
+    assert default_disk_paths("linux") == ("/var/log/magic",)
+    assert default_disk_paths("darwin") == ("/var/log/magic",)
+    (windows_path,) = default_disk_paths("win32")
+    assert windows_path != "/var/log/magic"  # that path cannot exist on Windows
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("inf"), float("nan")])
+def test_fr_hlt_013_bad_interval_is_rejected_by_the_config(interval: float) -> None:
     with pytest.raises(ValueError):
-        HostMonitor(HostConfig(sample_interval_seconds=0), StubSampler())
+        HostConfig(sample_interval_seconds=interval)
+
+
+def test_fr_met_034_mount_cap_and_blank_paths_are_rejected_by_the_config() -> None:
+    with pytest.raises(ValueError):
+        HostConfig(disk_paths=tuple(f"/m{i}" for i in range(9)))
+    with pytest.raises(ValueError):
+        HostConfig(disk_paths=("/ok", "  "))
