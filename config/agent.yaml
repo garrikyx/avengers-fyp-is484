@@ -65,20 +65,24 @@ pipeline:
 
 # --- Host Monitor (UBS-129; spec 010 `host:`, spec 002 s7.1) ---
 # Samples OS counters only (never file contents). Feeds the host_* gauges behind
-# HostDiskFull / HostMemoryHigh and the heartbeat's resourceUsage.
+# HostDiskFull / HostMemoryHigh and the heartbeat's resourceUsage. Each host rule
+# loads only when its gauge is enabled here (spec 005 s1.2).
 host:
   enabled: true
   sampleInterval: 30s # FR-HLT-013
-  # Spec default is /var/log/magic, which only exists on the Magic host. "."
-  # (the filesystem the agent starts on) is readable on any dev machine; on
-  # the Magic host set it to Magic's log filesystem. host_disk_used_ratio
-  # reports the worst of these (max 8).
+  # Left out, diskPaths defaults to spec 010's /var/log/magic (a system drive
+  # root on Windows), which only exists on the Magic host. "." (the filesystem
+  # the agent starts on) is readable on any dev machine; on the Magic host set
+  # it to Magic's log filesystem. host_disk_used_ratio is the worst of these
+  # (max 8), and each one is also carried as host_disk_used_ratio:<path>.
   diskPaths: ["."]
   memory: true # host_memory_used_ratio
   process:
     # Exact executable name of Magic's process (never the command line), e.g.
     # "magic.exe". UBS-specific, so not invented here: empty = no
-    # magic_process_up gauge and ApplicationDown stays inactive (FR-HLT-014).
+    # magic_process_up gauge and ApplicationDown is not loaded (FR-HLT-014).
+    # On Linux only the first 15 characters are compared (kernel `comm`); on
+    # macOS/BSD the process list is not read (see health/host_monitor.py).
     name: ""
 
 rules:
