@@ -37,6 +37,9 @@ PUBLISH_AGENT_METRICS: frozenset[str] = frozenset(
     {"publish_failures", "publish_rejected"}
 )
 
+# UBS-129: the Host Monitor's registry, a third sampler for the same reason.
+HOST_AGENT_METRICS: frozenset[str] = frozenset({"host_sample_errors"})
+
 
 class AgentCounterSampler:
     """Turns monotonic since-startup counters into per-bucket deltas.

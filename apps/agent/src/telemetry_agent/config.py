@@ -14,6 +14,7 @@ the two sections nothing else reads yet (`logs:`, `pipeline:`):
     parsing: {errorSignatures, maxDynamicSignatureLabels, binaryDetectWindow,
               binaryMagic}
     pipeline: {parseWorkers, evaluationInterval}
+    host: {enabled, sampleInterval, diskPaths, memory, process: {name}}
 
 Log paths and the state dir resolve against the directory the agent is
 started from (the simulator writes `./logs/*.log` relative to its own working
@@ -26,6 +27,7 @@ hash key come from the environment (see `.env.example`).
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,12 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
+from telemetry_shared.metrics.host import (
+    HOST_DISK_USED_RATIO,
+    HOST_GAUGES,
+    HOST_MEMORY_USED_RATIO,
+    MAGIC_PROCESS_UP,
+)
 
 from telemetry_agent.actions.config import (
     ActionDef,
@@ -46,9 +54,14 @@ from telemetry_agent.health.config import (
     load_health_config,
     parse_duration_seconds,
 )
+from telemetry_agent.health.host_monitor import (
+    DEFAULT_DISK_PATHS,
+    DEFAULT_SAMPLE_INTERVAL_SECONDS,
+    HostConfig,
+)
 from telemetry_agent.publishing.config import PublishConfig, parse_publish_config
 from telemetry_agent.rules.config_loader import load_rules
-from telemetry_agent.rules.types import RuleConfig
+from telemetry_agent.rules.types import RuleConfig, ValueSource
 
 DEFAULT_CONFIG_PATH = Path("config/agent.yaml")
 
@@ -90,6 +103,19 @@ class _ParsingYaml(_Section):
 class _PipelineYaml(_Section):
     parse_workers: int = 1
     evaluation_interval: str | float = "10s"
+
+
+class _HostProcessYaml(_Section):
+    name: str = ""  # FR-HLT-014 (UBS-130): empty disables magic_process_up
+
+
+class _HostYaml(_Section):
+    # spec 010 `host:` (Host Monitor, spec 002 s7.1).
+    enabled: bool = True
+    sample_interval: str | float = DEFAULT_SAMPLE_INTERVAL_SECONDS
+    disk_paths: list[str] = list(DEFAULT_DISK_PATHS)
+    memory: bool = True
+    process: _HostProcessYaml = _HostProcessYaml()
 
 
 class _RulesYaml(_Section):
@@ -136,6 +162,7 @@ class AgentConfig:
     actions: dict[str, ActionDef] = field(default_factory=dict)
     allowed_commands: tuple[Path, ...] = ()
     rules_reload_check_seconds: float = 10.0
+    host: HostConfig = field(default_factory=HostConfig)
 
     @property
     def agent_id(self) -> str:
@@ -151,6 +178,43 @@ def _section(raw: dict[str, Any], name: str, model: type[_Section]) -> Any:
         return model.model_validate(raw.get(name) or {})
     except ValidationError as exc:
         raise AgentConfigError(f"{name}: {exc}") from exc
+
+
+def _load_host(raw: dict[str, Any]) -> HostConfig:
+    """`host:` -> `HostConfig`, which owns the value checks (`ValueError`)."""
+    section: _HostYaml = _section(raw, "host", _HostYaml)
+    try:
+        return HostConfig(
+            enabled=section.enabled,
+            sample_interval_seconds=parse_duration_seconds(section.sample_interval),
+            disk_paths=tuple(section.disk_paths),
+            memory=section.memory,
+            process_name=section.process.name,
+        )
+    except Exception as exc:
+        raise AgentConfigError(f"host: {exc}") from exc
+
+
+def host_rule_filter(host: HostConfig) -> Callable[[RuleConfig], bool]:
+    """spec 005 §1.2: `HostDiskFull`, `HostMemoryHigh` and `ApplicationDown`
+    load only when the `host` block enables the matching gauge. Keyed on the
+    gauge a rule reads, so a custom rule on one of these gauges follows the same
+    rule; every other rule is kept. The reloader applies the same filter, so a
+    reload cannot bring a disabled host rule back."""
+    enabled: set[str] = set()
+    if host.enabled:
+        if host.disk_paths:
+            enabled.add(HOST_DISK_USED_RATIO)
+        if host.memory:
+            enabled.add(HOST_MEMORY_USED_RATIO)
+        if host.process_name:
+            enabled.add(MAGIC_PROCESS_UP)
+
+    def keep(rule: RuleConfig) -> bool:
+        reads_host = rule.source is ValueSource.GAUGE and rule.metric in HOST_GAUGES
+        return not reads_host or rule.metric in enabled
+
+    return keep
 
 
 def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
@@ -199,8 +263,9 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
     except Exception as exc:
         raise AgentConfigError(f"actions: {exc}") from exc
 
+    host = _load_host(raw)
     try:
-        rules = load_rules(rules_path)
+        rules = load_rules(rules_path, keep=host_rule_filter(host))
         actions = load_action_catalogue(rules_path, allowed_commands=allowed_commands)
     except Exception as exc:
         raise AgentConfigError(f"rules: {exc}") from exc
@@ -273,4 +338,5 @@ def load_agent_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AgentConfig:
         actions=actions,
         allowed_commands=allowed_commands,
         rules_reload_check_seconds=reload_check,
+        host=host,
     )

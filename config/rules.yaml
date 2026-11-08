@@ -20,7 +20,7 @@
 # agent.yaml `actions.allowedCommands`; it runs with this fixed argv, no
 # shell, and the alert JSON on stdin. Everything defaults to dryRun: true.
 actions:
-  - name: disk-cleanup # for HostDiskFull once UBS-129 adds it
+  - name: disk-cleanup # for HostDiskFull (UBS-129)
     type: command
     command: /opt/magic/bin/cleanup-disk
     args: ["--older-than", "7d"]
@@ -190,6 +190,52 @@ rules:
     tiers:
       - severity: warning
         threshold: 5
+    dependsOnLogActivity: false
+
+  # Host gauges (UBS-129, spec 005 §1.2, FR-MET-034). Thresholds are provisional
+  # common defaults, not UBS values (Q-5). These ship always and stay inactive
+  # while the Host Monitor omits the gauge (`host.enabled: false` or an
+  # unreadable read). host_disk_used_ratio is the worst mount. A full disk is
+  # when logging may go quiet, so neither rule is silenced by NoLogActivity.
+  - name: HostDiskFull
+    kind: threshold
+    source: gauge
+    metric: host_disk_used_ratio
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 0.85
+      - severity: critical
+        threshold: 0.95
+    for: 1m
+    dependsOnLogActivity: false
+
+  - name: HostMemoryHigh
+    kind: threshold
+    source: gauge
+    metric: host_memory_used_ratio
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 0.90
+      - severity: critical
+        threshold: 0.95
+    for: 2m
+    dependsOnLogActivity: false
+
+  # ApplicationDown (UBS-130, FR-HLT-014): magic_process_up is 1/0 by exact
+  # executable name (agent.yaml host.process.name). It is omitted while that name
+  # is empty or the process list is unreadable, so the rule stays inactive. A dead
+  # process is when logs go quiet, so NoLogActivity must not silence it.
+  - name: ApplicationDown
+    kind: threshold
+    source: gauge
+    metric: magic_process_up
+    operator: "=="
+    tiers:
+      - severity: critical
+        threshold: 0
+    for: 30s
     dependsOnLogActivity: false
 
   # Signature rules (spec 005 §1, UBS-122): `signature` is a label from

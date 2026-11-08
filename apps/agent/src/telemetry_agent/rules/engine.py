@@ -42,6 +42,7 @@ from telemetry_agent.rules.types import (
     Silence,
     ValueSource,
 )
+from telemetry_shared.metrics.host import HOST_GAUGES
 from telemetry_shared.models.alerts import AlertEvent
 from telemetry_shared.models.metrics import MetricsGroup, MetricsSnapshot
 
@@ -234,8 +235,17 @@ def _metric_context(
     rule: RuleConfig, snapshot: MetricsSnapshot
 ) -> dict[str, float | int | str]:
     """`FR-RUL-016`: allowlisted snapshot fields only, capped at 10 entries."""
-    group = _rule_group(rule, snapshot)
     context: dict[str, float | int | str] = {}
+    if rule.source is ValueSource.GAUGE:
+        # A gauge is not a counter and not a group's: reporting
+        # `counters.get(..., 0)` would show a fabricated 0.0 beside the real
+        # observed value, and a window with no ingested events (Magic down means
+        # silent logs) has no group to read from.
+        gauge = _read_gauge(rule, snapshot)
+        if gauge is not None:
+            context[rule.metric] = float(gauge)
+        return context
+    group = _rule_group(rule, snapshot)
     if group is None:
         return context
     if rule.kind is RuleKind.RATE:
@@ -492,6 +502,20 @@ class RuleEngine:
             if (now - state.condition_since).total_seconds() < rule.for_seconds:
                 return None
             return self._fire(rule, state, tier, observed, snapshot, now)
+
+        if (
+            tier is None
+            and observed is None
+            and rule.source is ValueSource.GAUGE
+            and rule.metric in HOST_GAUGES
+            and state.status in (AlertStatus.FIRING, AlertStatus.RESOLVING)
+        ):
+            # FR-MET-034: an unreadable host gauge is "no data", not "condition
+            # clear". Hold the live alert (back to FIRING if it was resolving,
+            # so the resolve window restarts when data is readable again)
+            # instead of auto-resolving it after `resolveAfter`.
+            state.status = AlertStatus.FIRING
+            return None
 
         if state.status is AlertStatus.FIRING:
             if tier is None:

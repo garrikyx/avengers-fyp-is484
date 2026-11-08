@@ -165,6 +165,30 @@ def test_log_read_lag_is_null_when_no_file_has_read_yet(
     assert body["logReadLagMs"] is None
 
 
+def test_resource_usage_is_null_when_the_agent_did_not_measure_it(
+    env: tuple[TestClient, AppDeps, FakeClock],
+) -> None:
+    """FR-HLT-004 / FR-HLT-016: an unmeasured resourceUsage is omitted by the
+    agent and reported as null, never as 0 MB / 0 %."""
+    client, _, _ = env
+    post(client, heartbeat(resource_usage=None))
+    body = client.get("/telemetry/health/agents/magic-agent-sg-01").json()
+    assert body["resourceUsage"] is None
+
+
+def test_active_tasks_is_optional_in_resource_usage(
+    env: tuple[TestClient, AppDeps, FakeClock],
+) -> None:
+    client, _, _ = env
+    post(client, heartbeat(resource_usage=ResourceUsage(rss_mb=84, cpu_percent=1.8)))
+    body = client.get("/telemetry/health/agents/magic-agent-sg-01").json()
+    assert body["resourceUsage"] == {
+        "rssMb": 84.0,
+        "cpuPercent": 1.8,
+        "activeTasks": None,
+    }
+
+
 def test_detail_unknown_agent_is_404(
     env: tuple[TestClient, AppDeps, FakeClock],
 ) -> None:

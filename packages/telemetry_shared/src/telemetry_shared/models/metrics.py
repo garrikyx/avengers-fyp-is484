@@ -85,6 +85,17 @@ class Gauges(CamelModel):
     # reads this rather than a windowed `publish_failures` count, which
     # exponential backoff makes unusable (spec 005 §1.2).
     consecutive_publish_failures: int | None = None
+    # FR-MET-034 (UBS-129): Host Monitor gauges. `None` (the default) means
+    # the Host Monitor could not read it or is off, never "0% used": a rule
+    # reads `insufficient_data` rather than a false "disk empty". The disk
+    # gauge is the worst (highest) mount, since gauges carry no dimensions.
+    host_disk_used_ratio: float | None = None
+    host_memory_used_ratio: float | None = None
+    # FR-HLT-014 / FR-MET-034 (UBS-130): 1.0 if the configured Magic process is
+    # running, 0.0 if not. `None` means `host.process.name` is empty or the
+    # process list was unreadable, never "Magic is down": `ApplicationDown`
+    # stays inactive.
+    magic_process_up: float | None = None
 
 
 class WindowBounds(CamelModel):

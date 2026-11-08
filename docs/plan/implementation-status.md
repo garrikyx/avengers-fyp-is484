@@ -154,8 +154,9 @@ an mtime trigger since UBS-35.
 
 Code: `apps/agent/src/telemetry_agent/actions/` (catalogue + runner),
 `pipeline/backtest.py` (test mode), `--test-rule` in `main.py`. The `disk-cleanup`
-example action is unbound until UBS-129 adds `HostDiskFull`. The reload now runs in the
-real agent: on SIGHUP, and on a `rules.yaml` mtime change.
+example action is still unbound; `HostDiskFull` exists since UBS-129 but binding it is a
+rule-file decision (ADR 0008). The reload now runs in the real agent: on SIGHUP, and on
+a `rules.yaml` mtime change.
 
 ## D2 anomaly detection (UBS-25–29)
 
@@ -186,6 +187,111 @@ Code: optional `level:` on `threshold` rules (`rules/types.py`,
 admission is first-come under `maxSeriesPerBucket`, so if a bucket is already full when
 the first `[F]` line arrives it folds to `__other__` and the rule does not match;
 `cardinality_folded` is the signal.
+
+## Host Monitor (UBS-129)
+
+| ID      | Story                                                                               | Requirement                                                                            | Status         | Verified by                                                                                                                                                                                                     |
+| ------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-129 | Host disk/memory gauges, `HostDiskFull`/`HostMemoryHigh`, heartbeat `resourceUsage` | `FR-HLT-013`/`015`/`016` (spec 002 §7.1), `FR-MET-034` (spec 004 §4.7), `NFR-PERF-003` | Done on branch | `tests/unit/agent/health/test_UBS_129_*.py`, `tests/unit/agent/rules/test_UBS_129_host_rules.py`, `tests/integration/agent/test_UBS_129_host_alerts.py`, `tests/integration/test_UBS_129_agent_host_monitor.py` |
+
+Code: `health/host_monitor.py` (`HostMonitor`, `HostSampler` protocol, `PsutilSampler`),
+`host:` in `config.py` and `config/agent.yaml`, `HostDiskFull` and `HostMemoryHigh` in
+`rules/defaults.py` and `config/rules.yaml`, `Gauges.host_*` fields, `host_gauges`
+plumbing in `metrics/snapshot.py`, `pipeline/evaluator.py` and
+`publishing/snapshot_bridge.py`, `HealthReporter.set_resource_usage_provider`. `psutil`
+is now an agent dependency (`types-psutil` for mypy). Decisions and limits:
+
+- **Flat gauges, `mount` in the key.** `Gauges` and the wire `Snapshot.gauges` are flat
+  `dict[str, float]`, so `host_disk_used_ratio` is the worst (maximum) mount over the
+  readable `host.diskPaths` (what `HostDiskFull` reads), and each readable mount also
+  rides the wire as `host_disk_used_ratio:<mount>` (`<mount>` verbatim; everything after
+  the first `:`), like `action_runs:<action>:<outcome>`. Names live in
+  `telemetry_shared/metrics/host.py`. A mount that cannot be read has no per-mount key,
+  is left out of the maximum and is counted, so the maximum is known to be over the
+  readable mounts only; a partly unreadable disk is visible, not silently healthy.
+- **Spec holds, not the engine default.** `HostDiskFull` holds 1m, `HostMemoryHigh` 2m
+  (spec 005 §1.2). Both set `dependsOnLogActivity: false` so `NoLogActivity` does not
+  silence them.
+- **Host rules load only when enabled** (spec 005 §1.2): `config.host_rule_filter` drops
+  a rule reading `host_disk_used_ratio` / `host_memory_used_ratio` / `magic_process_up`
+  unless `host.enabled` and the matching setting (`diskPaths` non-empty, `memory`,
+  `process.name`) is on. `load_agent_config` and the rules reloader both apply it, so a
+  reload cannot bring one back. A rule that is loaded still stays inactive while its
+  gauge is unreadable.
+- **Omit, never zero.** A failed read drops that gauge (and the previous value) and
+  counts `host_sample_errors`, which the evaluator bridges into the aggregator like the
+  other agent counters (`AGENT_DIMS`, windowed series, on the wire in `series`), so it
+  is queryable; it is still logged at shutdown too. A firing alert on a host gauge that
+  becomes unreadable is **held** (`rules/engine.py`: no auto-resolve, no new
+  notification; a resolving alert goes back to firing so the resolve window restarts
+  when data returns). This applies only to the three host gauges: for
+  `oldest_pending_age_seconds` a missing value genuinely means "clear". A pending alert
+  on a missing gauge is dropped, not held.
+- **`diskPaths` default.** The shipped `config/agent.yaml` uses `["."]` so dev machines
+  (incl. Windows) can read it; set it to Magic's log filesystem on the host. When the
+  key is omitted the model default is spec 010's `/var/log/magic` on POSIX and the
+  system drive root on Windows (`default_disk_paths`), where that path cannot exist. The
+  disk ratio is `1 - free / total` (space the agent's user can still write;
+  `used / total` under-reads on APFS), recorded in spec 004 `FR-MET-034`; memory is
+  `(total - available) / total`.
+- **Heartbeat `resourceUsage`** carries the agent's RSS (MB), CPU and the event loop's
+  task count (`activeTasks`, read on the loop by `HostMonitor.run`). With
+  `host.enabled: false` or a failed read it is **omitted**, not sent as zeros: the
+  shared ingestion `ResourceUsage.activeTasks` and `Heartbeat.resourceUsage` are now
+  optional, and the backend health API returns `null` (spec 004 §6 and spec 007 §5.2
+  updated).
+- **Alert `metricContext`** for gauge rules carries the gauge value instead of a
+  fabricated `0.0` counter (also `BackendUnreachable`, `PendingOrderTimeout`), and no
+  longer depends on a group having been ingested (Magic down means silent logs).
+  Regression tests: `tests/unit/agent/rules/test_UBS_129_gauge_rules_engine.py`.
+- **`NFR-PERF-003`:** sampling every 30s in a worker thread with one immutable sample as
+  its only state. `test_nfr_perf_003_memory_does_not_grow_with_the_number_of_samples`
+  asserts with `tracemalloc` that allocations do not scale with run length; a load test
+  with an RSS assertion at target throughput remains a separate item (an RSS reading
+  from a unit test is machine-dependent, so it is not asserted).
+
+## Magic process liveness (UBS-130)
+
+| ID      | Story                                       | Requirement                                                                                 | Status         | Verified by                                                                                                                                                                              |
+| ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-130 | `magic_process_up` gauge, `ApplicationDown` | `FR-HLT-014` (spec 002 §7.1), `FR-MET-034` (spec 004 §4.7), spec 005 §1.2 `ApplicationDown` | Done on branch | `tests/unit/agent/health/test_UBS_130_process_liveness.py`, `tests/unit/agent/rules/test_UBS_130_application_down.py`, `tests/integration/agent/test_UBS_130_application_down_alerts.py` |
+
+Builds on the UBS-129 Host Monitor: `HostSampler.process_running(name)` (+
+`PsutilSampler`, see "Process matching" below), a step in `HostMonitor.sample_once`,
+`Gauges.magic_process_up`, and `ApplicationDown` in `rules/defaults.py` and
+`config/rules.yaml` (critical, `== 0`, 30s hold, `dependsOnLogActivity: false`, so
+`NoLogActivity` does not silence it). Decisions and limits:
+
+- **Exact name, no case folding.** `host.process.name` must equal a running process's
+  name exactly (`magic.exe` does not match `magic.exe.bak` or `notmagic.exe`). Command
+  lines and arguments are never read. On Windows, set the name with the casing the OS
+  reports.
+- **Process matching never reads a command line.** psutil's `Process.name()` does, on
+  POSIX, for names of 15 or more characters (verified against psutil 7.2.2; its `exe()`
+  also falls back to `cmdline()` when denied). So `PsutilSampler.process_running` reads
+  Linux `/proc/<pid>/comm`, and psutil's `name` only on Windows (which never reads a
+  command line). On Linux `comm` holds 15 characters, so a configured name longer than
+  that is compared by its first 15; two executables sharing that prefix are not told
+  apart. On macOS/BSD the process list is not read at all (unreadable, so the gauge is
+  omitted): there is no public psutil call that is safe there, and Magic's host is Linux
+  or Windows.
+- **An empty or wholly unreadable process list is "no data".** If no process name could
+  be read, `process_running` raises, so `magic_process_up` is omitted and the error
+  counted; it is never reported as 0.
+- **Empty name = off.** No gauge, no process-list read, no error counted, rule inactive.
+  The shipped `agent.yaml` leaves it empty (the name is UBS-specific).
+- **Limitation: an unreadable process list omits the gauge (no alert).** The sampler
+  raising (permissions, platform) counts `host_sample_errors` and drops
+  `magic_process_up` rather than reporting 0, so a host where the agent cannot list
+  processes never raises `ApplicationDown`. A firing `ApplicationDown` whose gauge turns
+  unreadable is held, not auto-resolved (see the UBS-129 decisions).
+- **`ApplicationDown` is not loaded while `process.name` is empty** (spec 005 §1.2,
+  `host_rule_filter`), rather than loaded and inactive.
+- **Timing.** With the 30s default `sampleInterval` and the 30s hold, the alert fires on
+  the second consecutive 0 sample. Resolution uses the default `resolveAfter` of 300s;
+  the spec is silent on a shorter value.
+- **Only the process list is checked**, not that Magic is healthy; a hung but running
+  process is still `up`.
 
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 

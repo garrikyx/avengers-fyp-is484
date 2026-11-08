@@ -139,4 +139,4 @@ class AgentHealthDetail(CamelModel):
     dropped_events_last5_min: int
     active_alert_count: int
     files: list[AgentHealthFile]
-    resource_usage: IngestionResourceUsage
+    resource_usage: IngestionResourceUsage | None = None

@@ -279,7 +279,7 @@ Precedence: any `unhealthy` reason → `unhealthy`; else any `degraded` reason �
 | ~~Backend Publisher~~ | Done: heartbeat rides inside `TelemetryBatch` via `heartbeat_provider` (UBS-103) | — |
 | ~~Agent runtime~~ | Done: `telemetry-agent` (`main.py`, UBS-114) | — |
 | Callback Dispatcher wired | `callbackFailuresLast5Min` `null` | UBS-32–34 |
-| Resource sampling (`psutil`?) | `resourceUsage` `null` | team decision |
+| ~~Resource sampling (`psutil`?)~~ | Done: Host Monitor fills `resourceUsage` with the agent's RSS/CPU via `psutil`; omitted (`null`) when unmeasured (UBS-129) | — |
 | `LogMonitor` rotation count / error state | `rotationsDetected` 0, `state` never `error` | UBS-22/24 owner |
 
 ---
