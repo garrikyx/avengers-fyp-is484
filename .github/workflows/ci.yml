@@ -2,6 +2,7 @@ name: CI
 
 # UBS-138: pytest, ruff and mypy on Linux and Windows (spec 012, FR-TST-001/FR-TST-004).
 # Keep the steps in step with `make ci` in the Makefile.
+# The requirement-coverage step is report-only (`make requirement-coverage`).
 
 on:
   pull_request:
@@ -47,3 +48,9 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+      # FR-TST-001 / UBS-146: report-only for now, never fails the build.
+      - name: Requirement coverage report
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run:
+          uv run python scripts/requirement_coverage.py | tee -a "$GITHUB_STEP_SUMMARY"

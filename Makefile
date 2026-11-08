@@ -1,4 +1,4 @@
-.PHONY: sync ci parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint \
+.PHONY: sync ci requirement-coverage parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint \
 	ollama-check ollama-setup backend-run simulator-run agent-run teams-run playground mcp-inspector
 
 # Local LLM for the NL query path (spec 008). Keep OLLAMA_MODEL in step with
@@ -114,6 +114,11 @@ ci:
 	uv run ruff format --check .
 	uv run mypy apps packages
 	uv run pytest
+
+# FR-TST-001: which spec requirement IDs have no referencing test. Report-only;
+# add --fail-on-uncovered to gate on it.
+requirement-coverage:
+	uv run python scripts/requirement_coverage.py
 
 lint:
 	uv run ruff check .
