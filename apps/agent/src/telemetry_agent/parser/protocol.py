@@ -24,6 +24,7 @@ class LineClassification(StrEnum):
     """FR-PRS-010 classification outcome."""
 
     FIX = "fix"
+    BINARY = "binary"
     APP_LOG = "app_log"
     UNSUPPORTED = "unsupported"
 

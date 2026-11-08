@@ -74,6 +74,7 @@ from telemetry_agent.health.publishing import (
 from telemetry_agent.health.reporter import HealthReporter
 from telemetry_agent.logs.multi_log_monitor import MultiLogMonitor
 from telemetry_agent.parser.applog.parser import AppLogParser
+from telemetry_agent.parser.binary.parser import MagicBinaryParser
 from telemetry_agent.parser.fix.parser import FixParser
 from telemetry_agent.parser.registry import Registry
 from telemetry_agent.pipeline.alert_router import AlertRouter
@@ -173,8 +174,16 @@ def build_agent(
         session_timeout_seconds=cfg.thresholds.session_heartbeat_timeout_seconds,
     )
     hash_key = _secret(env, _HASH_KEY_ENV, _DEV_HASH_KEY, local=local).encode()
-    parsers: dict[str, FixParser | AppLogParser] = {"fix": FixParser(hash_key=hash_key)}
+    parsers: dict[str, FixParser | AppLogParser | MagicBinaryParser] = {
+        "fix": FixParser(hash_key=hash_key)
+    }
     chain = ["fix"]
+    if cfg.parsing.binary_magic:  # FR-PRS-046: off until a Magic prefix is configured
+        parsers["magic-binary"] = MagicBinaryParser(
+            magic=cfg.parsing.binary_magic,
+            detect_window=cfg.parsing.binary_detect_window,
+        )
+        chain.append("magic-binary")
     if cfg.logs.app_log_patterns:
         parsers["applog"] = AppLogParser(
             app_log_patterns=list(cfg.logs.app_log_patterns),

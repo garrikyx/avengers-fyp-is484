@@ -159,13 +159,13 @@ real agent: on SIGHUP, and on a `rules.yaml` mtime change.
 
 ## D2 anomaly detection (UBS-25–29)
 
-| ID     | Story                                 | Requirement                      | Status                                                             | Verified by                                                       |
-| ------ | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| UBS-25 | Alert on abnormal reject rate         | `FR-RUL-040`–`044` (spec 005 §7) | Done                                                               | `tests/unit/agent/rules/test_UBS_25_29_anomaly.py`                |
-| UBS-26 | Alert on abnormal processing latency  | `FR-RUL-040`–`044`               | Done                                                               | same                                                              |
-| UBS-27 | Identify increasing rejection reasons | `FR-QRY-040` (spec 007 §3.1)     | API done; not yet an NL intent                                     | `tests/unit/backend/services/test_UBS_27_reject_reason_trends.py` |
-| UBS-28 | Alert on abnormal execution issues    | `FR-RUL-040`–`044`               | Done, definition of "execution issue" pending sponsor confirmation | same                                                              |
-| UBS-29 | Alert on abnormal parser failures     | `FR-RUL-040`–`044`               | Done                                                               | same                                                              |
+| ID     | Story                                 | Requirement                      | Status                                                             | Verified by                                                                                                                           |
+| ------ | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-25 | Alert on abnormal reject rate         | `FR-RUL-040`–`044` (spec 005 §7) | Done                                                               | `tests/unit/agent/rules/test_UBS_25_29_anomaly.py`                                                                                    |
+| UBS-26 | Alert on abnormal processing latency  | `FR-RUL-040`–`044`               | Done                                                               | same                                                                                                                                  |
+| UBS-27 | Identify increasing rejection reasons | `FR-QRY-040` (spec 007 §3.1)     | Done; NL intent `reject_reason_trend` (UBS-143)                    | `tests/unit/backend/services/test_UBS_27_reject_reason_trends.py`, `tests/unit/backend/nl/test_UBS_143_reject_reason_trend_intent.py` |
+| UBS-28 | Alert on abnormal execution issues    | `FR-RUL-040`–`044`               | Done, definition of "execution issue" pending sponsor confirmation | same                                                                                                                                  |
+| UBS-29 | Alert on abnormal parser failures     | `FR-RUL-040`–`044`               | Done                                                               | same                                                                                                                                  |
 
 Code: `rules/baseline.py` (baseline tracker, explanation text), `anomaly` kind in
 `rules/engine.py`, `load_anomaly_rules` in `rules/config_loader.py`,

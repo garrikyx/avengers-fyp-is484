@@ -489,6 +489,7 @@ def _render_output(result: ParseResult, *, style: _Style) -> list[str]:
     lines: list[str] = []
     cls_color = {
         LineClassification.FIX: style.green,
+        LineClassification.BINARY: style.dim,
         LineClassification.APP_LOG: style.blue,
         LineClassification.UNSUPPORTED: style.dim,
     }.get(result.classification, "")

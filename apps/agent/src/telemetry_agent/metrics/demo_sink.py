@@ -18,6 +18,11 @@ class DemoMetricsSink:
             self.counters["unsupported_lines"] += 1
             return
 
+        if result.classification == LineClassification.BINARY:
+            self.counters["log_lines_read"] += 1
+            self.counters["binary_lines"] += 1
+            return
+
         if result.classification == LineClassification.APP_LOG:
             self.counters["log_lines_read"] += 1
             app_tel = result.app_log_telemetry

@@ -9,6 +9,7 @@ from pydantic import Field
 from telemetry_shared.models._base import CamelModel
 from telemetry_shared.models.alerts_query import AlertDelivery
 from telemetry_shared.models.metrics_query import MetricsQueryResponse, QueryTimeRange
+from telemetry_shared.models.trends import RejectReasonTrendsResponse
 
 Audience = Literal["technical", "executive"]
 
@@ -23,6 +24,7 @@ IntentId = Literal[
     "parse_health",
     "compare_period",
     "trend",
+    "reject_reason_trend",
 ]
 
 InterpretationSource = Literal["rule", "llm"]
@@ -84,6 +86,10 @@ class NlQueryResponse(CamelModel):
     source: InterpretationSource
     interpreted_query: InterpretedQuery
     data: MetricsQueryResponse
+    # Only for `reject_reason_trend` (UBS-143): the UBS-27 payload the answer's
+    # numbers come from. `data` is then the replayable metrics query over the
+    # latest window, grouped by reject reason.
+    reject_reason_trends: RejectReasonTrendsResponse | None = None
     citations: list[NlCitation] = Field(default_factory=list)
     caveats: list[str] = Field(default_factory=list)
     chart_rows: list[NlChartRow] = Field(default_factory=list)
