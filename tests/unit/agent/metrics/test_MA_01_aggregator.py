@@ -217,6 +217,38 @@ def test_max_series_per_bucket_caps_total_across_all_metrics() -> None:
     assert aggregator.cardinality_folded == 1
 
 
+def test_reserved_series_keep_unbounded_dimensions_capped_and_counted() -> None:
+    # FR-MET-030 / FR-MET-029: the alert-critical reserve narrows the cap for
+    # every other metric; it never lifts the bucket total, and folds still count.
+    clock = FakeClock()
+    config = AggregatorConfig(
+        metric_dimensions={"orders": ("symbol",), "critical": ("symbol",)},
+        max_series_per_bucket=3,
+        reserved_metrics=frozenset({"critical"}),
+        reserved_series=1,
+    )
+    aggregator = MetricsAggregator(config=config, clock=clock)
+
+    for symbol in ("AAA", "BBB", "CCC"):
+        aggregator.ingest_counters(
+            make_event(clock(), symbol=symbol), {"orders": Decimal(1)}
+        )
+    assert aggregator.cardinality_folded == 1  # CCC: only the reserve is left
+
+    for symbol in ("DDD", "EEE"):
+        aggregator.ingest_counters(
+            make_event(clock(), symbol=symbol), {"critical": Decimal(1)}
+        )
+    assert aggregator.cardinality_folded == 2  # EEE: the bucket total is full
+
+    grouped = aggregator.snapshot("1m", group_by=("symbol",))
+    assert set(grouped) == {("AAA",), ("BBB",), ("DDD",), ("__other__",)}
+    assert grouped[("__other__",)].counters == {
+        "orders": Decimal(1),
+        "critical": Decimal(1),
+    }
+
+
 def test_missing_dimension_value_becomes_unspecified_not_the_string_none() -> None:
     # Regression: symbol/side/ord_type are None on plenty of real messages
     # (admin messages, OrderCancelReject) — _dimension_value() used to

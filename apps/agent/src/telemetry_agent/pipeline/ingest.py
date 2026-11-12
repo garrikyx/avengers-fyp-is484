@@ -51,6 +51,8 @@ from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregat
 from telemetry_agent.metrics.correlation import LATENCY_DIMENSIONS, LatencyCorrelator
 from telemetry_agent.metrics.counters import (
     COUNTER_DIMENSIONS,
+    RESERVED_SERIES,
+    RESERVED_SERIES_METRICS,
     ComponentLimiter,
     app_log_counter_dims,
     derive_app_log_counters,
@@ -115,7 +117,9 @@ class MetricsIngestor:
         latency metric, a correlator on it, and a session tracker."""
         aggregator = MetricsAggregator(
             config=AggregatorConfig(
-                metric_dimensions={**COUNTER_DIMENSIONS, **LATENCY_DIMENSIONS}
+                metric_dimensions={**COUNTER_DIMENSIONS, **LATENCY_DIMENSIONS},
+                reserved_metrics=RESERVED_SERIES_METRICS,
+                reserved_series=RESERVED_SERIES,
             ),
             clock=clock,
         )

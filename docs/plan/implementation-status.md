@@ -182,10 +182,11 @@ Code: optional `level:` on `threshold` rules (`rules/types.py`,
 `rules/config_loader.py`, read from a `level`-grouped snapshot in `rules/engine.py` and
 `pipeline/evaluator.py`), `AppLogFailure` in `rules/defaults.py` and
 `config/rules.yaml`, and the `level` dimension on `app_log_errors`
-(`metrics/counters.py`). `[E]` lines are counted but do not fire it. Known limit: series
-admission is first-come under `maxSeriesPerBucket`, so if a bucket is already full when
-the first `[F]` line arrives it folds to `__other__` and the rule does not match;
-`cardinality_folded` is the signal.
+(`metrics/counters.py`). `[E]` lines are counted but do not fire it. The last 200 of
+the `maxSeriesPerBucket` slots are reserved for `app_log_lines`, `app_log_errors` and
+`app_error_signatures` (`RESERVED_SERIES_METRICS`). Because of this, a bucket already
+full of FIX series still admits the first `[F]` line (verified by
+`test_failure_line_still_fires_when_the_bucket_is_already_full`).
 
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 
@@ -267,5 +268,5 @@ uv run mypy apps/backend/src packages/telemetry_shared/src   # mypy on backend (
 | Risk                                                                                                                                               | Mitigation                                                                                                  |
 | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown                  | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples                                    |
-| `AppLogFailure` misses an `[F]` line if its bucket already holds `maxSeriesPerBucket` series (admission is first-come; signature rules share this) | Watch `cardinality_folded`; raise the cap or reserve budget for level and signature series if it ever trips |
+| Alert-critical series reserve (200 of `maxSeriesPerBucket`) is sized for one instance's worst case (163 series with the shipped signature list) | Raise `RESERVED_SERIES` if an agent monitors several instances or adds signatures; `cardinality_folded` still counts every fold |
 | Python agent footprint unproven at load                                                                                                            | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply                               |

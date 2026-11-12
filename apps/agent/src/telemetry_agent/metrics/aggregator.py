@@ -73,6 +73,12 @@ class AggregatorConfig:
     # metrics each individually under their own cap can still sum to an
     # unbounded total.
     max_series_per_bucket: int = 2000
+    # The last `reserved_series` slots of max_series_per_bucket are kept for
+    # `reserved_metrics`: every other metric folds once only those remain, so
+    # a bucket full of order series can't fold away an alert-critical one.
+    # The total stays within max_series_per_bucket either way.
+    reserved_metrics: frozenset[str] = frozenset()
+    reserved_series: int = 0
 
     @property
     def capacity(self) -> int:
@@ -210,7 +216,10 @@ class MetricsAggregator:
         if label in admitted:
             return label
         at_metric_cap = len(admitted) >= self.config.max_label_sets
-        at_bucket_cap = bucket.total_admitted >= self.config.max_series_per_bucket
+        bucket_cap = self.config.max_series_per_bucket
+        if metric not in self.config.reserved_metrics:
+            bucket_cap -= self.config.reserved_series
+        at_bucket_cap = bucket.total_admitted >= bucket_cap
         if at_metric_cap or at_bucket_cap:
             self.cardinality_folded += 1
             return (OTHER_LABEL,) * len(label)
