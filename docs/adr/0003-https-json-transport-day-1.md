@@ -2,6 +2,10 @@
 
 Status: Accepted · Date: 2026-07-31 · Deciders: TBD
 
+Cadence and the sub-two-second transport reversal condition are superseded by
+[ADR 0010](./0010-day1-publication-and-restart-semantics.md) for the Day-1 profile.
+HTTPS/JSON, compression, bounded buffering and the publisher interface remain.
+
 ## Context
 
 The original design sketch shows "HTTPS / gRPC" between agent and backend. A choice is needed

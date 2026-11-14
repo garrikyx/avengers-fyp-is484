@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
+from uuid import UUID
+
+from pydantic import Field, model_validator
 
 from telemetry_shared.metrics.histogram import Histogram
 from telemetry_shared.models._base import CamelModel
@@ -63,7 +67,7 @@ class Snapshot(CamelModel):
     absorb — the possible duplication from re-reading a checkpoint.
     """
 
-    schema_version: int
+    schema_version: Literal[1, 2]
     agent_id: str
     application: str
     instance_id: str
@@ -72,3 +76,13 @@ class Snapshot(CamelModel):
     restarted: bool = False
     series: list[SeriesEntry] = []
     gauges: dict[str, float] = {}
+    run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+    revision: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+
+    @model_validator(mode="after")
+    def versioned_identity(self) -> Snapshot:
+        if self.schema_version == 2 and (self.run_id is None or self.revision < 1):
+            raise ValueError("snapshot v2 requires runId and a positive revision")
+        if self.schema_version == 1 and (self.run_id is not None or self.revision):
+            raise ValueError("runId/revision require snapshot schemaVersion 2")
+        return self

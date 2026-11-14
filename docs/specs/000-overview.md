@@ -143,6 +143,11 @@ Teams/Copilot remain required (spec 009 §3.3).
 Day-1 is complete when, against a synthetic Magic log stream at the throughput agreed in
 [open question Q-1](../plan/open-questions.md):
 
+Use the Day-1 publication profile in spec 010 / ADR 0010: one-second wire buckets,
+one-second publication, 100ms evaluation, and 120 allowed batches/minute/agent.
+The five-second target is retained; ten-second library defaults are a compatibility
+profile, not a configuration that satisfies this latency target.
+
 1. A reject burst in the log is visible in a backend metrics query within 5 seconds.
 2. The `HighRejectRate` rule fires, is delivered to a mock Magic callback endpoint, and
    resolves when the burst stops.
@@ -150,6 +155,10 @@ Day-1 is complete when, against a synthetic Magic log stream at the throughput a
    a grouped rejection summary consistent with the metrics query.
 4. Log rotation, a 5-minute backend outage, and an agent restart each occur during the
    run without data loss beyond the documented bounds in `NFR-REL-001`–`NFR-REL-004`.
+   This run uses a connectivity outage preserving the backend cache, followed by
+   graceful agent restart with the backend reachable and sufficient buffer capacity.
+   It MUST recover exact generated counts. Crash/restart while disconnected retains
+   the explicitly accepted memory-loss limits of FR-PUB-008 (ADR 0010).
 5. An automated test proves no raw log line or non-allowlisted FIX tag left the host
    (`NFR-SEC-002`).
 6. A user asks a telemetry question in a team-controlled Teams chat and receives a

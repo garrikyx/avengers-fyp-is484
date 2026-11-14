@@ -100,6 +100,12 @@ class PipelineBridge:
     def stop(self, wait: bool = True) -> None:
         self._workers.stop(wait=wait)
 
+    @property
+    def pending_lines(self) -> int:
+        return (
+            self._committer.pending_lines if self._committer else self._line_queue.depth
+        )
+
     def enqueue_line(
         self,
         line: bytes,
@@ -111,7 +117,21 @@ class PipelineBridge:
         """Monitor handoff (FR-PIP-001). Blocks by default when queue is full."""
         if timeout is None:
             timeout = self._config.put_timeout_seconds
-        return self._line_queue.put(
+        # Bound the reorder window even if one worker is much slower than the
+        # others. Source lines stay on disk (FR-PIP-006, NFR-REL-009).
+        ordered = self._config.overflow_policy == "block"
+        if (
+            ordered
+            and self._committer
+            and self.pending_lines
+            >= (
+                self._config.line_queue_size
+                + self._config.event_queue_size
+                + self._config.resolved_worker_count()
+            )
+        ):
+            return False
+        queued = self._line_queue.put(
             QueuedLine(
                 line=line,
                 meta=meta,
@@ -119,6 +139,9 @@ class PipelineBridge:
             ),
             timeout=timeout,
         )
+        if queued and ordered and self._committer:
+            self._committer.expect(meta)
+        return queued
 
     def drain_events(self, max_items: int | None = None) -> list[ParsedEvent]:
         return self._event_queue.drain(max_items=max_items)
