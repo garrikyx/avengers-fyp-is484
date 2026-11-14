@@ -9,6 +9,7 @@ structure from the ring buffer, with its own TTL/cap eviction. Agent-internal
 
 from __future__ import annotations
 
+import heapq
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -84,6 +85,7 @@ class OrderContext:
     ack_recorded: bool = False
     first_fill_recorded: bool = False
     cancel_recorded: bool = False
+    generation: int = 0
 
 
 @dataclass(slots=True)
@@ -117,6 +119,8 @@ class LatencyCorrelator:
         self._max_plausible_ms = max_plausible_ms
         self._clock = clock
         self._open: dict[tuple[str, str], OrderContext] = {}
+        self._expiry: list[tuple[float, int, tuple[str, str]]] = []
+        self._generation = 0
         self.stats = CorrelatorStats()
 
     @property
@@ -146,12 +150,9 @@ class LatencyCorrelator:
         an ack for a NewOrderSingle-origin order, a cancel outcome for a
         cancel/replace-origin one. Feeds the snapshot's `pendingOrders` gauge.
 
-        Approximate, not full order-lifecycle state — the correlator only
-        ever tracks what MA-03 itself needs for latency, so entries are never
-        removed on resolution (only flagged), and a rejected order (which
-        sets neither ack_recorded nor cancel_recorded) still counts as
-        pending here until TTL eviction; rejections are already visible
-        separately via rejectRate.
+        Approximate, not full order-lifecycle state. Rejected orders are terminal
+        and removed; successful responses remain flagged to suppress duplicate
+        latency samples until TTL eviction.
         """
         self._evict_expired()
         return sum(
@@ -191,12 +192,19 @@ class LatencyCorrelator:
     def _track_new_order(self, event: ParsedMessageEvent) -> None:
         if event.cl_ord_id_hash is None:
             return
-        self._evict_if_at_capacity()
         key = (event.session_id, event.cl_ord_id_hash)
+        if key not in self._open:
+            self._evict_if_at_capacity()
+        self._generation += 1
         self._open[key] = OrderContext(
             first_seen_at=self._timestamp_of(event),
             orig_cl_ord_id_hash=event.orig_cl_ord_id_hash,
             origin_msg_type=event.msg_type,
+            generation=self._generation,
+        )
+        heapq.heappush(
+            self._expiry,
+            (self._open[key].first_seen_at.timestamp(), self._generation, key),
         )
 
     def _handle_execution_report(self, event: ParsedMessageEvent) -> None:
@@ -206,6 +214,10 @@ class LatencyCorrelator:
         context = self._open.get(key)
         if context is None:
             self.stats.orphan_responses += 1
+            return
+
+        if event.exec_type == "Rejected":
+            del self._open[key]
             return
 
         if context.origin_msg_type == "NewOrderSingle":
@@ -255,19 +267,29 @@ class LatencyCorrelator:
     def _evict_if_at_capacity(self) -> None:
         if len(self._open) < self._max_entries:
             return
-        oldest_key = min(self._open, key=lambda key: self._open[key].first_seen_at)
-        del self._open[oldest_key]
-        self.stats.cap_evictions += 1
-        self.stats.unmatched_orders += 1
+        while self._expiry:
+            _, generation, key = heapq.heappop(self._expiry)
+            context = self._open.get(key)
+            if context is not None and context.generation == generation:
+                del self._open[key]
+                self.stats.cap_evictions += 1
+                self.stats.unmatched_orders += 1
+                return
 
     def _evict_expired(self) -> None:
         cutoff = self._clock() - self._ttl_seconds
-        expired = [
-            key
-            for key, ctx in self._open.items()
-            if ctx.first_seen_at.timestamp() < cutoff
-        ]
-        for key in expired:
-            del self._open[key]
-            self.stats.ttl_evictions += 1
-            self.stats.unmatched_orders += 1
+        while self._expiry and self._expiry[0][0] < cutoff:
+            _, generation, key = heapq.heappop(self._expiry)
+            context = self._open.get(key)
+            if context is not None and context.generation == generation:
+                del self._open[key]
+                self.stats.ttl_evictions += 1
+                self.stats.unmatched_orders += 1
+        # Lazy deletion must not turn the expiry heap into an unbounded history
+        # of rejected/replaced orders (NFR-REL-009). Rebuild amortizes the cleanup.
+        if len(self._expiry) > max(64, 2 * len(self._open)):
+            self._expiry = [
+                (ctx.first_seen_at.timestamp(), ctx.generation, key)
+                for key, ctx in self._open.items()
+            ]
+            heapq.heapify(self._expiry)

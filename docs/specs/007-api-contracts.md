@@ -30,6 +30,13 @@ the real Teams demonstration; they do not imply per-user backend Entra enforceme
 
 ## 2. Ingestion
 
+**UBS-140 / ADR 0010:** batch, event and heartbeat `schemaVersion` remains 1.
+Nested snapshots support v1 and v2 independently. V2 requires `runId` (UUID) and
+`revision` (positive integer); their replacement/summation rules are defined in
+FR-MET-024. Unknown snapshot versions or v2 without those fields MUST be rejected.
+Deploy the backend accepting both versions before upgrading agents to v2. Legacy
+v1 snapshots omit both fields and retain their original serialization.
+
 ### 2.1 `POST /telemetry/batch` (primary agent path)
 
 Ingestion accepts `Content-Encoding: gzip` (`FR-PUB-002`) as well as uncompressed JSON.

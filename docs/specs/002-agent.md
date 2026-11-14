@@ -106,8 +106,9 @@ or justify an exception before any build ([Q-13](../plan/open-questions.md)).
   that file's checkpoint MUST NOT be consulted. Relying on the digest alone would resume at the
   old offset whenever a replacement begins with the same bytes, such as a fixed log header.
 - On restart, a checkpoint at most `checkpointInterval` old means at most that much data is
-  re-read. Re-reading MAY double-count metrics within one bucket; the agent MUST mark the
-  first snapshot after restart with `restarted: true` so the backend can annotate it.
+  re-read. Re-reading MAY double-count metrics within the checkpoint replay interval; the agent
+  MUST mark affected buckets, including late revisions, with `restarted: true`.
+  A new `runId` separates contributions across restarts (ADR 0010).
   `FR-LOG-021`
 
 ## 3. Parser Engine
@@ -128,7 +129,7 @@ contract:
 
 | ID | Requirement |
 | --- | --- |
-| `FR-MET-001` | MUST aggregate into fixed 10s wall-clock buckets keyed by bucket start time. |
+| `FR-MET-001` | MUST aggregate into fixed wall-clock buckets keyed by bucket start time. Native aggregation is 1s; wire bucket width is configurable in whole native buckets (10s general default, 1s Day-1 acceptance; ADR 0010). |
 | `FR-MET-002` | MUST retain the last `localRetentionBuckets` (default 360 = 1h) buckets in memory to serve rule windows and to republish after a backend outage. |
 | `FR-MET-003` | Late events (log timestamp older than the current bucket) MUST be attributed to their own bucket if it is still in memory, otherwise counted in `metrics.late_dropped`. |
 | `FR-MET-004` | MUST enforce the cardinality limits in spec 004 §5 and fold excess dimension values into `__other__`. |
@@ -159,7 +160,7 @@ message throughput.
 
 | ID | Requirement |
 | --- | --- |
-| `FR-PUB-001` | MUST publish a batch every `publishInterval` (default `10s`) containing: metric snapshots for newly completed buckets, structured events, alert state changes, and a heartbeat. |
+| `FR-PUB-001` | MUST publish a batch every `publishInterval` (default `10s`) containing: metric snapshots for newly completed or revised buckets (1s publication in the Day-1 acceptance profile; ADR 0010), structured events, alert state changes, and a heartbeat. |
 | `FR-PUB-002` | MUST gzip bodies above `compressThreshold` (default 4 KiB) and set `Content-Encoding: gzip`. |
 | `FR-PUB-003` | MUST include a monotonically increasing `batchSeq` per agent and a stable `batchId` (UUIDv7) so the backend can deduplicate retries idempotently. |
 | `FR-PUB-004` | MUST buffer unpublished batches in memory up to `publishBufferBytes` (default 64 MiB) or `publishBufferMaxAge` (default `15m`), whichever is hit first, then drop oldest and count `publish.dropped_batches`. |
@@ -198,7 +199,7 @@ Alerting on these gauges is configuration: `HostDiskFull`, `HostMemoryHigh` and
 1. Magic appends a line to a monitored file.
 2. Log Monitor detects the change (fsnotify or poll), reads from the last committed offset,
    splits complete lines, and enqueues each with `{instanceId, path, logType, readAt}` on the
-   per-file-set line queue without blocking (`FR-PIP-001`).
+   per-file-set line queue with bounded backpressure (`FR-PIP-001`).
 3. A parser worker dequeues the line and classifies it. For FIX, it extracts allowlisted tags
    and hands the parsed result to the downstream pipeline. Parse failures increment a
    reason-coded count; the Event Emitter later publishes bounded `parse.error` summaries

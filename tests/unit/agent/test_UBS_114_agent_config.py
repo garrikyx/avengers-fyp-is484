@@ -46,7 +46,9 @@ def test_the_shipped_local_dev_config_loads() -> None:
     assert cfg.rules_path == (REPO_ROOT / "config" / "rules.yaml").resolve()
     assert {r.name for r in cfg.rules} >= {"RejectSpike", "HighRejectRate"}
     assert cfg.parse_workers == 1
-    assert cfg.evaluation_interval_seconds == 10.0
+    # ADR 0010: the shipped Day-1 profile evaluates frequently enough to keep
+    # log-to-query visibility within five seconds.
+    assert cfg.evaluation_interval_seconds == 0.1
 
 
 def test_minimal_config_gets_the_defaults(tmp_path: Path) -> None:

@@ -110,15 +110,39 @@ def _orders(snap: Snapshot) -> Decimal:
 
 
 class TestSnapshotEmitter:
-    def test_first_call_emits_only_the_latest_completed_bucket(self) -> None:
+    def test_FR_MET_003_late_data_revises_an_already_published_bucket(self) -> None:
+        h = _Harness()
+        h.orders(2, at=1010)
+        h.emit(1025)
+        h.orders(3, at=1015)
+        assert h.emit(1026) == 1
+        original, revised = h.published()
+        assert _orders(original) == 2
+        assert _orders(revised) == 5
+        assert revised.run_id == original.run_id
+        assert revised.revision > original.revision
+        assert revised.bucket_start_utc == original.bucket_start_utc
+        assert h.emit(1027) == 0
+
+    def test_FR_MET_024_shutdown_exports_the_open_bucket(self) -> None:
+        h = _Harness()
+        h.orders(3, at=1022)
+        now = datetime.fromtimestamp(1025, tz=UTC)
+        h.emitter.emit(now, include_open=True)
+        [snap] = h.published()
+        assert _starts([snap]) == [1020]
+        assert _orders(snap) == 3
+
+    def test_first_call_emits_retained_dirty_buckets_and_latest(self) -> None:
         h = _Harness()
         h.orders(1, at=1000)
         h.orders(2, at=1010)
 
-        assert h.emit(1025) == 1  # current bucket [1020,1030)
+        assert h.emit(1025) == 2  # FR-MET-003: older data must not be omitted
 
-        [snap] = h.published()
-        assert _starts([snap]) == [1010]
+        older, snap = h.published()
+        assert _starts([older, snap]) == [1000, 1010]
+        assert _orders(older) == Decimal(1)
         assert snap.bucket_seconds == 10
         assert _orders(snap) == Decimal(2)
 

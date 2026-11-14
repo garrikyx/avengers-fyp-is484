@@ -216,8 +216,8 @@ def test_fr_hlt_015_host_sample_errors_is_a_queryable_counter() -> None:
     errors = sum(row.counters.get("host_sample_errors", 0) for row in rows.values())
     assert errors == 3  # one unreadable mount per tick; memory read fine
 
-    # The emitter's first call publishes the latest closed bucket: the one the
-    # last failing tick (one error) fell in.
+    # ADR 0010 / FR-PUB-008: the emitter publishes every dirty closed bucket so
+    # delayed publication cannot silently lose earlier host-sample errors.
     agent.emitter.emit(agent.now + timedelta(seconds=10))
     wire = [
         entry.counters["host_sample_errors"]
@@ -225,7 +225,7 @@ def test_fr_hlt_015_host_sample_errors_is_a_queryable_counter() -> None:
         for entry in snap.series
         if "host_sample_errors" in entry.counters
     ]
-    assert sum(wire) == 1
+    assert sum(wire) == 3
 
 
 def test_fr_met_034_wire_snapshot_carries_each_mount_and_the_worst_one() -> None:

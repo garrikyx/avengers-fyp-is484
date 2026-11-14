@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from telemetry_shared.metrics.dimensions import (
     ALLOWED_DIMENSION_KEYS,
@@ -72,6 +73,8 @@ def build_snapshot(
     instance_id: str,
     gauges: Mapping[str, float] | None = None,
     restarted: bool = False,
+    run_id: UUID | None = None,
+    revision: int = 0,
 ) -> Snapshot:
     """One `Snapshot` for the closed interval `[bucket_start, bucket_start +
     bucket_seconds)`. Pure — calling this twice with the same arguments
@@ -115,7 +118,7 @@ def build_snapshot(
             )
 
     return Snapshot(
-        schema_version=1,
+        schema_version=2 if run_id is not None else 1,
         agent_id=agent_id,
         application=application,
         instance_id=instance_id,
@@ -124,11 +127,13 @@ def build_snapshot(
         restarted=restarted,
         series=series,
         gauges=dict(gauges) if gauges else {},
+        run_id=run_id,
+        revision=revision,
     )
 
 
 class SnapshotEmitter:
-    """UBS-123: publishes every completed wire bucket once, oldest first."""
+    """Publish closed buckets and revisions of late-arriving data (UBS-140)."""
 
     def __init__(
         self,
@@ -142,6 +147,7 @@ class SnapshotEmitter:
         correlator: LatencyCorrelator | None = None,
         counters: CounterRegistry | None = None,
         host_gauges: Callable[[], Mapping[str, float]] | None = None,
+        restarted_at: datetime | None = None,
     ) -> None:
         if bucket_seconds <= 0:
             raise ValueError("bucket_seconds must be > 0")
@@ -169,6 +175,9 @@ class SnapshotEmitter:
         # UBS-129 (FR-MET-034): Host Monitor gauges at bucket close; a gauge it
         # could not read is absent from the mapping, so never sent as 0.
         self._host_gauges = host_gauges
+        self._run_id = uuid4()
+        self._revision = 0
+        self._restarted_at = restarted_at
 
     @property
     def counters(self) -> CounterRegistry:
@@ -185,10 +194,12 @@ class SnapshotEmitter:
             gauges.update(self._host_gauges())
         return gauges
 
-    def emit(self, now: datetime) -> int:
+    def emit(self, now: datetime, *, include_open: bool = False) -> int:
         """Enqueue missed and latest buckets; returns how many were enqueued."""
         width = self._bucket_seconds
         latest = int(now.timestamp() // width) * width - width
+        if include_open:
+            latest += width
         first = latest if self._last_emitted is None else self._last_emitted + width
         oldest_second = self._aggregator.oldest_retained_start(now.timestamp())
         earliest = -(-oldest_second // width) * width
@@ -199,12 +210,17 @@ class SnapshotEmitter:
             if first > latest:
                 # The whole gap is gone; don't count it again next call.
                 self._last_emitted = latest
-        if first > latest:
-            return 0
+        changed = {
+            start // width * width
+            for start in self._aggregator.take_dirty_buckets(latest + width)
+            if start >= earliest
+        }
+        starts = sorted(set(range(first, latest + 1, width)) | changed)
 
         gauges = self._read_gauges()
         emitted = 0
-        for start in range(first, latest + 1, width):
+        for start in starts:
+            self._revision += 1
             snap = build_snapshot(
                 self._aggregator,
                 start,
@@ -213,8 +229,16 @@ class SnapshotEmitter:
                 application=self._application,
                 instance_id=self._instance_id,
                 gauges=gauges if start == latest else None,
+                run_id=self._run_id,
+                revision=self._revision,
+                # All buckets that could contain checkpoint replay are marked,
+                # including late corrections and the startup/open bucket.
+                restarted=(
+                    self._restarted_at is not None
+                    and start < self._restarted_at.timestamp() + 5 + width
+                ),
             )
             self._publisher.enqueue_snapshot(snap, now=now)
-            self._last_emitted = start
             emitted += 1
+        self._last_emitted = max(latest, self._last_emitted or latest)
         return emitted

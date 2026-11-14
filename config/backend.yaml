@@ -10,6 +10,10 @@
 #
 # Without Ollama, set `provider: mock` (no model or API key needed). For other LLMs see
 # spec 010 §nl and the MAGIC_TELEMETRY_LLM_API_KEY env var.
+# Day-1 profile: 60 normal batches/minute plus retry/recovery headroom (ADR 0010).
+ingest:
+  maxBatchesPerMinutePerAgent: 120
+
 nl:
   enabled: true
   llm:
