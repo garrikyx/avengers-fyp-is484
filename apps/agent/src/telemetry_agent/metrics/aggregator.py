@@ -160,6 +160,8 @@ class MetricsAggregator:
         # "no log activity" alert reads this rather than inferring staleness
         # from bucket contents).
         self._last_event_at: float | None = None
+        self._last_tick: int | None = None
+        self._dirty: set[int] = set()
 
     def _bucket_start(self, ts: float) -> int:
         return int(ts // self.config.bucket_seconds)
@@ -178,10 +180,26 @@ class MetricsAggregator:
         or queries arriving.
         """
         now = self._clock() if now is None else now
+        current = self._bucket_start(now)
+        if current == self._last_tick:
+            return
+        self._last_tick = current
         oldest_valid = self.oldest_retained_start(now) // self.config.bucket_seconds
         for bucket in self._buckets:
             if bucket.start is not None and bucket.start < oldest_valid:
                 bucket.clear()
+        self._dirty = {start for start in self._dirty if start >= oldest_valid}
+
+    def take_dirty_buckets(self, before: int) -> set[int]:
+        """FR-MET-003/024: consume changed native buckets ending by `before`.
+
+        Called under the same ingestion lock as writes. The set is bounded by
+        ring retention; open buckets stay dirty until publication or shutdown.
+        """
+        width = self.config.bucket_seconds
+        ready = {start for start in self._dirty if (start + 1) * width <= before}
+        self._dirty.difference_update(ready)
+        return {start * width for start in ready}
 
     def _get_bucket(self, ts: float, *, now: float) -> _Bucket | None:
         start = self._bucket_start(ts)
@@ -192,8 +210,11 @@ class MetricsAggregator:
             )
         bucket = self._buckets[start % self.config.capacity]
         if bucket.start != start:
+            if bucket.start is not None:
+                self._dirty.discard(bucket.start)
             bucket.clear()
             bucket.start = start
+        self._dirty.add(start)
         return bucket
 
     def _dims_for(self, metric: str) -> tuple[str, ...]:
@@ -373,8 +394,9 @@ class MetricsAggregator:
         end_idx = (bucket_start + bucket_seconds) // self.config.bucket_seconds
 
         result: dict[tuple[str, ...], MetricRow] = {}
-        for bucket in self._buckets:
-            if bucket.start is None or not (start_idx <= bucket.start < end_idx):
+        for index in range(start_idx, end_idx):
+            bucket = self._buckets[index % self.config.capacity]
+            if bucket.start != index:
                 continue
             self._merge_counters(bucket, group_by, result)
             self._merge_histograms(bucket, group_by, result)

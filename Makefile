@@ -10,6 +10,16 @@ BACKEND_CONFIG ?= config/backend.yaml
 sync:
 	uv sync
 
+# UBS-140: full 5-minute outage at Q-1's synthetic target. Reports gaps and
+# exits nonzero when acceptance is incomplete. See docs/plan/ubs140-day1-acceptance.md.
+.PHONY: day1-acceptance day1-acceptance-test
+ACCEPTANCE_ARGS ?=
+day1-acceptance: sync
+	uv run python -m scripts.day1_acceptance $(ACCEPTANCE_ARGS)
+
+day1-acceptance-test: sync
+	uv run pytest tests/integration/test_UBS_140_day1_acceptance.py -v
+
 parser-test: sync
 	uv run pytest tests/unit/agent/parser/ -v
 

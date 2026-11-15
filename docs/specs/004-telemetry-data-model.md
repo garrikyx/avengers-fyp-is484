@@ -11,7 +11,7 @@ Present on every event, snapshot and heartbeat:
 
 | Field           | Type   | Notes                                                                                                        |
 | --------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
-| `schemaVersion` | int    | Currently `1`. Backend rejects unknown major versions.                                                       |
+| `schemaVersion` | int    | Snapshots support `1` (legacy) and `2` (ADR 0010); other envelopes remain `1`. Unknown versions are rejected.                                                       |
 | `agentId`       | string | Stable per agent deployment, e.g. `magic-agent-sg-01`. MUST match the authenticated identity (`FR-ING-002`). |
 | `application`   | string | `Magic` for Day-1; reserved for future applications.                                                         |
 | `instanceId`    | string | Logical Magic instance, e.g. `magic-prod-01`.                                                                |
@@ -149,9 +149,15 @@ observations defensively). Excess increments `events_rate_limited` and the heart
 
 ## 3. Metric snapshot
 
-`FR-MET-024`: One snapshot per completed 10s bucket per instance. Counters are **deltas
-for that bucket**, not cumulative totals — this makes the backend's merge associative
-and makes agent restarts harmless.
+`FR-MET-024`: Publish completed, configurable-width buckets per instance (10s general
+default; 1s Day-1 acceptance). Counters are **totals for one run within that bucket**,
+never cumulative across buckets. Late data MUST produce a higher-revision replacement.
+Snapshot v2 requires a fresh UUID `runId` per agent runtime and positive monotonically
+increasing `revision`. The backend sums different `(agentId, runId, bucketStartUtc)`
+contributions and replaces only with a higher revision of the same contribution;
+retries and older revisions MUST NOT change totals. Graceful shutdown MUST also export
+the open bucket within its deadline. Snapshot v1 remains supported without run/revision
+fields. See ADR 0010 for deployment order and crash-loss limits.
 
 ```json
 {

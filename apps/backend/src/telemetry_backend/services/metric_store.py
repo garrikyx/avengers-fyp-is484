@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 DimKey = tuple[tuple[str, str], ...]
 # (agentId, agent's own native bucket epoch) — the unit that overwrites
 # idempotently on redelivery; distinct keys always accumulate.
-ContributionKey = tuple[str, int]
+ContributionKey = tuple[str, str, int]
 
 # NFR-SCA-006: memory MUST be documented as bytes-per-series-per-bucket so
 # capacity can be computed rather than guessed. These are conservative fixed
@@ -83,6 +83,7 @@ _BYTES_PER_OCCUPIED_BUCKET_EXTRA = 128
 # keeps the check off the hot path while still catching sustained pressure
 # well within one retention window.
 _MEMORY_CHECK_INTERVAL_SECONDS = 5
+_MAX_CONTRIBUTIONS_PER_BUCKET = 4096
 
 
 @dataclass(slots=True)
@@ -113,6 +114,7 @@ class _CanonicalBucket:
     # first bucket. Kept as a set (not collapsed to a bool) so a bucket fed
     # by several agents still shows exactly which ones were cold.
     restarted_agent_ids: set[str] = field(default_factory=set)
+    revisions: dict[ContributionKey, int] = field(default_factory=dict)
 
     def clear(self) -> None:
         self.start = None
@@ -121,6 +123,7 @@ class _CanonicalBucket:
         self.gauges_source_epoch = None
         self.contributing_agent_ids.clear()
         self.restarted_agent_ids.clear()
+        self.revisions.clear()
 
 
 def _dim_key(dimensions: dict[str, str]) -> DimKey:
@@ -302,6 +305,23 @@ class MetricStore:
             self._instance_applications[snapshot.instance_id] = snapshot.application
 
             native_bucket_epoch = int(snapshot.bucket_start_utc.timestamp())
+            contribution_key: ContributionKey = (
+                snapshot.agent_id,
+                str(snapshot.run_id or "legacy"),
+                native_bucket_epoch,
+            )
+            previous = bucket.revisions.get(contribution_key)
+            if snapshot.schema_version == 2 and previous is not None:
+                if snapshot.revision <= previous:
+                    return  # retries/older revisions cannot regress data
+            if (
+                previous is None
+                and len(bucket.revisions) >= _MAX_CONTRIBUTIONS_PER_BUCKET
+            ):
+                with self._counters_lock:
+                    self.dropped_series_over_cap_total += 1
+                return
+            bucket.revisions[contribution_key] = snapshot.revision
             bucket.contributing_agent_ids.add(snapshot.agent_id)
             if snapshot.gauges and (
                 bucket.gauges_source_epoch is None
@@ -324,7 +344,12 @@ class MetricStore:
                 if existing is None or new_until > existing:
                     self._warming_until[snapshot.instance_id] = new_until
 
-            contribution_key: ContributionKey = (snapshot.agent_id, native_bucket_epoch)
+            if snapshot.schema_version == 2 and previous is not None:
+                # A revision is a complete replacement, including omitted series.
+                for dim_key in list(bucket.series):
+                    bucket.series[dim_key].pop(contribution_key, None)
+                    if not bucket.series[dim_key]:
+                        del bucket.series[dim_key]
             for entry in snapshot.series:
                 dim_key = _dim_key(entry.dimensions)
                 if (
@@ -364,11 +389,13 @@ class MetricStore:
         total_shell_buckets = 0
         total_occupied_buckets = 0
         total_contributions = 0
+        total_revisions = 0
         for ring in self._rings.values():
             total_shell_buckets += len(ring)
             for bucket in ring:
                 if bucket.start is not None:
                     total_occupied_buckets += 1
+                    total_revisions += len(bucket.revisions)
                     total_contributions += sum(
                         len(contributions) for contributions in bucket.series.values()
                     )
@@ -376,6 +403,7 @@ class MetricStore:
             total_shell_buckets * _BYTES_PER_BUCKET_SHELL
             + total_occupied_buckets * _BYTES_PER_OCCUPIED_BUCKET_EXTRA
             + total_contributions * _BYTES_PER_SERIES_CONTRIBUTION
+            + total_revisions * 128
         )
 
     def _maybe_check_memory_pressure(self, now: datetime) -> None:
