@@ -155,6 +155,21 @@ INTENT_DEFINITIONS: dict[IntentId, IntentDefinition] = {
         series=True,
         step="1m",
     ),
+    "reject_reason_trend": IntentDefinition(
+        intent="reject_reason_trend",
+        description=(
+            "Which reject reasons are increasing: each reason's count in the latest "
+            "window against the preceding window of equal length."
+        ),
+        example_questions=(
+            "Which reject reasons are increasing?",
+            "What's driving rejects up?",
+        ),
+        required_slots=(),
+        optional_slots=("timeRange", "application", "instanceId"),
+        metrics=("orders_rejected",),
+        group_by=("rejectReason",),
+    ),
 }
 
 SUPPORTED_INTENTS: tuple[IntentId, ...] = tuple(INTENT_DEFINITIONS.keys())

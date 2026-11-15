@@ -146,4 +146,6 @@ def test_nl_eval_anti_fabrication(case_id: str) -> None:
     )
     assert outcome.kind == "answer"
     response = outcome.answer  # type: ignore[union-attr]
-    assert_answer_numbers_in_data(response.answer, response.data)
+    assert_answer_numbers_in_data(
+        response.answer, response.data, response.reject_reason_trends
+    )

@@ -13,6 +13,7 @@ from telemetry_shared.models.nl_query import (
     NlAlertSummary,
     NlChartRow,
 )
+from telemetry_shared.models.trends import ReasonTrend, RejectReasonTrendsResponse
 
 from telemetry_backend.nl.render import formatters as fmt
 from telemetry_backend.nl.render.escape import escape_adaptive_card_text
@@ -25,6 +26,7 @@ class RenderInput:
     audience: Audience = "technical"
     alerts: tuple[AlertRecord, ...] = ()
     baseline_data: MetricsQueryResponse | None = None
+    trends: RejectReasonTrendsResponse | None = None
     application: str = "Magic"
     extra_caveats: tuple[str, ...] = ()
     now: datetime | None = None
@@ -63,6 +65,64 @@ def _summaries(alerts: tuple[AlertRecord, ...]) -> list[NlAlertSummary]:
         )
         for a in alerts
     ]
+
+
+_MAX_TREND_ROWS = 5
+
+
+def _trend_change(reason: ReasonTrend) -> str:
+    """Counts and relative change straight from the payload; new reasons have none."""
+    if reason.change_ratio is None:
+        return f"new, {reason.current_count} now, none before"
+    return (
+        f"{reason.previous_count} to {reason.current_count}, "
+        f"+{round(reason.change_ratio * 100)}%"
+    )
+
+
+def _reject_reason_trend_parts(
+    trends: RejectReasonTrendsResponse | None, *, app: str, audience: Audience
+) -> tuple[list[str], list[NlChartRow]]:
+    if trends is None:
+        return ["Reject reason trends are not available."], []
+    if not trends.previous_window_complete:
+        return [
+            "Not enough history yet to tell which reject reasons are increasing "
+            f"for {app}."
+        ], []
+    if not trends.increasing:
+        return [
+            f"No reject reason is increasing for {app}: none rose by more than "
+            f"{round(trends.threshold * 100)}% against the previous {trends.window} "
+            f"with at least {trends.min_occurrences} occurrences."
+        ], []
+
+    shown = trends.increasing[:_MAX_TREND_ROWS]
+    lead = (
+        f"Reject reasons increasing for {app} over the last {trends.window}, "
+        f"against the {trends.window} before:"
+    )
+    parts = [lead]
+    for reason in shown:
+        name = escape_adaptive_card_text(reason.reject_reason)
+        if audience == "executive":
+            parts.append(f"{name} ({_trend_change(reason)});")
+        else:
+            parts.append(f"- {name}: {_trend_change(reason)}")
+    if audience == "executive":
+        parts[-1] = parts[-1].rstrip(";") + "."
+    rows = [NlChartRow(name=r.reject_reason, value=r.current_count) for r in shown]
+    return parts, rows
+
+
+def _trend_windows_sentence(trends: RejectReasonTrendsResponse) -> str:
+    def span(start: datetime, end: datetime) -> str:
+        return f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC"
+
+    return (
+        f"Compared {span(trends.current_from_utc, trends.current_to_utc)} "
+        f"with {span(trends.previous_from_utc, trends.previous_to_utc)}."
+    )
 
 
 def render_answer(inp: RenderInput) -> RenderOutput:
@@ -185,6 +245,11 @@ def render_answer(inp: RenderInput) -> RenderOutput:
         elif inp.audience == "executive":
             parts.append("Previous period comparison is not available.")
 
+    elif inp.intent == "reject_reason_trend":
+        parts, chart_rows = _reject_reason_trend_parts(
+            inp.trends, app=app, audience=inp.audience
+        )
+
     elif inp.intent == "trend":
         points = sum(len(g.points or []) for g in groups)
         parts.append(
@@ -196,7 +261,11 @@ def render_answer(inp: RenderInput) -> RenderOutput:
     else:
         parts.append("Query completed.")
 
-    parts.append(fmt.effective_range_sentence(inp.data.effective_time_range))
+    if inp.intent == "reject_reason_trend" and inp.trends is not None:
+        # The trend compares bucket-aligned windows, not the requested range.
+        parts.append(_trend_windows_sentence(inp.trends))
+    else:
+        parts.append(fmt.effective_range_sentence(inp.data.effective_time_range))
     _append_caveats(parts, inp)
 
     answer = " ".join(p for p in parts if p).strip()

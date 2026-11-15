@@ -6,6 +6,7 @@ agent reported for a dimension-set is simply absent, never fabricated.
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 from telemetry_backend.config import StreamProcessorConfig
 from telemetry_backend.services.metric_store import MetricStore
@@ -15,6 +16,51 @@ from telemetry_shared.models.snapshot import HistogramPayload, SeriesEntry, Snap
 DIMS = {"session": "MAGIC->EXCH1", "symbol": "ABC"}
 BUCKET_START = datetime(2026, 6, 12, 4, 0, 0, tzinfo=UTC)
 NOW = BUCKET_START + timedelta(seconds=30)
+
+
+def test_FR_ING_005_revisions_cannot_regress_and_runs_do_not_overwrite() -> None:
+    store = MetricStore(StreamProcessorConfig())
+    first_run, second_run = uuid4(), uuid4()
+
+    def revised(run_id, revision, count, restarted=False):
+        return _snapshot(
+            agent_id="agent-a", counters={"orders_submitted": count}
+        ).model_copy(
+            update={
+                "schema_version": 2,
+                "run_id": run_id,
+                "revision": revision,
+                "restarted": restarted,
+            }
+        )
+
+    for snap in (
+        revised(first_run, 1, 2),
+        revised(first_run, 3, 5),
+        revised(first_run, 2, 4),  # late older response
+        revised(first_run, 3, 5),  # retry
+        revised(second_run, 1, 7, restarted=True),  # same agent + native bucket
+    ):
+        store.merge(snap, canonical_start=BUCKET_START, now=NOW)
+    assert _read_one_group(store).counters["orders_submitted"] == 12
+    assert (
+        store.restarted_bucket_count("magic-prod-01", from_utc=BUCKET_START, to_utc=NOW)
+        == 1
+    )
+
+
+def test_FR_ING_005_revision_removes_omitted_series() -> None:
+    store = MetricStore(StreamProcessorConfig())
+    snap = _snapshot(agent_id="agent-a", counters={"orders_submitted": 2}).model_copy(
+        update={"schema_version": 2, "run_id": uuid4(), "revision": 1}
+    )
+    store.merge(snap, canonical_start=BUCKET_START, now=NOW)
+    store.merge(
+        snap.model_copy(update={"revision": 2, "series": []}),
+        canonical_start=BUCKET_START,
+        now=NOW,
+    )
+    assert store.read("magic-prod-01", from_utc=BUCKET_START, to_utc=NOW) == []
 
 
 def _histogram_payload(values: list[int]) -> HistogramPayload:

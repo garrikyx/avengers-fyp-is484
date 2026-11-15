@@ -95,7 +95,9 @@ class OffsetTracker:
         if offset <= current:
             return
         self._states[key] = {
-            "source": str(Path(source_path).resolve()),
+            "source": source_path
+            if os.path.isabs(source_path)
+            else str(Path(source_path).resolve()),
             "offset": offset,
             "timestamp": datetime.now(UTC).isoformat(),
             "fileStateOS": {

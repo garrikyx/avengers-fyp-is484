@@ -13,7 +13,7 @@ response (spec 007 §3).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 from telemetry_agent.metrics.aggregator import MetricsAggregator
@@ -23,6 +23,11 @@ from telemetry_shared.metrics import (
     DEFAULT_PERCENTILES,
     build_latency_summary,
     compute_indicators,
+)
+from telemetry_shared.metrics.host import (
+    HOST_DISK_USED_RATIO,
+    HOST_MEMORY_USED_RATIO,
+    MAGIC_PROCESS_UP,
 )
 from telemetry_shared.models.metrics import (
     Gauges,
@@ -36,7 +41,9 @@ def _build_gauges(
     aggregator: MetricsAggregator,
     correlator: LatencyCorrelator | None,
     consecutive_publish_failures: int | None,
+    host_gauges: Mapping[str, float] | None = None,
 ) -> Gauges:
+    host = host_gauges or {}
     if correlator is None:
         pending_orders = 0
         oldest_pending_age_seconds = None
@@ -48,6 +55,9 @@ def _build_gauges(
         oldest_pending_age_seconds=oldest_pending_age_seconds,
         seconds_since_last_event=aggregator.seconds_since_last_event(),
         consecutive_publish_failures=consecutive_publish_failures,
+        host_disk_used_ratio=host.get(HOST_DISK_USED_RATIO),
+        host_memory_used_ratio=host.get(HOST_MEMORY_USED_RATIO),
+        magic_process_up=host.get(MAGIC_PROCESS_UP),
     )
 
 
@@ -61,6 +71,7 @@ def snapshot(
     percentiles: Sequence[int] = DEFAULT_PERCENTILES,
     now: datetime | None = None,
     consecutive_publish_failures: int | None = None,
+    host_gauges: Mapping[str, float] | None = None,
 ) -> MetricsSnapshot:
     """Serialisable, per-window snapshot: counters, computed indicators,
     latency summaries, grouped breakdowns, window bounds, and generation
@@ -79,6 +90,10 @@ def snapshot(
     this function the pure read it advertises. Callers hand in
     `BackendPublisher.consecutive_failures`; leaving it `None` means no
     publisher is wired, which reads as no-fire rather than as healthy.
+
+    `host_gauges` (FR-MET-034, UBS-129) is the Host Monitor's latest readings
+    handed in the same way (`health/` is not imported here): a gauge missing
+    from the mapping stays `None`, so a rule reads "no data", never 0.
     """
     group_by = tuple(group_by)
     rows = aggregator.snapshot(window, group_by)
@@ -111,6 +126,8 @@ def snapshot(
         ),
         generated_at_utc=now,
         group_by=group_by,
-        gauges=_build_gauges(aggregator, correlator, consecutive_publish_failures),
+        gauges=_build_gauges(
+            aggregator, correlator, consecutive_publish_failures, host_gauges
+        ),
         groups=groups,
     )

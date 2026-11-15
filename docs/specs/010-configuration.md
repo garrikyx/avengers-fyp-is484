@@ -12,6 +12,22 @@ defaults and diff them against this document's values.
 
 ## 1. Agent configuration
 
+### Day-1 acceptance profile (ADR 0010)
+
+The general defaults below remain compatible with existing deployments. To meet
+NFR-PERF-002 and spec 000 §7, use `pipeline.evaluationInterval: 100ms`,
+`publish.interval: 1s`, and `publish.metricsBucketSeconds: 1`; the executable local
+`config/agent.yaml` selects these values. The backend must allow
+`ingest.maxBatchesPerMinutePerAgent: 120` (`config/backend.yaml`). It still stores on
+the ten-second canonical grid, summing the one-second native contributions.
+Wire bucket widths MUST be positive whole multiples of the agent's one-second
+native grain. The five-second target is not promised for arbitrary slower settings.
+
+Snapshot v2 revision metadata is bounded to 4,096 contributions per canonical
+backend bucket (FR-ING-006 / NFR-REL-009), independently of its 2,000-series cap.
+Exceeding this cap increments `dropped_series_over_cap_total`; revision metadata
+adds an estimated 128 bytes per contribution to memory-pressure accounting.
+
 The full target schema below differs from today's executable agent config, which uses a
 `logs` mapping with `paths`, `stateDir`, and `appLogPatterns`. UBS-117 adds optional
 `logs.logStallThreshold` to that mapping (default `5m`, positive finite duration),

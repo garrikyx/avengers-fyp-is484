@@ -24,7 +24,12 @@ from telemetry_agent.health.config import HealthThresholds, HeartbeatConfig
 from telemetry_agent.health.window import SlidingWindowCounter
 from telemetry_agent.logs.log_monitor import LogMonitor
 from telemetry_agent.parser.protocol import ParseResult
-from telemetry_shared.models.health import AgentHeartbeat, AgentStatus, FileReadHealth
+from telemetry_shared.models.health import (
+    AgentHeartbeat,
+    AgentStatus,
+    FileReadHealth,
+    ResourceUsage,
+)
 
 # spec 011 §1.1: "Log read lag | log_read_lag_ms | < 1s | > 5s sustained"
 DEFAULT_DEGRADED_THRESHOLD_MS = HealthThresholds().read_lag_degraded_ms
@@ -35,6 +40,9 @@ QueueDepthProvider = Callable[[], int]
 QueueTrend = Literal["rising", "draining", "flat"]
 # UBS-104: whatever owns the publish buffer answers "how many bytes right now".
 BufferBytesProvider = Callable[[], int]
+# UBS-129: whatever owns the Host Monitor answers "the agent's own RSS/CPU";
+# None until a sample has been read (never a fabricated zero).
+ResourceUsageProvider = Callable[[], ResourceUsage | None]
 
 
 def _utc_now() -> datetime:
@@ -62,6 +70,7 @@ class HealthSignals:
     publish_buffer_bytes: int | None = None
     callback_failures: int | None = None
     dropped_events: int | None = None
+    resource_usage: ResourceUsage | None = None
 
 
 def is_parse_error(result: ParseResult) -> bool:
@@ -119,6 +128,7 @@ class HealthReporter:
         self._buffer_bytes_provider = buffer_bytes_provider
         self._dropped_events = SlidingWindowCounter(window, clock=self._clock)
         self._dropped_signal_seen = False
+        self._resource_usage_provider: ResourceUsageProvider | None = None
 
     @property
     def degraded_threshold_ms(self) -> float:
@@ -213,6 +223,16 @@ class HealthReporter:
         """
         self._buffer_bytes_provider = provider
 
+    # --- UBS-129: the agent's own RSS / CPU (FR-HLT-016) --------------------------
+
+    def set_resource_usage_provider(
+        self, provider: ResourceUsageProvider | None
+    ) -> None:
+        """Register (or remove) the Host Monitor's own-usage callback; same
+        injected-callable shape as the queue/buffer providers, so the reporter
+        never owns a sampler."""
+        self._resource_usage_provider = provider
+
     def record_dropped_events(self, n: int = 1, now: datetime | None = None) -> None:
         """Count `n` buffer-eviction drops (`droppedEventsLast5Min`,
         `FR-PUB-004`) at `now`. The Publisher's buffer calls this once per
@@ -267,6 +287,11 @@ class HealthReporter:
             publish_queue_trend=queue_trend,
             publish_buffer_bytes=buffer_bytes,
             dropped_events=dropped,
+            resource_usage=(
+                self._resource_usage_provider()
+                if self._resource_usage_provider
+                else None
+            ),
         )
 
     def _parse_signals(
@@ -319,6 +344,7 @@ class HealthReporter:
             publish_queue_depth=signals.publish_queue_depth,
             publish_buffer_bytes=signals.publish_buffer_bytes,
             dropped_events_last5_min=signals.dropped_events,
+            resource_usage=signals.resource_usage,
         )
 
     # --- rules ---------------------------------------------------------------
