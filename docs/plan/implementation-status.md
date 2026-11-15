@@ -1,6 +1,6 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-11-08
+Status: Live document · Last updated: 2026-11-15
 
 Specs state the target; this document states what exists. Where the two differ, the
 difference is recorded here rather than by quietly editing the spec.
@@ -16,7 +16,7 @@ with the script, trust the script and fix the table.
 
 | Milestone | Scope                                          | Status                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M0        | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/`, CI (`.github/workflows/ci.yml`, UBS-138: ruff, mypy, pytest on Linux and Windows) and the requirement-coverage report (`scripts/requirement_coverage.py`, UBS-146; report-only) exist. Not yet: data-leak sentinel (`FR-TST-005`, UBS-137), branch protection, `main` green on both runners (UBS-139)                                                                 |
+| M0        | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/`, CI (`.github/workflows/ci.yml`, UBS-138: ruff, mypy, pytest on Linux and Windows) and the requirement-coverage report (`scripts/requirement_coverage.py`, UBS-146; report-only) exist, as does the blocking data-leak sentinel (`FR-TST-005`, UBS-137). Not yet: branch protection, `main` green on both runners (UBS-139)                                                                 |
 | M1        | Log monitor and configuration                  | **Implemented, thinly traced** — `apps/agent/src/telemetry_agent/logs/` (LogMonitor, MultiLogMonitor, offset tracker, status); Windows rotation lock fixed (UBS-124). Only 1 of 14 `FR-LOG-*` IDs is cited by a test and `FR-TST-004` (rotation/truncation harness on Linux and Windows) has none                                                                                                                                     |
 | M1.5      | Pipeline bridge (monitor → parser)             | **Done** — UBS-48 library and UBS-49 integration (supervisor, MA-01 ingest, heartbeat) landed via UBS-112/114; all 7 `FR-PIP-*` IDs cited by tests                                                                                                                                                                                                                                                                                    |
 | **M2**    | **FIX parser (UBS-40–47)**                     | **Done** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling; wired through the pipeline; Magic applog parser and the `magic-binary` detector (`FR-PRS-040`–`046`, frame layout still `TBD(vendor)`). 28 of 30 `FR-PRS-*` IDs cited by tests (missing `001`, `002`)                                                                                                          |
@@ -54,8 +54,11 @@ the same report on every run and does not fail on gaps yet.
 | `NFR-REL`, `NFR-CFG`, `NFR-OBS`, `NFR-OPS`, `NFR-SCA` | 2/28           | nearly all                                                      |
 
 Some of these are tested without citing the ID (the report cannot see that); the fix is
-to add the ID to the test name or a comment. The known real gaps are tracked as UBS-137
-(`FR-TST-005` leak sentinel), UBS-140 (acceptance run) and UBS-144 (load and footprint).
+to add the ID to the test name or a comment. UBS-137 (`FR-TST-005` leak sentinel) and
+UBS-140 (acceptance run) have landed; the remaining known real gap is UBS-144 (load and
+footprint). The report does not list `FR-TST-005` at all: spec 012 writes its
+definition as `` `FR-TST-005` (blocking gate): `` and the script only matches
+`` `ID`: `` or `` `ID` | ``.
 
 ## M2 requirement coverage (UBS-40–42)
 
@@ -82,7 +85,7 @@ to add the ID to the test name or a comment. The known real gaps are tracked as 
 
 | Area                        | Requirements | Notes                                                       |
 | --------------------------- | ------------ | ----------------------------------------------------------- |
-| Leak sentinel               | `FR-TST-005` | Lands with full corpus gate                                 |
+| Leak sentinel               | `FR-TST-005` | Done (UBS-137): `tests/integration/test_UBS_137_data_leak_sentinel.py` |
 | Parser → MA-01 event bridge | spec 004     | ParsedMessageEvent construction from FixTelemetry not wired |
 
 ## Pipeline bridge (M1.5)
