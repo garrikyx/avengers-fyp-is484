@@ -24,7 +24,11 @@ from telemetry_agent.callbacks.config import parse_callbacks_config
 from telemetry_agent.callbacks.dispatcher import CallbackDispatcher
 from telemetry_agent.callbacks.sink import CallbackResult
 from telemetry_agent.metrics.aggregator import AggregatorConfig, MetricsAggregator
-from telemetry_agent.metrics.counters import COUNTER_DIMENSIONS
+from telemetry_agent.metrics.counters import (
+    COUNTER_DIMENSIONS,
+    RESERVED_SERIES,
+    RESERVED_SERIES_METRICS,
+)
 from telemetry_agent.parser.fix.session_tracker import SessionHeartbeatTracker
 from telemetry_agent.pipeline.alert_router import AlertRouter
 from telemetry_agent.pipeline.evaluator import RuleEvaluator
@@ -90,7 +94,12 @@ class _Stack:
     ) -> None:
         self.clock = _Clock()
         self.aggregator = MetricsAggregator(
-            config=AggregatorConfig(metric_dimensions=dict(COUNTER_DIMENSIONS)),
+            # Same reserve as MetricsIngestor.build_default.
+            config=AggregatorConfig(
+                metric_dimensions=dict(COUNTER_DIMENSIONS),
+                reserved_metrics=RESERVED_SERIES_METRICS,
+                reserved_series=RESERVED_SERIES,
+            ),
             clock=self.clock.epoch,
         )
         self.engine = RuleEngine(
