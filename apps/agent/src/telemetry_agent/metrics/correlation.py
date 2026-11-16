@@ -10,10 +10,12 @@ structure from the ring buffer, with its own TTL/cap eviction. Agent-internal
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from itertools import takewhile
 from typing import Literal
 
 from telemetry_agent.metrics.aggregator import MetricsAggregator
@@ -116,7 +118,9 @@ class LatencyCorrelator:
         self._timestamp_source = timestamp_source
         self._max_plausible_ms = max_plausible_ms
         self._clock = clock
-        self._open: dict[tuple[str, str], OrderContext] = {}
+        # Arrival order (~first_seen_at order): both evictions pop from the front
+        # in O(1). A plain dict would rescan its deleted slots on every front pop.
+        self._open: OrderedDict[tuple[str, str], OrderContext] = OrderedDict()
         self.stats = CorrelatorStats()
 
     @property
@@ -137,9 +141,10 @@ class LatencyCorrelator:
     def tick(self) -> None:
         """Timer-callable expiry sweep, independent of ingest — mirrors
         MetricsAggregator.tick so both can be driven by the same runtime
-        scheduler.
+        scheduler. Scans every entry, so an order that arrived out of time
+        order (several FIX logs, transact_time) still expires within one tick.
         """
-        self._evict_expired()
+        self._evict_expired(full=True)
 
     def pending_order_count(self) -> int:
         """Tracked orders whose first relevant response hasn't arrived yet:
@@ -191,8 +196,9 @@ class LatencyCorrelator:
     def _track_new_order(self, event: ParsedMessageEvent) -> None:
         if event.cl_ord_id_hash is None:
             return
-        self._evict_if_at_capacity()
         key = (event.session_id, event.cl_ord_id_hash)
+        self._open.pop(key, None)  # a re-sent order moves to the back
+        self._evict_if_at_capacity()
         self._open[key] = OrderContext(
             first_seen_at=self._timestamp_of(event),
             orig_cl_ord_id_hash=event.orig_cl_ord_id_hash,
@@ -255,19 +261,25 @@ class LatencyCorrelator:
     def _evict_if_at_capacity(self) -> None:
         if len(self._open) < self._max_entries:
             return
-        oldest_key = min(self._open, key=lambda key: self._open[key].first_seen_at)
-        del self._open[oldest_key]
+        self._open.popitem(last=False)
         self.stats.cap_evictions += 1
         self.stats.unmatched_orders += 1
 
-    def _evict_expired(self) -> None:
+    def _evict_expired(self, *, full: bool = False) -> None:
+        """Per ingest, check only the front (arrival order) and stop at the first
+        live entry: a full scan on every line capped the agent at ~1k lines/s.
+        `tick()` passes full=True to catch entries that arrived out of order."""
         cutoff = self._clock() - self._ttl_seconds
-        expired = [
-            key
-            for key, ctx in self._open.items()
-            if ctx.first_seen_at.timestamp() < cutoff
-        ]
-        for key in expired:
+
+        def expired(key: tuple[str, str]) -> bool:
+            return self._open[key].first_seen_at.timestamp() < cutoff
+
+        keys = (
+            [key for key in self._open if expired(key)]
+            if full
+            else list(takewhile(expired, self._open))
+        )
+        for key in keys:
             del self._open[key]
             self.stats.ttl_evictions += 1
             self.stats.unmatched_orders += 1

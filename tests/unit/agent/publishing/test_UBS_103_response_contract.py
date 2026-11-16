@@ -243,3 +243,29 @@ def test_heartbeat_only_batch_is_sent_even_with_an_empty_buffer() -> None:
 
     assert action is PublishAction.COMMIT
     assert sink.calls == 1
+
+
+def test_heartbeat_build_error_does_not_stop_publishing() -> None:
+    # NFR-REL-005: a heartbeat that fails validation (a negative read lag did)
+    # used to escape publisher.run() and stop the whole agent.
+    import asyncio
+
+    def broken_heartbeat() -> None:
+        raise ValueError("read_lag_ms: Input should be greater than or equal to 0")
+
+    sink = _FakeSink([PublishResult(status_code=202, latency_ms=1.0)])
+    config = parse_publish_config({"endpoint": _ENDPOINT})
+    publisher = BackendPublisher(
+        sink,
+        config,
+        agent_id=AGENT_ID,
+        application=APPLICATION,
+        heartbeat_provider=broken_heartbeat,
+    )
+    publisher.enqueue_snapshot(make_snapshot())
+
+    action = asyncio.run(publisher.publish_once(now=_NOW))
+
+    assert action is PublishAction.COMMIT
+    assert sink.calls == 1
+    assert publisher.counters.snapshot()["heartbeat_errors"] == 1

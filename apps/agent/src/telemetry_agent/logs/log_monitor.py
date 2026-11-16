@@ -436,7 +436,9 @@ class LogMonitor:
         last_read_at = self._harvester.last_read_at if self._harvester else None
         read_lag_ms: float | None = None
         if last_read_at is not None:
-            read_lag_ms = (now - last_read_at).total_seconds() * 1000
+            # The pump thread can stamp a read just after `now` was taken; a
+            # negative lag fails heartbeat validation and stopped the agent.
+            read_lag_ms = max(0.0, (now - last_read_at).total_seconds() * 1000)
 
         return FileReadStatus(
             path=str(self.file_path),

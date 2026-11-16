@@ -1,3 +1,4 @@
+import functools
 import json
 import logging
 import os
@@ -6,6 +7,15 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=64)
+def _resolved(path: str) -> str:
+    """`commit_offset` runs once per line; resolve() costs ~9 lstat calls.
+    shortcut: a symlink retargeted while the agent runs keeps its old `source`
+    label (a label only: offsets are keyed by device/inode); clear the cache on
+    rotation if that label ever drives behaviour."""
+    return str(Path(path).resolve())
 
 
 class OffsetTracker:
@@ -95,7 +105,7 @@ class OffsetTracker:
         if offset <= current:
             return
         self._states[key] = {
-            "source": str(Path(source_path).resolve()),
+            "source": _resolved(source_path),
             "offset": offset,
             "timestamp": datetime.now(UTC).isoformat(),
             "fileStateOS": {

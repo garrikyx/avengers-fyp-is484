@@ -380,7 +380,7 @@ def build_agent(
 def _pump(adapter: MonitorPipelineAdapter, halt: threading.Event) -> None:
     """The pipeline thread: tail, parse and ingest until told to stop."""
     while not halt.is_set():
-        adapter.poll_once(poll_interval=0.05)
+        adapter.poll_once(poll_interval=0.05, halt=halt)
 
 
 async def run_agent(agent: Agent, stop: asyncio.Event) -> None:
@@ -445,8 +445,9 @@ async def _shutdown(
                 await aclose()
     agent.monitor.close()
     logger.info(
-        "stopped: ingest %s, evaluator %s, publisher %s, events %s",
+        "stopped: ingest %s, pipeline %s, evaluator %s, publisher %s, events %s",
         agent.ingestor.stats(),
+        agent.bridge.stats().as_metrics(),
         agent.evaluator.counters.snapshot(),
         agent.publisher.counters.snapshot(),
         agent.ingestor.event_emitter.counters.snapshot()
