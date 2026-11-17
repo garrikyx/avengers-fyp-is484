@@ -75,6 +75,18 @@ APP_LOG_LEVEL_DIMS: tuple[str, ...] = (*AGENT_DIMS, "level")
 APP_LOG_COMPONENT_DIMS: tuple[str, ...] = (*AGENT_DIMS, "level", "component")
 APP_LOG_SIGNATURE_DIMS: tuple[str, ...] = (*AGENT_DIMS, "error_signature")
 
+# The metrics `level:` and signature rules read (FR-RUL-023) get a reserved
+# slice of maxSeriesPerBucket (AggregatorConfig.reserved_series), so an [F]
+# line still gets its own series when FIX traffic has filled the bucket.
+# One instance's worst case is 163: 5 levels + 2 error levels x 51 components
+# + 56 signatures (5 shipped, 50 dynamic, __other__).
+# shortcut: sized for one instance and the shipped signature list, raise it
+# if an agent monitors several instances or adds signatures.
+RESERVED_SERIES_METRICS: frozenset[str] = frozenset(
+    {"app_log_lines", "app_log_errors", "app_error_signatures"}
+)
+RESERVED_SERIES = 200
+
 # FR-MET-030's "one shared table", spec 004 §4.1 names.
 COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "messages_total": BASE_DIMS,

@@ -63,6 +63,25 @@ def test_errors_are_still_counted_in_app_log_errors() -> None:
     assert snap.groups[0].counters["app_log_errors"] == Decimal(5)
 
 
+def test_failure_line_still_fires_when_the_bucket_is_already_full() -> None:
+    # FR-MET-030 cap + FR-RUL-023: a bucket flooded with FIX series must not
+    # fold the first [F] line into __other__.
+    stack = _Stack((_rule("AppLogFailure"),))
+    config = stack.aggregator.config
+    for n in range(config.max_series_per_bucket):
+        stack.aggregator.ingest_agent_counters(
+            dims={"instance_id": _INSTANCE, "session_id": f"S{n}"},
+            counters={"seq_gaps": Decimal(1)},
+            at=stack.clock.now,
+        )
+    assert stack.aggregator.cardinality_folded == config.reserved_series
+
+    _seed_app_errors(stack, "F", 1)
+
+    assert stack.aggregator.cardinality_folded == config.reserved_series
+    assert _summary(stack.fire()) == [("AppLogFailure", "firing", "critical")]
+
+
 def test_level_rule_is_independent_of_signature_rules() -> None:
     from test_UBS_122_signature_rules import _seed_signature
 
