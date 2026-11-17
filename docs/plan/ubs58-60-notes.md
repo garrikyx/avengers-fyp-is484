@@ -143,8 +143,9 @@ moment. `HttpHeartbeatSink` defaults to `wire="ingestion"`.
 2. **Unmeasured signals arrive as `0`**, indistinguishable from a measured zero.
    An agent with no parser wired reports `parseErrorCountLast5Min: 0` — "perfectly
    clean" — which is the exact misreading FR-HLT-004 forbids.
-3. **`resourceUsage` is fabricated as zeros** because the agent does not measure
-   RSS/CPU yet (no `psutil` decision). A dashboard would plot 0 MB RSS.
+3. **`resourceUsage` was fabricated as zeros** because the agent did not measure
+   RSS/CPU. *Resolved by UBS-129: the Host Monitor measures it with `psutil`, and
+   the heartbeat omits `resourceUsage` when it is unmeasured.*
 
 **How to reverse it**, once the team settles the contract (preferred: make the
 optional signal fields `| None = None` and add `statusReasons` in
@@ -167,7 +168,7 @@ signal to reverse.
 | No pipeline bridge (M1.5) | Nothing in production calls the reporter from a parser loop; the demo polls files itself | M1.5 |
 | No parse-error producer wired in production | `parseErrorCountLast5Min` is `null` outside the demo/tests; the reporter's intake exists (UBS-59) but nothing in a real agent process calls it | M1.5 pipeline bridge |
 | Callback Dispatcher branch (UBS-32–34) unmerged | `callbackFailuresLast5Min` is `null` | UBS-32–34 + a follow-up to wire it |
-| No resource sampling | `resourceUsage` is `null`; adding `psutil` is a team decision | M7 |
+| ~~No resource sampling~~ | Resolved (UBS-129): `psutil` Host Monitor fills `resourceUsage`; it is omitted when unmeasured | — |
 | `activeAlertCount` | `null`; the Rule Engine exists but is not wired into a running agent | M1.5 / M5 |
 
 ## Placeholder receiver — `scripts/heartbeat_receiver_stub.py`

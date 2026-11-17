@@ -1,10 +1,18 @@
 """UBS-114: `config/agent.yaml` is read once and each section reaches the
 loader its component owns."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from telemetry_agent.config import AgentConfigError, load_agent_config
+from telemetry_agent.config import (
+    AgentConfigError,
+    host_rule_filter,
+    load_agent_config,
+)
+from telemetry_agent.health.host_monitor import HostConfig, default_disk_paths
+from telemetry_agent.rules.config_loader import SighupRuleReloader, load_rules
+from telemetry_agent.rules.engine import RuleEngine
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -191,3 +199,129 @@ def test_invalid_binary_parsing_settings_are_rejected(
     text = _MINIMAL + f"parsing:\n  {section}\n"
     with pytest.raises(AgentConfigError, match="parsing"):
         load_agent_config(_write(tmp_path, text))
+
+
+# --- UBS-129: host: (spec 010, FR-HLT-013) ---------------------------------
+
+
+def test_host_defaults_follow_spec_010(tmp_path: Path) -> None:
+    host = load_agent_config(_write(tmp_path, _MINIMAL)).host
+
+    assert host.enabled is True
+    assert host.sample_interval_seconds == 30.0
+    assert host.disk_paths == default_disk_paths()  # spec 010's, or a Windows drive
+    assert host.memory is True
+    assert host.process_name == ""
+
+
+def test_host_block_is_read(tmp_path: Path) -> None:
+    host = load_agent_config(
+        _write(
+            tmp_path,
+            _MINIMAL + "host:\n  enabled: false\n  sampleInterval: 5s\n"
+            "  diskPaths: ['/a', '/b']\n  memory: false\n"
+            "  process:\n    name: magic.exe\n",
+        )
+    ).host
+
+    assert host.enabled is False
+    assert host.sample_interval_seconds == 5.0
+    assert host.disk_paths == ("/a", "/b")
+    assert host.memory is False
+    assert host.process_name == "magic.exe"
+
+
+def test_the_shipped_config_uses_a_disk_path_that_exists_on_dev_machines() -> None:
+    host = load_agent_config(REPO_ROOT / "config" / "agent.yaml").host
+
+    assert host.enabled is True
+    assert host.sample_interval_seconds == 30.0
+    assert host.process_name == ""  # UBS-specific, left empty (spec 010)
+    assert host.disk_paths
+    assert all(Path(p).exists() for p in host.disk_paths)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "host:\n  sampleInterval: 0s\n",
+        "host:\n  sampleInterval: nonsense\n",
+        "host:\n  diskPaths: ['/a','/b','/c','/d','/e','/f','/g','/h','/i']\n",
+        "host:\n  diskPaths: ['']\n",
+        "host:\n  unknownKey: 1\n",
+    ],
+)
+def test_invalid_host_settings_are_rejected(tmp_path: Path, block: str) -> None:
+    with pytest.raises(AgentConfigError, match="host"):
+        load_agent_config(_write(tmp_path, _MINIMAL + block))
+
+
+# --- spec 005 §1.2: host rules load only when the host block enables the gauge ---
+
+_HOST_RULES = {"HostDiskFull", "HostMemoryHigh", "ApplicationDown"}
+
+
+def _rule_names(tmp_path: Path, host_block: str) -> set[str]:
+    cfg = load_agent_config(_write(tmp_path, _MINIMAL + host_block))
+    return {r.name for r in cfg.rules}
+
+
+def test_host_rules_load_only_for_the_gauges_the_host_block_enables(
+    tmp_path: Path,
+) -> None:
+    # Defaults: disk and memory on, process.name empty -> no ApplicationDown.
+    names = _rule_names(tmp_path, "")
+    assert {"HostDiskFull", "HostMemoryHigh"} <= names
+    assert "ApplicationDown" not in names
+
+    with_process = _rule_names(tmp_path, "host:\n  process:\n    name: magic.exe\n")
+    assert _HOST_RULES <= with_process
+
+
+def test_host_disabled_loads_none_of_the_host_rules_and_keeps_the_rest(
+    tmp_path: Path,
+) -> None:
+    enabled = _rule_names(tmp_path, "host:\n  process:\n    name: magic.exe\n")
+    disabled = _rule_names(
+        tmp_path, "host:\n  enabled: false\n  process:\n    name: magic.exe\n"
+    )
+    assert disabled == enabled - _HOST_RULES
+    assert len(disabled) == 17  # every non-host default rule is untouched
+
+
+def test_each_host_rule_follows_its_own_gauge(tmp_path: Path) -> None:
+    no_memory = _rule_names(tmp_path, "host:\n  memory: false\n")
+    assert "HostMemoryHigh" not in no_memory
+    assert "HostDiskFull" in no_memory
+
+    no_disk = _rule_names(tmp_path, "host:\n  diskPaths: []\n")
+    assert "HostDiskFull" not in no_disk
+    assert "HostMemoryHigh" in no_disk
+
+
+def test_a_reload_cannot_bring_back_a_disabled_host_rule(tmp_path: Path) -> None:
+    rules_path = REPO_ROOT / "config" / "rules.yaml"
+    keep = host_rule_filter(HostConfig(enabled=True, process_name=""))
+    engine = RuleEngine(
+        load_rules(rules_path, keep=keep),
+        instance_id="i",
+        application="Magic",
+        agent_id="a",
+        started_at=datetime.now(UTC),
+    )
+    assert "ApplicationDown" not in {r.name for r in engine.rules}
+
+    SighupRuleReloader(engine, rules_path, keep=keep).reload()
+
+    names = {r.name for r in engine.rules}
+    assert "ApplicationDown" not in names
+    assert {"HostDiskFull", "HostMemoryHigh"} <= names
+
+
+def test_the_shipped_config_leaves_application_down_unloaded_until_a_name_is_set() -> (
+    None
+):
+    cfg = load_agent_config(REPO_ROOT / "config" / "agent.yaml")
+    names = {r.name for r in cfg.rules}
+    assert {"HostDiskFull", "HostMemoryHigh"} <= names
+    assert "ApplicationDown" not in names  # spec 010: inactive until process.name

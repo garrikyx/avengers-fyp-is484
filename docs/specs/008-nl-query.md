@@ -23,18 +23,34 @@ Consequences:
 `FR-NLQ-003`: Day-1 supports this closed set. An unmatched question returns a
 `clarification` response listing supported intents rather than improvising.
 
-| Intent               | Answers                             | Structured shape                                             |
-| -------------------- | ----------------------------------- | ------------------------------------------------------------ |
-| `rejection_summary`  | "Why are orders rejecting?"         | reject counts + rate grouped by `rejectReason`, `instanceId` |
-| `order_flow_summary` | "How is Magic doing today?"         | orders, acks, executions, rejects, fill rate over the range  |
-| `latency_summary`    | "Is Magic slow right now?"          | `ack_latency_ms` percentiles + trend vs previous period      |
-| `alert_status`       | "Any alerts open for Magic?"        | active alerts with severity and duration                     |
-| `session_status`     | "Are the FIX sessions up?"          | logons/logouts, heartbeat timeouts, seq gaps per session     |
-| `symbol_drilldown`   | "What's rejecting on ABC?"          | metrics filtered to a symbol, grouped by `rejectReason`      |
-| `agent_health`       | "Is telemetry actually working?"    | heartbeat age, read lag, parse error rate, dropped counts    |
-| `parse_health`       | "Are we failing to parse anything?" | parse errors grouped by `reason`                             |
-| `compare_period`     | "Are rejects worse than yesterday?" | same metrics over two ranges with deltas                     |
-| `trend`              | "Show rejects over the last hour"   | time series at an appropriate step                           |
+| Intent                | Answers                                | Structured shape                                                                                        |
+| --------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `rejection_summary`   | "Why are orders rejecting?"            | reject counts + rate grouped by `rejectReason`, `instanceId`                                            |
+| `order_flow_summary`  | "How is Magic doing today?"            | orders, acks, executions, rejects, fill rate over the range                                             |
+| `latency_summary`     | "Is Magic slow right now?"             | `ack_latency_ms` percentiles + trend vs previous period                                                 |
+| `alert_status`        | "Any alerts open for Magic?"           | active alerts with severity and duration                                                                |
+| `session_status`      | "Are the FIX sessions up?"             | logons/logouts, heartbeat timeouts, seq gaps per session                                                |
+| `symbol_drilldown`    | "What's rejecting on ABC?"             | metrics filtered to a symbol, grouped by `rejectReason`                                                 |
+| `agent_health`        | "Is telemetry actually working?"       | heartbeat age, read lag, parse error rate, dropped counts                                               |
+| `parse_health`        | "Are we failing to parse anything?"    | parse errors grouped by `reason`                                                                        |
+| `compare_period`      | "Are rejects worse than yesterday?"    | same metrics over two ranges with deltas                                                                |
+| `trend`               | "Show rejects over the last hour"      | time series at an appropriate step                                                                      |
+| `reject_reason_trend` | "Which reject reasons are increasing?" | per-`rejectReason` counts in the latest window against the preceding equal-length window (`FR-QRY-040`) |
+
+`FR-NLQ-031`: `reject_reason_trend` (UBS-143) answers from
+`POST /telemetry/query/reject-reason-trends` (spec 007 §3.1), not from a time series.
+Its optional slots are `timeRange`, `application` and `instanceId`. The `timeRange` slot
+sets the length of each compared window (default `last 30m`, so the latest 30 minutes
+against the 30 before, stated per `FR-NLQ-014`); an absolute range contributes only its
+length. The length is fitted to whole buckets and to at most half the retention window
+(the preceding window must fit too), with a caveat when adjusted, and the comparison
+always ends at the latest complete bucket. `threshold` and `minOccurrences` take the API
+defaults and are not slots. The answer lists the `increasing` reasons (emerging first,
+then largest rise) with their counts and relative change, taken only from the trend
+payload (`FR-NLQ-009`). If the store does not cover the preceding window it says there
+is not enough history instead of reporting "no increase". The response carries the
+payload as `rejectReasonTrends`; `data` is the metrics query over the latest window,
+grouped by `rejectReason`.
 
 `FR-NLQ-004`: Each intent MUST have a fixed set of required and optional slots
 (`timeRange`, `application`, `instanceId`, `session`, `symbol`, `groupBy`, `step`) and a
@@ -65,16 +81,16 @@ numeric tokens are substituted from the query result afterwards and verified to 
 unchanged.
 
 `FR-NLQ-030`: Questions that aren't about telemetry MUST still get a reply rather than a
-dead end. Greetings, thanks and "help" are matched deterministically and answered from
-a template without calling the LLM. For other off-topic questions the LLM MAY return
-`intent: "none"` with a one- or two-sentence `reply`. That reply MUST NOT state telemetry
-facts. The backend MUST reject it, and use a templated out-of-scope reply instead, if it
-contains any digit, URL or markup character, exceeds 300 characters, or never mentions
-the application or telemetry (a reply such as "I can help with the weather" promises
-something the bot can't do). All of these
-use the `clarification` envelope with a `reason` and `suggestedQuestions` (spec 007 §6),
-so they carry no `interpretedQuery` and never count as an answer. They are escaped per
-surface like any other output (`FR-NLQ-022`).
+dead end. Greetings, thanks and "help" are matched deterministically and answered from a
+template without calling the LLM. For other off-topic questions the LLM MAY return
+`intent: "none"` with a one- or two-sentence `reply`. That reply MUST NOT state
+telemetry facts. The backend MUST reject it, and use a templated out-of-scope reply
+instead, if it contains any digit, URL or markup character, exceeds 300 characters, or
+never mentions the application or telemetry (a reply such as "I can help with the
+weather" promises something the bot can't do). All of these use the `clarification`
+envelope with a `reason` and `suggestedQuestions` (spec 007 §6), so they carry no
+`interpretedQuery` and never count as an answer. They are escaped per surface like any
+other output (`FR-NLQ-022`).
 
 ## 4. Time expression handling
 
@@ -186,11 +202,11 @@ export.
 laptop often can't answer in 2s, so the OSS providers (`ollama`, `vllm`,
 `openai-compatible`) default to a 6s LLM timeout. Azure OpenAI keeps 2s. The fallback is
 unchanged in spirit and stronger in practice. On a timeout or an unreachable model, the
-backend answers from the best rule match below the confidence threshold, with the
-caveat "Interpreted by keyword matching". If there's no rule match, it returns a reply
-with `reason: "llm_unavailable"` and suggested questions. The Teams and MCP clients
-time out at 12s, above the backend budget, so users always get the backend's reply
-rather than a client error. Production should restore 2s with a hosted model.
+backend answers from the best rule match below the confidence threshold, with the caveat
+"Interpreted by keyword matching". If there's no rule match, it returns a reply with
+`reason: "llm_unavailable"` and suggested questions. The Teams and MCP clients time out
+at 12s, above the backend budget, so users always get the backend's reply rather than a
+client error. Production should restore 2s with a hosted model.
 
 ## 7. Prompt-injection and abuse considerations
 
@@ -204,8 +220,8 @@ deliberate: it prevents log content from influencing the model.
 
 ## 8. Callback delivery in NL answers
 
-| ID | Requirement |
-| --- | --- |
+| ID           | Requirement                                                                                                                                                                                                                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `FR-NLQ-029` | When an NL answer cites an alert (`alert_status`, `rejection_summary`, or related intents), it MUST include that alert's callback `delivery` status from the Alert Store (spec 007 §4.1). Structured response fields (`alertSummaries`) MUST carry the same delivery block for Teams Adaptive Cards. |
 
 ## 9. Evaluation

@@ -117,6 +117,9 @@ COUNTER_DIMENSIONS: dict[str, tuple[str, ...]] = {
     # gauge instead, for the backoff reason in spec 005 §1.2.
     "publish_failures": AGENT_DIMS,
     "publish_rejected": AGENT_DIMS,
+    # Host Monitor health (UBS-129), fed the same way from the monitor's own
+    # registry: failed OS reads (permission, platform) that omitted a gauge.
+    "host_sample_errors": AGENT_DIMS,
     # Parser health, fed by parser.metrics_event.derive_parser_counters.
     # These two are `parse_error_rate`'s numerator and denominator (spec 004
     # §4.5) — the indicator ParseErrorRate reads.

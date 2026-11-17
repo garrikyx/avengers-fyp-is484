@@ -17,7 +17,7 @@ query, only the metrics whose own declared dims equal that tuple exactly.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 
 from telemetry_shared.metrics.dimensions import (
@@ -141,6 +141,7 @@ class SnapshotEmitter:
         instance_id: str,
         correlator: LatencyCorrelator | None = None,
         counters: CounterRegistry | None = None,
+        host_gauges: Callable[[], Mapping[str, float]] | None = None,
     ) -> None:
         if bucket_seconds <= 0:
             raise ValueError("bucket_seconds must be > 0")
@@ -165,6 +166,9 @@ class SnapshotEmitter:
         self._correlator = correlator
         self._last_emitted: int | None = None
         self._counters = CounterRegistry() if counters is None else counters
+        # UBS-129 (FR-MET-034): Host Monitor gauges at bucket close; a gauge it
+        # could not read is absent from the mapping, so never sent as 0.
+        self._host_gauges = host_gauges
 
     @property
     def counters(self) -> CounterRegistry:
@@ -177,6 +181,8 @@ class SnapshotEmitter:
         }
         if self._correlator is not None:
             gauges["pending_orders"] = float(self._correlator.pending_order_count())
+        if self._host_gauges is not None:
+            gauges.update(self._host_gauges())
         return gauges
 
     def emit(self, now: datetime) -> int:

@@ -1,23 +1,61 @@
 # Implementation Status
 
-Status: Live document · Last updated: 2026-09-29
+Status: Live document · Last updated: 2026-11-08
 
 Specs state the target; this document states what exists. Where the two differ, the
 difference is recorded here rather than by quietly editing the spec.
 
+Which requirement IDs have a referencing test is generated, not hand-written: run
+`make requirement-coverage`
+([`scripts/requirement_coverage.py`](../../scripts/requirement_coverage.py),
+`FR-TST-001`, UBS-146) and see [Requirement coverage](#requirement-coverage-generated)
+below. Per-epic tables further down record stories and their tests; where they disagree
+with the script, trust the script and fix the table.
+
 ## Milestones
 
-| Milestone | Scope                                          | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| --------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M0        | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/` exist; CI and requirement-coverage reporter do not                                                                                                                                                                                                                                                                                                                                     |
-| M1        | Log monitor and configuration                  | **Not started** — `apps/agent/src/telemetry_agent/logs/` does not exist yet                                                                                                                                                                                                                                                                                                                                                                           |
-| M1.5      | Pipeline bridge (monitor → parser)             | **Partial** — UBS-48 library done; UBS-49 integration (supervisor, MA-01, heartbeat) not started                                                                                                                                                                                                                                                                                                                                                      |
-| **M2**    | **FIX parser (UBS-40–47)**                     | **Partial** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling implemented; CLI demo with FIX + Magic corpora; not wired through pipeline                                                                                                                                                                                                                                                   |
-| **M3**    | **Metrics aggregation**                        | **Partial** — aggregator, counters, correlation, and calculated indicators/snapshot output (MA-01–04) implemented and tested; demo sink in `metrics/demo_sink.py` for parser CLI; blocked on real events by M1 (Log Monitor) and M1.5 (pipeline bridge)                                                                                                                                                                                               |
-| **M4**    | **Backend ingestion, store, query**            | **Partial** — Stream Processor and Metric Store (window alignment, cross-agent merge semantics), the FastAPI ingestion contract and bounded asynchronous hand-off, ingest-side allowlists/series-cardinality enforcement, alert query API, and metrics query API (`POST /telemetry/query/metrics`) are implemented and tested. Authentication and body-size limits remain separate stories; backend/agent publishing integration remains in progress. |
-| **M5**    | **Rules, alerts, callbacks**                   | **Partial** — Rule Engine and alert lifecycle (RE-01–04) implemented and tested; callback dispatch (HTTP/HMAC) not started                                                                                                                                                                                                                                                                                                                            |
-| M6        | Natural language layer                         | Not started                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| M7        | Operability hardening                          | Not started                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Milestone | Scope                                          | Status                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0        | Repository foundation, CI gates, shared models | Partial — uv workspace, Makefile, `packages/telemetry_shared/`, CI (`.github/workflows/ci.yml`, UBS-138: ruff, mypy, pytest on Linux and Windows) and the requirement-coverage report (`scripts/requirement_coverage.py`, UBS-146; report-only) exist. Not yet: data-leak sentinel (`FR-TST-005`, UBS-137), branch protection, `main` green on both runners (UBS-139)                                                                 |
+| M1        | Log monitor and configuration                  | **Implemented, thinly traced** — `apps/agent/src/telemetry_agent/logs/` (LogMonitor, MultiLogMonitor, offset tracker, status); Windows rotation lock fixed (UBS-124). Only 1 of 14 `FR-LOG-*` IDs is cited by a test and `FR-TST-004` (rotation/truncation harness on Linux and Windows) has none                                                                                                                                     |
+| M1.5      | Pipeline bridge (monitor → parser)             | **Done** — UBS-48 library and UBS-49 integration (supervisor, MA-01 ingest, heartbeat) landed via UBS-112/114; all 7 `FR-PIP-*` IDs cited by tests                                                                                                                                                                                                                                                                                    |
+| **M2**    | **FIX parser (UBS-40–47)**                     | **Done** — classify, frame, allowlist extraction, enums, rejection labels, timestamps, seq gaps, parse-error handling; wired through the pipeline; Magic applog parser and the `magic-binary` detector (`FR-PRS-040`–`046`, frame layout still `TBD(vendor)`). 28 of 30 `FR-PRS-*` IDs cited by tests (missing `001`, `002`)                                                                                                          |
+| **M3**    | **Metrics aggregation**                        | **Done** — aggregator, counters, correlation, calculated indicators and snapshot output (MA-01–04), fed by live events through the pipeline (UBS-112); `parseErrorRate` has a producer. 7 of 20 `FR-MET-*` IDs cited by tests                                                                                                                                                                                                         |
+| **M4**    | **Backend ingestion, store, query**            | **Done for Day 1 (in-memory)** — Stream Processor and Metric Store, ingestion API and bounded hand-off, allowlists and cardinality enforcement, alert and metrics query APIs, Event Store (UBS-118), Publisher to backend (UBS-103/115), health read API and `AgentHeartbeatMissing`. Persistence (`persistence/`) is empty: Day-2. Authentication of the ingestion path is not covered by tests (`FR-ING-001`–`003`, `NFR-SEC-003`+) |
+| **M5**    | **Rules, alerts, callbacks**                   | **Done** — Rule Engine and alert lifecycle (RE-01–04), HTTP/HMAC callback dispatch with retry and delivery status (`FR-CBK-*`, 14 of 18 cited), rule actions and test mode (UBS-35/36), anomaly rules (UBS-25–29). Only 8 of 30 `FR-RUL-*` IDs cited by tests                                                                                                                                                                         |
+| M6        | Natural language layer                         | **Partial** — rule-path matcher (UBS-99/101/102), LLM fallback (UBS-97/98), Teams bot (UBS-100), MCP server (ADR 0007), `reject_reason_trend` intent (UBS-143). 8 of 25 `FR-NLQ-*` IDs cited by tests; securing the NL API is in review (UBS-135)                                                                                                                                                                                     |
+| M7        | Operability hardening                          | **Not started** — `deployment/` holds only `.gitkeep`; `NFR-OBS-*`, `NFR-OPS-*` and `NFR-SCA-*` have no citing tests; local stack is `compose.yaml` only. Load/footprint test is UBS-144                                                                                                                                                                                                                                              |
+
+## Requirement coverage (generated)
+
+Snapshot of `make requirement-coverage` on 2026-11-08, counting IDs a spec _defines_
+against IDs any file under `tests/` names (hyphen or underscore style, short ranges
+expanded). It proves a test mentions an ID, not that the test is sufficient. CI prints
+the same report on every run and does not fail on gaps yet.
+
+| Area                                                  | Cited by tests | Uncited IDs                                                     |
+| ----------------------------------------------------- | -------------- | --------------------------------------------------------------- |
+| `FR-PIP`                                              | 7/7            | —                                                               |
+| `FR-STM`                                              | 6/6            | —                                                               |
+| `FR-PRS`                                              | 28/30          | 001, 002                                                        |
+| `FR-PUB`                                              | 6/8            | 003, 008                                                        |
+| `FR-CBK`                                              | 14/18          | 008, 010, 012, 018                                              |
+| `FR-HLT`                                              | 6/10           | 013–016                                                         |
+| `FR-NLQ`                                              | 8/25           | 001, 002, 010–014, 016–020, 022–024, 027, 031                   |
+| `FR-MET`                                              | 7/20           | 001–004, 010, 021–023, 025–027, 032, 034                        |
+| `FR-RUL`                                              | 8/30           | 001–003, 007, 009–011, 013–016, 018, 021, 022, 031–033, 040–044 |
+| `FR-QRY`                                              | 9/30           | 001, 006–014, 019, 020, 030–033, 035–039                        |
+| `FR-ING`                                              | 4/13           | 001–003, 006, 007, 009, 020–022                                 |
+| `FR-TST`                                              | 3/9            | 002–004, 006, 009, 011                                          |
+| `FR-LOG`                                              | 1/14           | all but 010                                                     |
+| `FR-CFG`                                              | 0/8            | all                                                             |
+| `NFR-PERF`                                            | 2/10           | 002, 003, 005–010 (UBS-144, UBS-140)                            |
+| `NFR-SEC`                                             | 2/20           | 003–020                                                         |
+| `NFR-REL`, `NFR-CFG`, `NFR-OBS`, `NFR-OPS`, `NFR-SCA` | 2/28           | nearly all                                                      |
+
+Some of these are tested without citing the ID (the report cannot see that); the fix is
+to add the ID to the test name or a comment. The known real gaps are tracked as UBS-137
+(`FR-TST-005` leak sentinel), UBS-140 (acceptance run) and UBS-144 (load and footprint).
 
 ## M2 requirement coverage (UBS-40–42)
 
@@ -47,7 +85,7 @@ difference is recorded here rather than by quietly editing the spec.
 | Leak sentinel               | `FR-TST-005` | Lands with full corpus gate                                 |
 | Parser → MA-01 event bridge | spec 004     | ParsedMessageEvent construction from FixTelemetry not wired |
 
-## Planned: pipeline bridge (M1.5)
+## Pipeline bridge (M1.5)
 
 Spec: [002-agent.md §1.1](../specs/002-agent.md), ADR
 [0006](../adr/0006-agent-in-python.md).
@@ -59,16 +97,16 @@ Spec: [002-agent.md §1.1](../specs/002-agent.md), ADR
 | `FR-PIP-001` | Blocking enqueue (default); optional drop_oldest                       | Done (UBS-48)                                                                                                    |
 | `FR-PIP-002` | Asymmetric queue sizing (line queue 2048 > event queue 256)            | Done (UBS-48)                                                                                                    |
 | `FR-PIP-003` | Parser worker pool (`min(2, cpu_count)`)                               | Done (UBS-48)                                                                                                    |
-| `FR-PIP-004` | Bounded event queue → aggregator                                       | Partial — queue done; MA-01 ingest → UBS-49                                                                      |
-| `FR-PIP-005` | Queue depth + drop counters on heartbeat/metrics                       | Partial — `PipelineStats` done; heartbeat → UBS-49                                                               |
+| `FR-PIP-004` | Bounded event queue → aggregator                                       | Done (UBS-48; MA-01 ingest UBS-112)                                                                              |
+| `FR-PIP-005` | Queue depth + drop counters on heartbeat/metrics                       | Done (UBS-48 `PipelineStats`; heartbeat via UBS-114)                                                             |
 | `FR-PIP-006` | Commit offset after parse+ingest                                       | Done (UBS-48)                                                                                                    |
 | `FR-PIP-007` | Dedupe by `(dev, inode, byte_offset)`                                  | Done (UBS-48)                                                                                                    |
 
 UBS-48 modules: `pipeline/bounded_queue.py`, `line_queue.py`, `event_queue.py`,
 `workers.py`, `committer.py`, `deduper.py`, `supervisor.py`, `monitor_adapter.py`.
 
-UBS-49 targets: `main.py`, `config.py`, `pipeline/event_bridge.py`,
-`health/reporter.py`.
+UBS-49 landed as `main.py`, `config.py`, `pipeline/ingest.py` and `health/reporter.py`;
+there is no separate `event_bridge.py`.
 
 ## M3 requirement coverage (MA-01–04)
 
@@ -80,9 +118,8 @@ UBS-49 targets: `main.py`, `config.py`, `pipeline/event_bridge.py`,
 | MA-04 | Calculated indicators and snapshot output | `FR-QRY-007`, `FR-QRY-010`, `FR-QRY-012` | Done   | `test_MA_04_snapshot.py`                         |
 
 Full detail and an alert-readiness mapping:
-`docs/plan/ma-epic-implementation-summary.md`. Not yet wired: real events into MA-01–04
-depend on M1 (Log Monitor) and M1.5 (pipeline bridge) — field extraction itself is done
-(UBS-43–47); `parseErrorRate` is formula-ready but has no producer yet.
+`docs/plan/ma-epic-implementation-summary.md`. Real events reach MA-01–04 through the
+pipeline (UBS-112, UBS-114).
 
 UBS-73/74 added two counter producers on top of MA-02's order counters:
 `parser.metrics_event.derive_session_counters` (session health — `logouts`, `seq_gaps`,
@@ -119,14 +156,15 @@ Full detail and known gaps:
 [`ma-epic-implementation-summary.md`](./ma-epic-implementation-summary.md) §7. The
 backend's bounded ingestion worker now calls `StreamProcessor.process_batch()` for
 accepted snapshots and `AlertStore.merge()` for alerts. Heartbeats update the Agent
-Registry (UBS-69/87) and feed `AgentHeartbeatMissing` (UBS-95). Events remain
-accept-and-drop (no Event Store story yet). Alert query responses carry placeholder
-`delivery.status: unknown` until the agent publishes a callback outcome. Since the agent
-republishes each alert once its callback settles, queries show the real delivery state:
-tracked per notification (`FR-CBK-018`, `callbacks/status.py`) and merged by the Alert
-Store, which ignores a stale non-resolved update for a resolved alert (`FR-QRY-019`).
-Authentication and body-size limits remain separate stories; dedupe/rate limiting
-(UBS-85) and health read API (UBS-69) are done.
+Registry (UBS-69/87) and feed `AgentHeartbeatMissing` (UBS-95). Events are kept in the
+Event Store (`services/event_store.py`, UBS-118). Alert query responses carry
+placeholder `delivery.status: unknown` until the agent publishes a callback outcome.
+Since the agent republishes each alert once its callback settles, queries show the real
+delivery state: tracked per notification (`FR-CBK-018`, `callbacks/status.py`) and
+merged by the Alert Store, which ignores a stale non-resolved update for a resolved
+alert (`FR-QRY-019`). Request body-size limits (`services/request_body.py`), dedupe/rate
+limiting (UBS-85) and the health read API (UBS-69) are done. Authentication of the
+ingestion path has no citing tests yet (`FR-ING-001`–`003`).
 
 ## M5 requirement coverage (RE-01–04)
 
@@ -137,8 +175,8 @@ Authentication and body-size limits remain separate stories; dedupe/rate limitin
 | RE-03 | The 17 default rules                              | `FR-RUL-010`                                 | Done   | `test_RE_04_default_rules.py`                                           |
 
 Full detail and the alert-readiness table:
-`docs/plan/re-epic-implementation-summary.md`. Not yet wired: consecutive-failure streak
-tracking as a general rule kind (`BackendUnreachable` gets the effect from a
+`docs/plan/re-epic-implementation-summary.md`. Consecutive-failure streak tracking is
+not a general rule kind (`BackendUnreachable` gets the effect from a
 publisher-maintained gauge, FR-MET-031). Session-message counters (`logouts`,
 `seq_gaps`, `clock_skew_events`) landed with UBS-73 and `heartbeat_timeouts` with
 UBS-106 (FR-MET-032). `config/rules.yaml` loading and SIGHUP reload are implemented
@@ -147,25 +185,26 @@ an mtime trigger since UBS-35.
 
 ## Rule actions and test mode (UBS-35, UBS-36)
 
-| ID     | Story                                           | Requirement                                                 | Status                           | Verified by                                                                                                                                     |
-| ------ | ----------------------------------------------- | ----------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| UBS-35 | Custom conditions bound to configurable actions | `FR-CBK-013`–`017` (spec 005 §5), `FR-RUL-008`/`009` reload | Done on branch, pending ADR 0008 | `tests/unit/agent/actions/`, `tests/unit/agent/rules/test_UBS_35_36_reload_and_draft.py`, `tests/integration/test_UBS_35_actions_end_to_end.py` |
-| UBS-36 | Validate a condition before activation          | `FR-RUL-031`–`033` (spec 005 §6)                            | Done on branch                   | `tests/unit/agent/pipeline/test_UBS_36_backtest.py`, `tests/integration/test_UBS_36_backtest_cli.py`                                            |
+| ID     | Story                                           | Requirement                                                 | Status                 | Verified by                                                                                                                                     |
+| ------ | ----------------------------------------------- | ----------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-35 | Custom conditions bound to configurable actions | `FR-CBK-013`–`017` (spec 005 §5), `FR-RUL-008`/`009` reload | Done, pending ADR 0008 | `tests/unit/agent/actions/`, `tests/unit/agent/rules/test_UBS_35_36_reload_and_draft.py`, `tests/integration/test_UBS_35_actions_end_to_end.py` |
+| UBS-36 | Validate a condition before activation          | `FR-RUL-031`–`033` (spec 005 §6)                            | Done on branch         | `tests/unit/agent/pipeline/test_UBS_36_backtest.py`, `tests/integration/test_UBS_36_backtest_cli.py`                                            |
 
 Code: `apps/agent/src/telemetry_agent/actions/` (catalogue + runner),
 `pipeline/backtest.py` (test mode), `--test-rule` in `main.py`. The `disk-cleanup`
-example action is unbound until UBS-129 adds `HostDiskFull`. The reload now runs in the
-real agent: on SIGHUP, and on a `rules.yaml` mtime change.
+example action is still unbound; `HostDiskFull` exists since UBS-129 but binding it is a
+rule-file decision (ADR 0008). The reload now runs in the real agent: on SIGHUP, and on
+a `rules.yaml` mtime change.
 
 ## D2 anomaly detection (UBS-25–29)
 
-| ID     | Story                                 | Requirement                      | Status                                                             | Verified by                                                       |
-| ------ | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| UBS-25 | Alert on abnormal reject rate         | `FR-RUL-040`–`044` (spec 005 §7) | Done                                                               | `tests/unit/agent/rules/test_UBS_25_29_anomaly.py`                |
-| UBS-26 | Alert on abnormal processing latency  | `FR-RUL-040`–`044`               | Done                                                               | same                                                              |
-| UBS-27 | Identify increasing rejection reasons | `FR-QRY-040` (spec 007 §3.1)     | API done; not yet an NL intent                                     | `tests/unit/backend/services/test_UBS_27_reject_reason_trends.py` |
-| UBS-28 | Alert on abnormal execution issues    | `FR-RUL-040`–`044`               | Done, definition of "execution issue" pending sponsor confirmation | same                                                              |
-| UBS-29 | Alert on abnormal parser failures     | `FR-RUL-040`–`044`               | Done                                                               | same                                                              |
+| ID     | Story                                 | Requirement                      | Status                                                             | Verified by                                                                                                                           |
+| ------ | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-25 | Alert on abnormal reject rate         | `FR-RUL-040`–`044` (spec 005 §7) | Done                                                               | `tests/unit/agent/rules/test_UBS_25_29_anomaly.py`                                                                                    |
+| UBS-26 | Alert on abnormal processing latency  | `FR-RUL-040`–`044`               | Done                                                               | same                                                                                                                                  |
+| UBS-27 | Identify increasing rejection reasons | `FR-QRY-040` (spec 007 §3.1)     | Done; NL intent `reject_reason_trend` (UBS-143)                    | `tests/unit/backend/services/test_UBS_27_reject_reason_trends.py`, `tests/unit/backend/nl/test_UBS_143_reject_reason_trend_intent.py` |
+| UBS-28 | Alert on abnormal execution issues    | `FR-RUL-040`–`044`               | Done, definition of "execution issue" pending sponsor confirmation | same                                                                                                                                  |
+| UBS-29 | Alert on abnormal parser failures     | `FR-RUL-040`–`044`               | Done                                                               | same                                                                                                                                  |
 
 Code: `rules/baseline.py` (baseline tracker, explanation text), `anomaly` kind in
 `rules/engine.py`, `load_anomaly_rules` in `rules/config_loader.py`,
@@ -186,6 +225,111 @@ Code: optional `level:` on `threshold` rules (`rules/types.py`,
 admission is first-come under `maxSeriesPerBucket`, so if a bucket is already full when
 the first `[F]` line arrives it folds to `__other__` and the rule does not match;
 `cardinality_folded` is the signal.
+
+## Host Monitor (UBS-129)
+
+| ID      | Story                                                                               | Requirement                                                                            | Status         | Verified by                                                                                                                                                                                                     |
+| ------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-129 | Host disk/memory gauges, `HostDiskFull`/`HostMemoryHigh`, heartbeat `resourceUsage` | `FR-HLT-013`/`015`/`016` (spec 002 §7.1), `FR-MET-034` (spec 004 §4.7), `NFR-PERF-003` | Done on branch | `tests/unit/agent/health/test_UBS_129_*.py`, `tests/unit/agent/rules/test_UBS_129_host_rules.py`, `tests/integration/agent/test_UBS_129_host_alerts.py`, `tests/integration/test_UBS_129_agent_host_monitor.py` |
+
+Code: `health/host_monitor.py` (`HostMonitor`, `HostSampler` protocol, `PsutilSampler`),
+`host:` in `config.py` and `config/agent.yaml`, `HostDiskFull` and `HostMemoryHigh` in
+`rules/defaults.py` and `config/rules.yaml`, `Gauges.host_*` fields, `host_gauges`
+plumbing in `metrics/snapshot.py`, `pipeline/evaluator.py` and
+`publishing/snapshot_bridge.py`, `HealthReporter.set_resource_usage_provider`. `psutil`
+is now an agent dependency (`types-psutil` for mypy). Decisions and limits:
+
+- **Flat gauges, `mount` in the key.** `Gauges` and the wire `Snapshot.gauges` are flat
+  `dict[str, float]`, so `host_disk_used_ratio` is the worst (maximum) mount over the
+  readable `host.diskPaths` (what `HostDiskFull` reads), and each readable mount also
+  rides the wire as `host_disk_used_ratio:<mount>` (`<mount>` verbatim; everything after
+  the first `:`), like `action_runs:<action>:<outcome>`. Names live in
+  `telemetry_shared/metrics/host.py`. A mount that cannot be read has no per-mount key,
+  is left out of the maximum and is counted, so the maximum is known to be over the
+  readable mounts only; a partly unreadable disk is visible, not silently healthy.
+- **Spec holds, not the engine default.** `HostDiskFull` holds 1m, `HostMemoryHigh` 2m
+  (spec 005 §1.2). Both set `dependsOnLogActivity: false` so `NoLogActivity` does not
+  silence them.
+- **Host rules load only when enabled** (spec 005 §1.2): `config.host_rule_filter` drops
+  a rule reading `host_disk_used_ratio` / `host_memory_used_ratio` / `magic_process_up`
+  unless `host.enabled` and the matching setting (`diskPaths` non-empty, `memory`,
+  `process.name`) is on. `load_agent_config` and the rules reloader both apply it, so a
+  reload cannot bring one back. A rule that is loaded still stays inactive while its
+  gauge is unreadable.
+- **Omit, never zero.** A failed read drops that gauge (and the previous value) and
+  counts `host_sample_errors`, which the evaluator bridges into the aggregator like the
+  other agent counters (`AGENT_DIMS`, windowed series, on the wire in `series`), so it
+  is queryable; it is still logged at shutdown too. A firing alert on a host gauge that
+  becomes unreadable is **held** (`rules/engine.py`: no auto-resolve, no new
+  notification; a resolving alert goes back to firing so the resolve window restarts
+  when data returns). This applies only to the three host gauges: for
+  `oldest_pending_age_seconds` a missing value genuinely means "clear". A pending alert
+  on a missing gauge is dropped, not held.
+- **`diskPaths` default.** The shipped `config/agent.yaml` uses `["."]` so dev machines
+  (incl. Windows) can read it; set it to Magic's log filesystem on the host. When the
+  key is omitted the model default is spec 010's `/var/log/magic` on POSIX and the
+  system drive root on Windows (`default_disk_paths`), where that path cannot exist. The
+  disk ratio is `1 - free / total` (space the agent's user can still write;
+  `used / total` under-reads on APFS), recorded in spec 004 `FR-MET-034`; memory is
+  `(total - available) / total`.
+- **Heartbeat `resourceUsage`** carries the agent's RSS (MB), CPU and the event loop's
+  task count (`activeTasks`, read on the loop by `HostMonitor.run`). With
+  `host.enabled: false` or a failed read it is **omitted**, not sent as zeros: the
+  shared ingestion `ResourceUsage.activeTasks` and `Heartbeat.resourceUsage` are now
+  optional, and the backend health API returns `null` (spec 004 §6 and spec 007 §5.2
+  updated).
+- **Alert `metricContext`** for gauge rules carries the gauge value instead of a
+  fabricated `0.0` counter (also `BackendUnreachable`, `PendingOrderTimeout`), and no
+  longer depends on a group having been ingested (Magic down means silent logs).
+  Regression tests: `tests/unit/agent/rules/test_UBS_129_gauge_rules_engine.py`.
+- **`NFR-PERF-003`:** sampling every 30s in a worker thread with one immutable sample as
+  its only state. `test_nfr_perf_003_memory_does_not_grow_with_the_number_of_samples`
+  asserts with `tracemalloc` that allocations do not scale with run length; a load test
+  with an RSS assertion at target throughput remains a separate item (an RSS reading
+  from a unit test is machine-dependent, so it is not asserted).
+
+## Magic process liveness (UBS-130)
+
+| ID      | Story                                       | Requirement                                                                                 | Status         | Verified by                                                                                                                                                                              |
+| ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UBS-130 | `magic_process_up` gauge, `ApplicationDown` | `FR-HLT-014` (spec 002 §7.1), `FR-MET-034` (spec 004 §4.7), spec 005 §1.2 `ApplicationDown` | Done on branch | `tests/unit/agent/health/test_UBS_130_process_liveness.py`, `tests/unit/agent/rules/test_UBS_130_application_down.py`, `tests/integration/agent/test_UBS_130_application_down_alerts.py` |
+
+Builds on the UBS-129 Host Monitor: `HostSampler.process_running(name)` (+
+`PsutilSampler`, see "Process matching" below), a step in `HostMonitor.sample_once`,
+`Gauges.magic_process_up`, and `ApplicationDown` in `rules/defaults.py` and
+`config/rules.yaml` (critical, `== 0`, 30s hold, `dependsOnLogActivity: false`, so
+`NoLogActivity` does not silence it). Decisions and limits:
+
+- **Exact name, no case folding.** `host.process.name` must equal a running process's
+  name exactly (`magic.exe` does not match `magic.exe.bak` or `notmagic.exe`). Command
+  lines and arguments are never read. On Windows, set the name with the casing the OS
+  reports.
+- **Process matching never reads a command line.** psutil's `Process.name()` does, on
+  POSIX, for names of 15 or more characters (verified against psutil 7.2.2; its `exe()`
+  also falls back to `cmdline()` when denied). So `PsutilSampler.process_running` reads
+  Linux `/proc/<pid>/comm`, and psutil's `name` only on Windows (which never reads a
+  command line). On Linux `comm` holds 15 characters, so a configured name longer than
+  that is compared by its first 15; two executables sharing that prefix are not told
+  apart. On macOS/BSD the process list is not read at all (unreadable, so the gauge is
+  omitted): there is no public psutil call that is safe there, and Magic's host is Linux
+  or Windows.
+- **An empty or wholly unreadable process list is "no data".** If no process name could
+  be read, `process_running` raises, so `magic_process_up` is omitted and the error
+  counted; it is never reported as 0.
+- **Empty name = off.** No gauge, no process-list read, no error counted, rule inactive.
+  The shipped `agent.yaml` leaves it empty (the name is UBS-specific).
+- **Limitation: an unreadable process list omits the gauge (no alert).** The sampler
+  raising (permissions, platform) counts `host_sample_errors` and drops
+  `magic_process_up` rather than reporting 0, so a host where the agent cannot list
+  processes never raises `ApplicationDown`. A firing `ApplicationDown` whose gauge turns
+  unreadable is held, not auto-resolved (see the UBS-129 decisions).
+- **`ApplicationDown` is not loaded while `process.name` is empty** (spec 005 §1.2,
+  `host_rule_filter`), rather than loaded and inactive.
+- **Timing.** With the 30s default `sampleInterval` and the 30s hold, the alert fires on
+  the second consecutive 0 sample. Resolution uses the default `resolveAfter` of 300s;
+  the spec is silent on a shorter value.
+- **Only the process list is checked**, not that Magic is healthy; a hung but running
+  process is still `up`.
 
 ## Health Reporter coverage (UBS-30, UBS-58, UBS-59, UBS-60)
 
@@ -264,8 +408,13 @@ uv run mypy apps/backend/src packages/telemetry_shared/src   # mypy on backend (
 
 ## Open risks
 
-| Risk                                                                                                                                               | Mitigation                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown                  | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples                                    |
-| `AppLogFailure` misses an `[F]` line if its bucket already holds `maxSeriesPerBucket` series (admission is first-come; signature rules share this) | Watch `cardinality_folded`; raise the cap or reserve budget for level and signature series if it ever trips |
-| Python agent footprint unproven at load                                                                                                            | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply                               |
+| Risk                                                                                                                                                                                                                           | Mitigation                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| [Q-8](../plan/open-questions.md#q-8--what-do-magics-logs-actually-look-like-highest-technical-risk): real Magic log shape unknown                                                                                              | Synthetic corpus per spec 012 §3 subset; revisit after sanitised samples                                    |
+| `AppLogFailure` misses an `[F]` line if its bucket already holds `maxSeriesPerBucket` series (admission is first-come; signature rules share this)                                                                             | Watch `cardinality_folded`; raise the cap or reserve budget for level and signature series if it ever trips |
+| Python agent footprint unproven at load                                                                                                                                                                                        | Load test in spec 012 §5 once M1+M3 exist; ADR 0006 reversal conditions apply                               |
+| CI is red on `main` until UBS-139 lands (anti-fabrication month check, Teams tests need `tzdata` on Windows, mypy platform errors); every PR shows red meanwhile                                                               | Merge UBS-139 first, then enable branch protection so `main` needs a green run                              |
+| Day-1 acceptance proof is missing: no leak sentinel through the full pipeline (UBS-137), no 5-second visibility plus rotation/outage/restart run (UBS-140), no CPU/RSS load test (UBS-144), no real Teams tenant run (UBS-142) | Sprint 6; the coverage report shows `FR-TST-*`, `NFR-PERF-*` and `FR-LOG-*` as uncited until then           |
+| Open correctness bugs: `AgentHeartbeatMissing` fires once per agent (UBS-136), reject summary mixes denominators (UBS-141); `AppLogFailure` bucket-budget miss above is UBS-145                                                | Sprint 6 bug tickets                                                                                        |
+| Alert push and API security are still in review (UBS-120 Teams notification, UBS-135 NL API security); Day-2 host monitor and process liveness (UBS-129, UBS-130) too                                                          | Review and merge; until then those paths are not on `main`                                                  |
+| Requirement coverage is by citation only; 173 of 286 requirement IDs had no citing test on 2026-11-08                                                                                                                          | Cite IDs in tests that already cover them; the CI report keeps the list visible                             |

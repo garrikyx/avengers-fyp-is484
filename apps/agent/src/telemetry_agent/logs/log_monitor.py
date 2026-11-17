@@ -23,8 +23,6 @@ def _open_shared(path: Path) -> TextIO:
     the monitor relies on: the descriptor keeps following the renamed file.
     A missing path still raises ``FileNotFoundError``.
     """
-    # sys.platform, not os.name: mypy only narrows on sys.platform, so this
-    # keeps the Windows-only calls below from failing type checks elsewhere.
     if sys.platform != "win32":
         return open(path, encoding="utf-8", errors="replace")
 

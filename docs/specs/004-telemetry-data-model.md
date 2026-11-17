@@ -317,6 +317,17 @@ A gauge the agent cannot read MUST be omitted, never reported as `0`. A rule the
 reports `insufficient_data` instead of a false "disk empty" or "Magic down" (the same
 reasoning as `FR-MET-031`).
 
+`host_disk_used_ratio` is computed as `1 − free ÷ total` (the same free/total pair as
+`FR-HLT-013`), the space the agent's user can still write; `used ÷ total` under-reads on
+filesystems such as APFS. `gauges` carries no dimensions on the wire, so the `mount`
+dimension is encoded in the key: `host_disk_used_ratio` is the highest ratio over the
+readable mounts (what `HostDiskFull` reads), and each readable mount also has
+`host_disk_used_ratio:<mount>`, where `<mount>` is the `host.diskPaths` entry verbatim
+(everything after the first `:`). A mount the agent cannot read has no per-mount gauge
+and is not part of the maximum, so the maximum is over the readable mounts only. A
+failed read increments the agent counter `host_sample_errors` (dimension `instanceId`),
+carried as an ordinary counter series.
+
 ## 5. Dimensions and cardinality
 
 | Dimension               | Values                                                     | Cap                                     |
@@ -381,6 +392,9 @@ per instance per bucket MUST be capped at `maxSeriesPerBucket` (default 2000).
 
 `FR-HLT-002`: `status` is `healthy` | `degraded` | `unhealthy`, derived from a
 documented rule set in spec 011 §2 rather than hand-set per condition.
+
+`resourceUsage` is optional, as is its `activeTasks`: an agent with no measurement omits
+them rather than sending `0` (`FR-HLT-004`).
 
 ## 7. Schema evolution
 
