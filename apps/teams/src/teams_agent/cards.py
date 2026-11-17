@@ -120,7 +120,13 @@ def _breakdown(response: NlQueryResponse) -> list[dict[str, Any]]:
 
 
 def _alert_badge(response: NlQueryResponse) -> list[dict[str, Any]]:
-    count = sum(1 for citation in response.citations if citation.type == "alert")
+    # Count the alerts the answer covers, not just the ones it cites: the answer
+    # cites at most MAX_LISTED_ALERTS, and the badge must agree with the text's
+    # "N active alert(s)". Citations are the fallback for responses without
+    # alert summaries.
+    count = len(response.alert_summaries) or sum(
+        1 for citation in response.citations if citation.type == "alert"
+    )
     if count == 0:
         return []
     noun = "alert" if count == 1 else "alerts"

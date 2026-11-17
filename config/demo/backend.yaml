@@ -1,0 +1,38 @@
+# UBS-134 demo profile for the Telemetry Backend. LOCAL DEMO ONLY.
+#
+# Same as config/backend.yaml, except AgentHeartbeatMissing fires after 20s
+# without a heartbeat instead of 60s, so the "agent stopped" step fits the demo.
+# The demo agent sends a heartbeat every 5s (config/demo/agent.yaml).
+#
+# NL uses local Ollama (llama3.2). Rule-matched questions, including the demo's
+# headline reject question, never reach the LLM, so they still answer without it.
+
+ingest:
+  maxBatchesPerMinutePerAgent: 120
+
+alerting:
+  missingHeartbeatThreshold: 20s
+
+nl:
+  enabled: true
+  llm:
+    provider: ollama
+    baseUrl: http://127.0.0.1:11434
+    model: llama3.2
+    timeout: 6s
+    keepAlive: 30m
+    numPredict: 256
+    warmUp: true
+    structuredOutput: true
+    requireApiKey: false
+
+# UBS-120: push a card into the Agents Playground chat when an alert fires and
+# when it resolves. The launchers (scripts/demo.py, demo_windows.bat,
+# demo_mac/demo.sh) generate MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN per run for the
+# backend and the bot, and start the bot with TEAMS_NOTIFY_ALLOW_PERSONAL=true
+# (the Playground is a 1:1 chat). Say "hi" to the bot once so it remembers the chat.
+notifications:
+  teams:
+    enabled: true
+    endpoint: http://127.0.0.1:3978/api/notify
+    timeout: 5s

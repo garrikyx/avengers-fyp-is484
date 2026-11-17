@@ -10,6 +10,8 @@ DEFAULT_MAX_BYTES = 5 * 1024  # 5 KB limit for rapid testing
 DEFAULT_INTERVAL = 0.2  # Writes every 200ms
 DEFAULT_KEEP_ROTATED_FILES = 5
 DEFAULT_REJECT_RATE = 0.2  # share of orders Magic rejects
+FAULT_LEVEL = "F"
+OUT_OF_MEMORY = "java.lang.OutOfMemoryError: heap allocation failed"
 
 SYMBOLS = [
     "AAPL",
@@ -89,12 +91,23 @@ def format_fix_line(timestamp: str, message: str) -> str:
 def generate_application_log(
     timestamp: str,
     log_type: str | None = None,
+    fault_rate: float | None = None,
 ) -> str:
     """Generate one sponsor-format line for ``Application.log``.
 
     Main, client and venue messages are variants of the application log, not
     separate top-level log files.  Their component names identify the source.
+
+    ``fault_rate`` controls fatal (``[F]``) lines. ``None`` keeps the original
+    behaviour: [F] lines come up at random among the other events. A number
+    makes faults deliberate: an ``OutOfMemoryError`` line with that probability
+    and no other [F] lines, so ``0`` gives a clean log and a demo can switch
+    faults on when it wants AppOutOfMemory and AppLogFailure to fire.
     """
+    if fault_rate is not None and random.random() < fault_rate:
+        thread_id = random.randint(100000, 999999)
+        return f"{timestamp} <{thread_id}> [{FAULT_LEVEL}] MAIN: {OUT_OF_MEMORY}"
+
     selected_type = (
         random.choice(APPLICATION_LOG_TYPES) if log_type is None else log_type
     )
@@ -103,7 +116,7 @@ def generate_application_log(
 
     thread_id = random.randint(100000, 999999)
     if selected_type == "main":
-        level, template = random.choice(MAIN_EVENTS)
+        level, template = random.choice(_events(MAIN_EVENTS, fault_rate))
         message = template.format(session_count=random.randint(1, 20))
         return f"{timestamp} <{thread_id}> [{level}] MAIN: {message}"
 
@@ -115,13 +128,23 @@ def generate_application_log(
 
     venue_id = random.randint(100, 999)
     venue = random.choice(VENUES)
-    level, message = random.choice(VENUE_EVENTS)
+    level, message = random.choice(_events(VENUE_EVENTS, fault_rate))
     if message == "GR connection disconnected":
         return f"{timestamp} <{thread_id}> [{level}] VS_{venue_id}: {message}"
     return (
         f"{timestamp} <{thread_id}> [{level}] VS_{venue_id}: VS "
         f"<{venue}|{venue_id}@{venue}|{message}"
     )
+
+
+def _events(
+    events: tuple[tuple[str, str], ...], fault_rate: float | None
+) -> tuple[tuple[str, str], ...]:
+    """The events to pick from: all of them by default, or no [F] events when
+    faults are controlled by ``fault_rate``."""
+    if fault_rate is None:
+        return events
+    return tuple(event for event in events if event[0] != FAULT_LEVEL)
 
 
 def rotate_if_needed(
@@ -166,6 +189,7 @@ def run_harness(
     interval: float,
     keep_rotated_files: int = DEFAULT_KEEP_ROTATED_FILES,
     reject_rate: float = DEFAULT_REJECT_RATE,
+    fault_rate: float | None = None,
 ) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     log_files = {
@@ -193,7 +217,7 @@ def run_harness(
         symbol = random.choice(SYMBOLS)
 
         if category == "Application":
-            lines = [generate_application_log(app_ts)]
+            lines = [generate_application_log(app_ts, fault_rate=fault_rate)]
         else:
             if not fix_backlog:
                 fix_backlog.extend(
@@ -221,6 +245,15 @@ if __name__ == "__main__":
         help="Share of FIX orders that Magic rejects (0 to 1)",
     )
     parser.add_argument(
+        "--app-faults",
+        type=float,
+        default=None,
+        help=(
+            "Share of Application.log lines that are [F] OutOfMemoryError faults "
+            "(0 to 1). 0 gives a clean log. Default: [F] lines at random, as before"
+        ),
+    )
+    parser.add_argument(
         "--keep-rotated-files",
         type=int,
         default=DEFAULT_KEEP_ROTATED_FILES,
@@ -234,6 +267,7 @@ if __name__ == "__main__":
             args.interval,
             keep_rotated_files=args.keep_rotated_files,
             reject_rate=args.reject_rate,
+            fault_rate=args.app_faults,
         )
     except KeyboardInterrupt:
         print("\n[LOGGER] Stopped.")

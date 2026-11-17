@@ -1,0 +1,44 @@
+# UBS-134 demo anomaly rules. LOCAL DEMO ONLY.
+#
+# Same detectors as config/anomaly.yaml (UBS-25/28), with the windows shortened
+# so a baseline builds in about 3 minutes of normal trading and a reject burst
+# is judged abnormal live. Production timings (5m window, 60m baseline) stay in
+# config/anomaly.yaml. Loaded beside config/demo/rules.yaml and live-reloaded.
+#
+# Demo flow: run normal trading for 3+ minutes (baseline), then
+# `scripts\demo_windows.bat burst` -> AbnormalRejectRate and
+# AbnormalExecutionIssueRate fire next to HighRejectRate.
+
+reject_rate:
+  enabled: true
+  window_minutes: 1
+  baseline_window_minutes: 3   # minimum allowed: 3x the window
+  minimum_samples: 100
+  window_minimum_samples: 20
+  tiers:
+    - severity: warning
+      threshold: 0.5           # +50% over baseline
+    - severity: critical
+      threshold: 1.0           # 2x baseline
+  for: 10s
+  resolve_after: 15s
+
+execution_issue_rate:
+  enabled: true
+  window_minutes: 1
+  baseline_window_minutes: 3
+  minimum_samples: 100
+  window_minimum_samples: 20
+  tiers:
+    - severity: warning
+      threshold: 0.5
+  for: 10s
+  resolve_after: 15s
+
+# The simulator does not vary ack latency or emit unparseable lines, so these
+# two would never trigger in the demo; production config keeps them on.
+ack_latency_ms:
+  enabled: false
+
+parser_failure_rate:
+  enabled: false

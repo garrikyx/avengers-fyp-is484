@@ -42,7 +42,11 @@ from telemetry_backend.nl.llm.protocol import (
     ManagedLlmSlotFiller,
 )
 from telemetry_backend.nl.normalize import normalize_question
-from telemetry_backend.nl.render import RenderInput, render_answer
+from telemetry_backend.nl.render import (
+    MAX_LISTED_ALERTS,
+    RenderInput,
+    render_answer,
+)
 from telemetry_backend.nl.render.replies import (
     WEAK_RULE_MATCH_CAVEAT,
     greeting_message,
@@ -408,7 +412,8 @@ class NlQueryService:
             return [], []
 
         citations = [
-            NlCitation(type="alert", alert_id=alert.alert_id) for alert in alerts[:3]
+            NlCitation(type="alert", alert_id=alert.alert_id)
+            for alert in alerts[:MAX_LISTED_ALERTS]
         ]
         if intent == "alert_status":
             return alerts, citations

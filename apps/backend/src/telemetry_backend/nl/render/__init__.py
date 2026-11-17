@@ -68,6 +68,9 @@ def _summaries(alerts: tuple[AlertRecord, ...]) -> list[NlAlertSummary]:
 
 
 _MAX_TREND_ROWS = 5
+# Alerts listed (and cited) in an alert_status answer. Enough for every rule in
+# a normal config; past it the answer says "showing the newest X of N".
+MAX_LISTED_ALERTS = 10
 
 
 def _trend_change(reason: ReasonTrend) -> str:
@@ -185,8 +188,15 @@ def render_answer(inp: RenderInput) -> RenderOutput:
         if count == 0:
             parts.append(f"No active alerts match the requested scope for {app}.")
         else:
-            parts.append(f"{count} active alert(s) for {app}.")
-            for alert in inp.alerts[:3]:
+            shown = inp.alerts[:MAX_LISTED_ALERTS]
+            if len(shown) < count:
+                parts.append(
+                    f"{count} active alert(s) for {app}; showing the newest "
+                    f"{len(shown)} of {count}."
+                )
+            else:
+                parts.append(f"{count} active alert(s) for {app}.")
+            for alert in shown:
                 if inp.audience == "executive":
                     parts.append(
                         f"- {escape_adaptive_card_text(alert.rule_name)} "
