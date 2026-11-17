@@ -231,18 +231,43 @@ the agent drains, publishes and checkpoints, then SIGKILL after 10 s.
 
 ## Known limits to say out loud
 
-- **Teams is the local Test Tool, not a real tenant.** The real tenant is UBS-142.
-  Alert cards in Teams need UBS-120, which is not on main yet. Until then, alerts
-  show at the Magic stub and in the alerts API.
-- **A second outage of the same agent does not alert again** (UBS-136).
-- **The NL answer says "X rejected out of Y submitted (Z%)"**, but the rate's
-  denominator is acked + rejected (UBS-141). The reject reason shows as
-  "unspecified" even though the simulator writes reason codes (the events API
-  shows `OrderExceedsLimit`). The query layer looks up `reject_reason`, but the
-  agent publishes `rejectReason`. That is a backend fix, not part of this demo.
+- **Teams is the local Agents Playground, not a real tenant.** The real tenant is
+  UBS-142.
+- **The reject reason shows as "unspecified"**, even though the simulator writes
+  reason codes (the events API shows `OrderExceedsLimit`). The query layer looks up
+  `reject_reason`, but the agent publishes `rejectReason`
+  (`telemetry_shared/query/aliases.py`). That is a backend fix, not part of this demo.
+- **Free-form questions go through a small local LLM (llama3.2 3b).** It can make up
+  a filter value (e.g. `instanceId: "orders"`) and then answer 0. Stick to the
+  suggested questions on stage.
 - **Steps 6 and 7 are a graceful stop.** Crash and disconnected-loss bounds are
   covered by FR-PUB-008 and ADR 0010, not by this demo.
-- **No sentinel leak test is shown.** That is UBS-137 (#5).
+- **The leak sentinel (#5) is not a demo step.** Show it by running
+  `uv run pytest -q tests/integration/test_UBS_137_data_leak_sentinel.py` (UBS-137).
+
+Fixed on main since the first version of this runbook:
+- **Alert cards in the chat (UBS-120)** are on in the demo profile.
+- **A second outage of the same agent** now alerts again (UBS-136).
+- **The reject summary** states the rate in its own sentence (UBS-141).
+
+## Alert cards in the chat (UBS-120)
+
+`config/demo/backend.yaml` turns on `notifications.teams`. When an alert fires and
+when it resolves, the backend posts the alert to the bot's `/api/notify`, and the bot
+sends an Adaptive Card into the chat.
+
+- Every launcher (`scripts.demo`, `demo_windows.bat`, `demo_mac/demo.sh`)
+  generates `MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN` for each run and gives it to the
+  backend and the bot. Set it yourself to use a fixed value. The backend refuses to
+  start without it, by design.
+- The bot runs with `TEAMS_NOTIFY_ALLOW_PERSONAL=true`, because the Playground is a
+  1:1 chat.
+- **Say "hi" to the bot once** after it starts. The bot only learns which chat to post
+  into from a message (it saves it to `.teams-state/conversation.json`). Until then the
+  backend logs a 409 for each card and counts it.
+- Expect one card per firing and one per resolve: `burst` gives HighRejectRate and
+  RejectSpike, `normal` resolves them, and `agent-stop` gives AgentHeartbeatMissing.
+  A severity step-down (critical to warning) posts nothing.
 
 ## Windows notes
 

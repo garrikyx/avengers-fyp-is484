@@ -25,6 +25,13 @@ export MAGIC_TELEMETRY_ID_HASH_KEY="dev-only"
 export MAGIC_TELEMETRY_PUBLISH_TOKEN="dev-local-token"
 export MAGIC_TELEMETRY_CALLBACK_SECRET="dev-local-secret"
 export TELEMETRY_BACKEND_URL="$BACKEND"
+# UBS-120 alert cards: demo.sh start writes one random secret per run to
+# $RUN/notify-token. Every component script reads it from there, because a new
+# Terminal.app window does not inherit this shell's environment.
+if [ -z "${MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN:-}" ] && [ -f "$RUN/notify-token" ]; then
+  MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN="$(cat "$RUN/notify-token")"
+fi
+export MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN="${MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN:-}"
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
 

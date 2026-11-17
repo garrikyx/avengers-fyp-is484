@@ -87,3 +87,24 @@ def test_component_scripts_use_the_demo_configs() -> None:
     assert "--app-faults" in text["simulator"]
     assert "ANONYMOUS_ALLOWED=true" in text["teams_bot"]
     assert "-e http://localhost:3978/api/messages" in text["playground"]
+
+
+def test_demo_turns_on_ubs120_alert_cards_in_every_launcher() -> None:
+    """UBS-120 cards need notifications on, a per-run token for backend and bot,
+    and a bot that accepts the Playground's 1:1 chat."""
+    import yaml
+
+    config = yaml.safe_load(
+        (ROOT / "config" / "demo" / "backend.yaml").read_text(encoding="utf-8")
+    )
+    assert config["notifications"]["teams"]["enabled"] is True
+
+    demo_py = (ROOT / "scripts" / "demo.py").read_text(encoding="utf-8")
+    bat = BAT.read_text(encoding="utf-8")
+    mac = (MAC / "demo.sh").read_text(encoding="utf-8")
+    mac_env = (MAC / "_env.sh").read_text(encoding="utf-8")
+    bot = (MAC / "teams_bot.sh").read_text(encoding="utf-8")
+    for launcher in (demo_py, bat, mac + mac_env):
+        assert "MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN" in launcher
+    for bot_launcher in (demo_py, bat, bot):
+        assert "TEAMS_NOTIFY_ALLOW_PERSONAL" in bot_launcher

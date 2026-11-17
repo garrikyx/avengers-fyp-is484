@@ -25,3 +25,14 @@ nl:
     warmUp: true
     structuredOutput: true
     requireApiKey: false
+
+# UBS-120: push a card into the Agents Playground chat when an alert fires and
+# when it resolves. The launchers (scripts/demo.py, demo_windows.bat,
+# demo_mac/demo.sh) generate MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN per run for the
+# backend and the bot, and start the bot with TEAMS_NOTIFY_ALLOW_PERSONAL=true
+# (the Playground is a 1:1 chat). Say "hi" to the bot once so it remembers the chat.
+notifications:
+  teams:
+    enabled: true
+    endpoint: http://127.0.0.1:3978/api/notify
+    timeout: 5s

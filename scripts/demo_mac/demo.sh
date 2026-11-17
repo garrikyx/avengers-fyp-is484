@@ -99,9 +99,14 @@ preflight() {
 
 cmd_start() {
   preflight
+  local token="${MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN:-}"
   rm -rf "$RUN"
   mkdir -p "$RUN/logs" "$PIDS" "$PROC"
   save_sim "$NORMAL_RATE" 0
+  # UBS-120: one random secret per run for the backend and the bot (no dev fallback).
+  [ -n "$token" ] || token="$("$PY" -c 'import secrets; print(secrets.token_hex(24))')"
+  (umask 077 && printf '%s\n' "$token" >"$RUN/notify-token")
+  export MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN="$token"
   say "Fresh run folder: $RUN (view: $(view_mode))"
 
   say "=== 1. Backend :8080 ==="
@@ -135,7 +140,8 @@ cmd_start() {
   fi
 
   say ""
-  say "All components started. Ask the playground: \"$HEADLINE\""
+  say "All components started. Say \"hi\" in the Agents Playground first, so the bot"
+  say "remembers the chat for alert cards (UBS-120). Then ask: \"$HEADLINE\""
   say "Copilot / MCP Inspector: http://127.0.0.1:8765/mcp"
   say "Let normal trading run for 3+ minutes before \"burst\": the anomaly rules"
   say "(AbnormalRejectRate, AbnormalExecutionIssueRate) need that baseline."

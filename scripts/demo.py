@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -65,6 +66,8 @@ DEV_ENV = {
         "00000000-0000-0000-0000-000000000000"
     ),
     "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED": "true",
+    # UBS-120 alert cards: the Playground is a 1:1 chat.
+    "TEAMS_NOTIFY_ALLOW_PERSONAL": "true",
     "TELEMETRY_BACKEND_URL": BACKEND,
     "PYTHONUNBUFFERED": "1",
     "PYTHONIOENCODING": "utf-8",
@@ -178,6 +181,9 @@ class Demo:
         self.auto = auto
         self.teams = teams
         self.env = {**os.environ, **DEV_ENV}
+        # UBS-120: one random secret per run, shared by the backend and the bot
+        # (the backend deliberately has no dev fallback for it).
+        self.env.setdefault("MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN", secrets.token_hex(24))
         self.http = httpx.Client(base_url=BACKEND, timeout=15.0)
         self.procs: dict[str, Proc] = {}
 

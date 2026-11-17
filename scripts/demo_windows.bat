@@ -71,6 +71,9 @@ powershell -NoProfile -Command "try { $m = (Invoke-RestMethod http://127.0.0.1:1
 if exist "%RUN%" rmdir /s /q "%RUN%"
 mkdir "%RUN%\logs"
 echo Fresh run folder: %RUN%
+rem UBS-120 alert cards: one random secret per run, shared by the backend and the
+rem bot (the backend has no dev fallback). A value you set yourself is kept.
+if not defined MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN for /f %%T in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')"') do set "MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN=%%T"
 call :save_sim %NORMAL_RATE% 0
 
 echo === 1. Backend :8080 ===
@@ -88,7 +91,7 @@ echo === 4. Agent ===
 call :start_agent
 
 echo === 5. Teams bot :3978 ===
-start "%TITLE%: 5 Teams bot :3978" /D "%ROOT%" cmd /k "set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=00000000-0000-0000-0000-000000000000"&& set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=dummy"&& set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=00000000-0000-0000-0000-000000000000"&& set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED=true"&& "%VENV%\telemetry-teams.exe""
+start "%TITLE%: 5 Teams bot :3978" /D "%ROOT%" cmd /k "set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=00000000-0000-0000-0000-000000000000"&& set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=dummy"&& set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=00000000-0000-0000-0000-000000000000"&& set "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED=true"&& set "TEAMS_NOTIFY_ALLOW_PERSONAL=true"&& "%VENV%\telemetry-teams.exe""
 call :wait_port 3978 "Teams bot" || exit /b 1
 
 echo === 6. MCP server for Copilot :8765 ===
@@ -100,7 +103,9 @@ rem set DEMO_SKIP_TEST_TOOL=1 to skip this window (e.g. when showing Copilot onl
 if defined DEMO_SKIP_TEST_TOOL (echo   skipped: DEMO_SKIP_TEST_TOOL is set) else start "%TITLE%: 7 Teams App Test Tool" /D "%ROOT%" cmd /k "npx -y @microsoft/teams-app-test-tool start -e http://localhost:3978/api/messages -c msteams"
 
 echo.
-echo All windows started. Ask the Test Tool: "Why are Magic orders rejecting in the last 30 minutes?"
+echo All windows started. Say "hi" in the Agents Playground (http://localhost:56150) first,
+echo so the bot remembers the chat for alert cards (UBS-120). Then ask:
+echo   "Why are Magic orders rejecting in the last 30 minutes?"
 echo Copilot / MCP Inspector: http://127.0.0.1:8765/mcp
 echo.
 echo Let normal trading run for 3+ minutes before "burst": the anomaly rules
