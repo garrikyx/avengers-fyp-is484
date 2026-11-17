@@ -54,11 +54,10 @@ HeartbeatMonitor (AgentHeartbeatMissing) ─────────────
 
 ## Known gaps
 
-- **AgentHeartbeatMissing alerts only once per agent** (pre-existing, flagged as a bug
-  for next sprint). `HeartbeatMonitor` uses one `alertId` per agent, and the store will
-  not reopen a resolved `alertId`, so a second outage stays `resolved`. A strict `xfail`
-  test (`test_a_second_outage_of_the_same_agent_posts_again`) marks it, and starts
-  failing once the monitor rotates `alertId` per outage.
+- ~~AgentHeartbeatMissing alerts only once per agent~~. **Fixed by UBS-136** (on main),
+  which rotates the heartbeat `alertId` per outage.
+  `test_a_second_outage_of_the_same_agent_posts_again` now passes, so its `xfail`
+  marker was removed.
 - Dedupe state is in memory. After a backend restart the store is empty too, so only new
   transitions post: no re-posting of old alerts, and no missed resolve cards for alerts
   that resolved while the backend was down.

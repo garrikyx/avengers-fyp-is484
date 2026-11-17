@@ -216,16 +216,8 @@ def test_heartbeat_missing_posts_once_per_outage_despite_re_merges() -> None:
     assert sink.sent[0].alert.rule_name == "AgentHeartbeatMissing"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known bug (flagged for next sprint): HeartbeatMonitor reuses one "
-        "alertId per agent, and the Alert Store will not reopen a resolved "
-        "alertId (FR-QRY-019), so a second outage of the same agent never "
-        "fires. Remove this xfail when the monitor rotates alertId per outage."
-    ),
-)
 def test_a_second_outage_of_the_same_agent_posts_again() -> None:
+    # UBS-136 rotates the heartbeat alertId per outage, so each outage posts.
     sink = _heartbeat_scenario(outages=2)
     assert [n.kind for n in sink.sent] == ["firing", "resolved", "firing", "resolved"]
 
