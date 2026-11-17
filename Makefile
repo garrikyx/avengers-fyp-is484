@@ -1,4 +1,4 @@
-.PHONY: sync parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint agent-load \
+.PHONY: sync ci requirement-coverage parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint agent-load \
 	ollama-check ollama-setup backend-run simulator-run agent-run teams-run playground mcp-inspector
 
 # Local LLM for the NL query path (spec 008). Keep OLLAMA_MODEL in step with
@@ -9,6 +9,16 @@ BACKEND_CONFIG ?= config/backend.yaml
 
 sync:
 	uv sync
+
+# UBS-140: full 5-minute outage at Q-1's synthetic target. Reports gaps and
+# exits nonzero when acceptance is incomplete. See docs/plan/ubs140-day1-acceptance.md.
+.PHONY: day1-acceptance day1-acceptance-test
+ACCEPTANCE_ARGS ?=
+day1-acceptance: sync
+	uv run python -m scripts.day1_acceptance $(ACCEPTANCE_ARGS)
+
+day1-acceptance-test: sync
+	uv run pytest tests/integration/test_UBS_140_day1_acceptance.py -v
 
 parser-test: sync
 	uv run pytest tests/unit/agent/parser/ -v
@@ -111,6 +121,19 @@ mcp-test: sync
 agent-load: sync
 	uv run python tools/agent_load.py --rate 5000 --seconds 300
 	uv run python tools/agent_load.py --rate 20000 --seconds 60
+
+# Same checks as .github/workflows/ci.yml (UBS-138).
+ci:
+	uv sync --all-packages
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy apps packages
+	uv run pytest
+
+# FR-TST-001: which spec requirement IDs have no referencing test. Report-only;
+# add --fail-on-uncovered to gate on it.
+requirement-coverage:
+	uv run python scripts/requirement_coverage.py
 
 lint:
 	uv run ruff check .

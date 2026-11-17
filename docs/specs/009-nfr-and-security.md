@@ -43,6 +43,16 @@ inputs.
 
 ## 3. Security
 
+**NFR-REL-004 restart boundary (ADR 0010).** The Day-1 acceptance scenario requires
+zero lost or duplicated counters after a graceful restart with a reachable backend,
+within configured queue/buffer capacity and shutdown grace. Queued work is drained,
+the open bucket is exported, and new-run contributions do not overwrite old ones.
+An abrupt process loss or restart while disconnected cannot preserve unpublished
+in-memory buffers, open/dirty buckets or rule/latency state (FR-PUB-008). Loss is
+bounded by those configured memory/retention limits, not guaranteed to be zero.
+Checkpoint replay may duplicate data; affected buckets MUST be marked, and no raw
+log replay service or disk spool is introduced to disguise this limitation.
+
 ### 3.1 Data minimisation
 
 | ID            | Requirement                                                                                                                                                                                                                                                                                                                                                       |

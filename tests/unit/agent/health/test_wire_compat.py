@@ -38,7 +38,8 @@ def test_unmeasured_signals_become_zero_not_null() -> None:
     assert wire.publish_buffer_bytes == 0
     assert wire.dropped_events_last5_min == 0
     assert wire.active_alert_count == 0
-    assert (wire.resource_usage.rss_mb, wire.resource_usage.active_tasks) == (0.0, 0)
+    # Unlike the counts above, resourceUsage has a null: it is omitted, not 0.
+    assert wire.resource_usage is None
 
 
 def test_measured_signals_are_carried_through_unchanged() -> None:

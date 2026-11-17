@@ -20,8 +20,10 @@ _RULE_NAME = "AgentHeartbeatMissing"
 _DEFAULT_APPLICATION = "Magic"
 
 
-def backend_alert_id(agent_id: str) -> str:
-    digest = hashlib.sha256(f"{_RULE_NAME}:{agent_id}".encode()).hexdigest()
+def backend_alert_id(agent_id: str, occurrence_utc: datetime) -> str:
+    """Stable per outage; rotates when a new occurrence starts (FR-QRY-019, UBS-136)."""
+    key = occurrence_utc.replace(microsecond=0).isoformat()
+    digest = hashlib.sha256(f"{_RULE_NAME}:{agent_id}:{key}".encode()).hexdigest()
     return f"backend-{_RULE_NAME.lower()}-{digest[:16]}"
 
 
@@ -40,15 +42,21 @@ class HeartbeatMonitor:
         self._alert_store = alert_store
         self._config = config or AlertingConfig()
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
-        self._firing: set[str] = set()
+        self._firing: dict[str, str] = {}
 
     def _build_firing_event(
-        self, *, agent_id: str, application: str, instance_id: str, age_seconds: float
+        self,
+        *,
+        alert_id: str,
+        agent_id: str,
+        application: str,
+        instance_id: str,
+        age_seconds: float,
     ) -> AlertEvent:
         now = self._now_fn()
         threshold = float(self._config.missing_heartbeat_threshold_seconds)
         return AlertEvent(
-            alert_id=backend_alert_id(agent_id),
+            alert_id=alert_id,
             rule_name=_RULE_NAME,
             severity="critical",
             status="firing",
@@ -66,12 +74,17 @@ class HeartbeatMonitor:
         )
 
     def _build_resolved_event(
-        self, *, agent_id: str, application: str, instance_id: str
+        self,
+        *,
+        alert_id: str,
+        agent_id: str,
+        application: str,
+        instance_id: str,
     ) -> AlertEvent:
         now = self._now_fn()
         threshold = float(self._config.missing_heartbeat_threshold_seconds)
         return AlertEvent(
-            alert_id=backend_alert_id(agent_id),
+            alert_id=alert_id,
             rule_name=_RULE_NAME,
             severity="critical",
             status="resolved",
@@ -99,31 +112,36 @@ class HeartbeatMonitor:
             record = self._registry.get(agent_id)
             if record is None:
                 continue
+            if agent_id not in self._firing:
+                self._firing[agent_id] = backend_alert_id(agent_id, now)
+            alert_id = self._firing[agent_id]
             instance_id = self._instance_id(agent_id, record.instance_ids)
             age = (now - record.received_at).total_seconds()
             event = self._build_firing_event(
+                alert_id=alert_id,
                 agent_id=agent_id,
                 application=_DEFAULT_APPLICATION,
                 instance_id=instance_id,
                 age_seconds=age,
             )
             self._alert_store.merge(event, source="backend", now=now)
-            self._firing.add(agent_id)
 
-        recovered = self._firing - stale_ids
+        recovered = set(self._firing) - stale_ids
         for agent_id in recovered:
             record = self._registry.get(agent_id)
             if record is None:
-                self._firing.discard(agent_id)
+                self._firing.pop(agent_id, None)
                 continue
+            alert_id = self._firing[agent_id]
             instance_id = self._instance_id(agent_id, record.instance_ids)
             event = self._build_resolved_event(
+                alert_id=alert_id,
                 agent_id=agent_id,
                 application=_DEFAULT_APPLICATION,
                 instance_id=instance_id,
             )
             self._alert_store.merge(event, source="backend", now=now)
-            self._firing.discard(agent_id)
+            self._firing.pop(agent_id, None)
 
     async def run(self) -> None:
         while True:
@@ -136,15 +154,17 @@ class HeartbeatMonitor:
             return
         record = self._registry.get(agent_id)
         if record is None:
-            self._firing.discard(agent_id)
+            self._firing.pop(agent_id, None)
             return
         now = self._now_fn()
         if not self._registry.is_stale(record, at=now):
+            alert_id = self._firing[agent_id]
             instance_id = self._instance_id(agent_id, record.instance_ids)
             event = self._build_resolved_event(
+                alert_id=alert_id,
                 agent_id=agent_id,
                 application=_DEFAULT_APPLICATION,
                 instance_id=instance_id,
             )
             self._alert_store.merge(event, source="backend", now=now)
-            self._firing.discard(agent_id)
+            self._firing.pop(agent_id, None)

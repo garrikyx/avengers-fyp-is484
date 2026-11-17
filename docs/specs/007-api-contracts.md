@@ -30,6 +30,13 @@ the real Teams demonstration; they do not imply per-user backend Entra enforceme
 
 ## 2. Ingestion
 
+**UBS-140 / ADR 0010:** batch, event and heartbeat `schemaVersion` remains 1.
+Nested snapshots support v1 and v2 independently. V2 requires `runId` (UUID) and
+`revision` (positive integer); their replacement/summation rules are defined in
+FR-MET-024. Unknown snapshot versions or v2 without those fields MUST be rejected.
+Deploy the backend accepting both versions before upgrading agents to v2. Legacy
+v1 snapshots omit both fields and retain their original serialization.
+
 ### 2.1 `POST /telemetry/batch` (primary agent path)
 
 Ingestion accepts `Content-Encoding: gzip` (`FR-PUB-002`) as well as uncompressed JSON.
@@ -273,6 +280,10 @@ transitions). `404` with `code: "not_found"` if unknown or evicted.
 }
 ```
 
+`resourceUsage` is `null` when the agent has no measurement (`host.enabled: false` or
+the read failed), and `activeTasks` is `null` when not measured; an unmeasured value is
+never reported as `0` (`FR-HLT-004`).
+
 `FR-HLT-011`: File paths are the only path-like data the API returns. They are
 configured values, never user input, and MUST NOT be interpolated into any filesystem
 operation on the backend.
@@ -311,6 +322,7 @@ exposed on a public listener.
     "metrics": ["orders_submitted", "orders_rejected", "rejectRate"]
   },
   "data": { "…": "the structured metrics response used to build the answer" },
+  "rejectReasonTrends": null,
   "citations": [
     { "type": "metrics_query", "queryId": "q-8f21" },
     { "type": "alert", "alertId": "alert-1024" }
@@ -327,6 +339,9 @@ exposed on a public listener.
   }]
 }
 ```
+
+`rejectReasonTrends` is non-null only for the `reject_reason_trend` intent (spec 008
+`FR-NLQ-031`): it is the §3.1 response the answer's numbers come from.
 
 `FR-NLQ-020`: The response MUST always include `interpretedQuery` and `data`. An answer
 the user cannot verify against numbers is not acceptable for operational use.

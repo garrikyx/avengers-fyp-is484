@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -59,6 +58,9 @@ class MonitorPipelineAdapter:
         self._log_type = log_type
         self._on_stage = on_stage
         path_map = monitors_by_resolved_path(monitor.monitors)
+        self._paths = {
+            name: str(m.file_path.resolve()) for name, m in monitor.monitors.items()
+        }
         if bridge.committer is None:
             bridge.attach_committer(path_map)
 
@@ -67,18 +69,22 @@ class MonitorPipelineAdapter:
             self._on_stage(message)
 
     def poll_once(
-        self, poll_interval: float = 0.05, halt: threading.Event | None = None
+        self,
+        poll_interval: float = 0.05,
+        *,
+        should_stop: Callable[[], bool] | None = None,
     ) -> list[ParsedEvent]:
-        """One pass over every file. Returns early once `halt` is set; lines read
-        but not yet ingested stay uncommitted, so a restart re-reads them
-        (FR-PIP-006)."""
         processed: list[ParsedEvent] = []
         any_line = False
         for name, monitor in self._monitor.monitors.items():
-            path = str(monitor.file_path.resolve())  # once per pass, not per line
+            read_count = 0
             for read_line in monitor.poll_lines():
-                if halt is not None and halt.is_set():
-                    return processed
+                # UBS-140 / NFR-REL-004: a continuous writer or a full line
+                # queue must not keep the pump alive after shutdown. Read-ahead
+                # is safe: FR-PIP-006 leaves these offsets uncommitted, so the
+                # next agent reads the unfinished lines from the source file.
+                if should_stop is not None and should_stop():
+                    return self._bridge.process_commits()
                 any_line = True
                 if self._on_stage is not None:
                     self._emit(
@@ -87,26 +93,33 @@ class MonitorPipelineAdapter:
                     )
                 meta = source_meta_from_read_line(
                     read_line,
-                    path=path,
+                    path=self._paths[name],
                     instance_id=self._instance_id,
                     log_type=self._log_type,
                     file_set=name,
                 )
-                # This thread is the only consumer of the event queue, so when the
-                # line queue is full the workers are waiting on us: ingest first,
-                # then wait briefly for a free slot (not the 0.5s put timeout).
                 while not self._bridge.enqueue_line(
                     read_line.text.encode("utf-8"),
                     meta,
                     self._parser_chain,
-                    timeout=0.01,
+                    timeout=0,
                 ):
-                    self._bridge.process_commits()
-                    if halt is not None and halt.is_set():
+                    processed.extend(self._bridge.process_commits())
+                    if should_stop is not None and should_stop():
                         return processed
+                    # This thread also drains the downstream queue. Waiting
+                    # on input capacity starves that drain and stalls workers.
+                    time.sleep(0.001)
+                processed.extend(self._bridge.process_commits())
                 if self._on_stage is not None:
                     stats = self._bridge.stats()
                     self._emit(f"[QUEUE] line_depth={stats.line_queue_depth}")
+                read_count += 1
+                if read_count >= 256:
+                    # Bound returned events and give other files a turn even
+                    # when a writer never lets this file reach EOF.
+                    break
+            monitor.checkpoint_if_due()
         if not any_line:
             time.sleep(poll_interval)
         processed.extend(self._bridge.process_commits())

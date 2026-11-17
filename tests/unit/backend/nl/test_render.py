@@ -61,8 +61,26 @@ def test_rejection_summary_leads_with_counts() -> None:
         RenderInput(intent="rejection_summary", data=data, application="Magic")
     )
     assert out.answer.startswith("Magic recorded 62 rejected")
-    assert "5.0%" in out.answer
+    assert "Reject rate is 5.0%." in out.answer
+    assert "out of 1250 submitted." in out.answer
+    assert "submitted (" not in out.answer
     assert len(out.chart_rows) >= 1
+
+
+def test_UBS_141_rejection_summary_rate_not_parenthetical_of_submitted() -> None:
+    """UBS-141: rejectRate is over acked+rejected, not submitted (FR-NLQ-015)."""
+    data = _response(
+        orders_submitted=100,
+        orders_rejected=10,
+        orders_acked=80,
+        rejectRate=10 / 90,
+    )
+    out = render_answer(
+        RenderInput(intent="rejection_summary", data=data, application="Magic")
+    )
+    assert "out of 100 submitted." in out.answer
+    assert "11.1%" in out.answer
+    assert "out of 100 submitted (" not in out.answer
 
 
 def test_completeness_caveat_in_answer() -> None:

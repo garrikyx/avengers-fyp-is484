@@ -53,8 +53,8 @@ forward. Adaptive thresholds, durable baselines and seasonality are still out.
 
 ## Not done / follow-ups
 
-- No NL intent for UBS-27 yet (catalogue, rule matcher, renderer); Teams and MCP reach
-  it only once that exists. The REST endpoint is ready for it.
+- ~~No NL intent for UBS-27~~ Done in UBS-143 (`reject_reason_trend`); Teams and MCP
+  reach it through `/telemetry/nl/query`.
 - Test mode (`--test-rule`) replays too few minutes to warm a 60-minute baseline;
   anomaly rules need a long replay to show a verdict.
 - Baseline state is in agent memory and restarts empty (about `4 x window` of warm-up).

@@ -20,6 +20,10 @@ What runs, and on which thread:
                       CallbackDispatcher -> Magic callback endpoint
                       ActionRunner -> a rule's actions on pending->firing,
                       one at a time (UBS-35, spec 005 s5)
+                      HostMonitor every host.sampleInterval (UBS-129): each
+                      blocking OS read runs in a worker thread, off the
+                      parsing path; the evaluator, snapshot emitter and
+                      heartbeat only read its latest immutable sample
 
 The pipeline thread and the loop share the metrics and health state, which is
 not thread-safe; everything that touches it from the loop holds
@@ -40,6 +44,7 @@ import logging
 import os
 import signal
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -64,7 +69,13 @@ from telemetry_agent.config import (
     DEFAULT_CONFIG_PATH,
     AgentConfig,
     AgentConfigError,
+    host_rule_filter,
     load_agent_config,
+)
+from telemetry_agent.health.host_monitor import (
+    HostMonitor,
+    HostSampler,
+    PsutilSampler,
 )
 from telemetry_agent.health.publishing import (
     connect_reporter_to_publisher,
@@ -88,6 +99,7 @@ from telemetry_agent.pipeline.monitor_adapter import (
 )
 from telemetry_agent.pipeline.supervisor import PipelineBridge
 from telemetry_agent.publishing.events import EventEmitter
+from telemetry_agent.publishing.outcome import PublishAction
 from telemetry_agent.publishing.publisher import BackendPublisher
 from telemetry_agent.publishing.sink import DryRunPublishSink, HttpsPublishSink
 from telemetry_agent.publishing.snapshot_bridge import SnapshotEmitter
@@ -124,6 +136,8 @@ class Agent:
     engine: RuleEngine
     evaluator: RuleEvaluator
     actions: ActionRunner
+    host_monitor: HostMonitor | None = None  # None when `host.enabled: false`
+    snapshot_emitter: SnapshotEmitter | None = None
 
 
 def _is_local(url: str) -> bool:
@@ -147,9 +161,11 @@ def build_agent(
     callback_transport: httpx.AsyncBaseTransport | None = None,
     started_at: datetime | None = None,
     env: Mapping[str, str] | None = None,
+    host_sampler: HostSampler | None = None,
 ) -> Agent:
-    """Wire every component from config. Transports, the engine start time
-    and the environment are injectable for tests; production passes none."""
+    """Wire every component from config. Transports, the engine start time,
+    the environment and the host sampler are injectable for tests; production
+    passes none."""
     env = os.environ if env is None else env
     local = _is_local(cfg.publish.endpoint) and (
         cfg.callbacks is None or _is_local(cfg.callbacks.endpoint)
@@ -157,6 +173,7 @@ def build_agent(
 
     # --- tail -> parse -> ingest (pipeline thread) -------------------------------
     cfg.logs.state_dir.mkdir(parents=True, exist_ok=True)
+    restarting = (cfg.logs.state_dir / "offsets.json").exists()
     for path in cfg.logs.paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch(exist_ok=True)
@@ -226,6 +243,14 @@ def build_agent(
     )
     with ingestor.lock:
         connect_reporter_to_publisher(reporter, publisher)
+    # --- host monitor (own task; UBS-129) ------------------------------------------
+    host_monitor: HostMonitor | None = None
+    host_gauges = None  # what the evaluator and snapshot emitter read
+    if cfg.host.enabled:
+        host_monitor = HostMonitor(cfg.host, host_sampler or PsutilSampler())
+        host_gauges = host_monitor.gauges
+        with ingestor.lock:
+            reporter.set_resource_usage_provider(host_monitor.resource_usage)
     events = EventEmitter(
         publisher,
         agent_id=cfg.agent_id,
@@ -332,6 +357,18 @@ def build_agent(
         on_event=ingestor.emit_alert,
     )
     evaluator_counters = CounterRegistry()  # shared so shutdown logs emitter skips
+    snapshot_emitter = SnapshotEmitter(
+        ingestor.aggregator,
+        publisher,
+        bucket_seconds=cfg.publish.metrics_bucket_seconds,
+        agent_id=cfg.agent_id,
+        application=APPLICATION,
+        instance_id=cfg.instance_id,
+        correlator=ingestor.correlator,
+        counters=evaluator_counters,
+        host_gauges=host_gauges,
+        restarted_at=datetime.now(UTC) if restarting else None,
+    )
     evaluator = RuleEvaluator(
         engine,
         ingestor.aggregator,
@@ -341,23 +378,21 @@ def build_agent(
         session_tracker=ingestor.session_tracker,
         publisher=publisher,
         dispatcher=dispatcher,
-        reloader=SighupRuleReloader(engine, cfg.rules_path, stage=stage_actions),
+        reloader=SighupRuleReloader(
+            engine,
+            cfg.rules_path,
+            stage=stage_actions,
+            keep=host_rule_filter(cfg.host),
+        ),
         interval_seconds=cfg.evaluation_interval_seconds,
         reload_check_seconds=cfg.rules_reload_check_seconds,
         lock=ingestor.lock,
         monotonic=ingestor.monotonic,
         counters=evaluator_counters,
         event_emitter=events,
-        snapshot_emitter=SnapshotEmitter(
-            ingestor.aggregator,
-            publisher,
-            bucket_seconds=cfg.publish.metrics_bucket_seconds,
-            agent_id=cfg.agent_id,
-            application=APPLICATION,
-            instance_id=cfg.instance_id,
-            correlator=ingestor.correlator,
-            counters=evaluator_counters,
-        ),
+        host_gauges=host_gauges,
+        host_counters=host_monitor.counters if host_monitor is not None else None,
+        snapshot_emitter=snapshot_emitter,
     )
     return Agent(
         config=cfg,
@@ -374,13 +409,15 @@ def build_agent(
         engine=engine,
         evaluator=evaluator,
         actions=actions,
+        host_monitor=host_monitor,
+        snapshot_emitter=snapshot_emitter,
     )
 
 
 def _pump(adapter: MonitorPipelineAdapter, halt: threading.Event) -> None:
     """The pipeline thread: tail, parse and ingest until told to stop."""
     while not halt.is_set():
-        adapter.poll_once(poll_interval=0.05, halt=halt)
+        adapter.poll_once(poll_interval=0.05, should_stop=halt.is_set)
 
 
 async def run_agent(agent: Agent, stop: asyncio.Event) -> None:
@@ -404,10 +441,15 @@ async def run_agent(agent: Agent, stop: asyncio.Event) -> None:
     pipeline.add_done_callback(_pipeline_died)
     delivery = asyncio.create_task(agent.dispatcher.run()) if agent.dispatcher else None
     action_runs = asyncio.create_task(agent.actions.run())
+    host = (
+        asyncio.create_task(agent.host_monitor.run(stop))
+        if agent.host_monitor
+        else None
+    )
     try:
         await asyncio.gather(agent.publisher.run(stop), agent.evaluator.run(stop))
     finally:
-        await _shutdown(agent, halt, pipeline, delivery, action_runs)
+        await _shutdown(agent, halt, pipeline, delivery, action_runs, host)
 
 
 async def _shutdown(
@@ -416,22 +458,39 @@ async def _shutdown(
     pipeline: asyncio.Task[None],
     delivery: asyncio.Task[None] | None,
     action_runs: asyncio.Task[None] | None = None,
+    host: asyncio.Task[None] | None = None,
 ) -> None:
+    deadline = time.monotonic() + SHUTDOWN_GRACE_SECONDS
     halt.set()
     with contextlib.suppress(Exception):
         await asyncio.wait_for(pipeline, SHUTDOWN_GRACE_SECONDS)
+    # FR-PIP-006: finish queued work before stopping consumers. Until committed,
+    # a line remains replayable from the source log after restart.
+    while time.monotonic() < deadline:
+        agent.bridge.process_commits()
+        if agent.bridge.pending_lines == 0:
+            break
+        await asyncio.sleep(0.001)
     agent.bridge.stop()
+    agent.bridge.process_commits()
     with agent.ingestor.lock:
         if agent.ingestor.event_emitter is not None:
             now = datetime.now(UTC)
             agent.ingestor.event_emitter.flush(now, force=True)
             agent.ingestor.event_emitter.emit("agent.stopping", at=now)
+        if agent.snapshot_emitter is not None:
+            agent.snapshot_emitter.emit(datetime.now(UTC), include_open=True)
         for log_monitor in agent.monitor.monitors.values():
             log_monitor.flush_commits()
     # One last batch so the final heartbeat and any routed alerts go out.
     with contextlib.suppress(Exception):
-        await asyncio.wait_for(agent.publisher.publish_once(), SHUTDOWN_GRACE_SECONDS)
-    for task in (delivery, action_runs):
+        while time.monotonic() < deadline:
+            action = await asyncio.wait_for(
+                agent.publisher.publish_once(), max(0.001, deadline - time.monotonic())
+            )
+            if not agent.publisher.queue_depth() or action is not PublishAction.COMMIT:
+                break
+    for task in (delivery, action_runs, host):
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -454,6 +513,8 @@ async def _shutdown(
         if agent.ingestor.event_emitter is not None
         else {},
     )
+    if agent.host_monitor is not None:
+        logger.info("host monitor %s", agent.host_monitor.counters.snapshot())
 
 
 def _install_signals(

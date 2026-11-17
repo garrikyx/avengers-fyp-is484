@@ -11,7 +11,7 @@ Present on every event, snapshot and heartbeat:
 
 | Field           | Type   | Notes                                                                                                        |
 | --------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
-| `schemaVersion` | int    | Currently `1`. Backend rejects unknown major versions.                                                       |
+| `schemaVersion` | int    | Snapshots support `1` (legacy) and `2` (ADR 0010); other envelopes remain `1`. Unknown versions are rejected.                                                       |
 | `agentId`       | string | Stable per agent deployment, e.g. `magic-agent-sg-01`. MUST match the authenticated identity (`FR-ING-002`). |
 | `application`   | string | `Magic` for Day-1; reserved for future applications.                                                         |
 | `instanceId`    | string | Logical Magic instance, e.g. `magic-prod-01`.                                                                |
@@ -149,9 +149,15 @@ observations defensively). Excess increments `events_rate_limited` and the heart
 
 ## 3. Metric snapshot
 
-`FR-MET-024`: One snapshot per completed 10s bucket per instance. Counters are **deltas
-for that bucket**, not cumulative totals — this makes the backend's merge associative
-and makes agent restarts harmless.
+`FR-MET-024`: Publish completed, configurable-width buckets per instance (10s general
+default; 1s Day-1 acceptance). Counters are **totals for one run within that bucket**,
+never cumulative across buckets. Late data MUST produce a higher-revision replacement.
+Snapshot v2 requires a fresh UUID `runId` per agent runtime and positive monotonically
+increasing `revision`. The backend sums different `(agentId, runId, bucketStartUtc)`
+contributions and replaces only with a higher revision of the same contribution;
+retries and older revisions MUST NOT change totals. Graceful shutdown MUST also export
+the open bucket within its deadline. Snapshot v1 remains supported without run/revision
+fields. See ADR 0010 for deployment order and crash-loss limits.
 
 ```json
 {
@@ -317,6 +323,17 @@ A gauge the agent cannot read MUST be omitted, never reported as `0`. A rule the
 reports `insufficient_data` instead of a false "disk empty" or "Magic down" (the same
 reasoning as `FR-MET-031`).
 
+`host_disk_used_ratio` is computed as `1 − free ÷ total` (the same free/total pair as
+`FR-HLT-013`), the space the agent's user can still write; `used ÷ total` under-reads on
+filesystems such as APFS. `gauges` carries no dimensions on the wire, so the `mount`
+dimension is encoded in the key: `host_disk_used_ratio` is the highest ratio over the
+readable mounts (what `HostDiskFull` reads), and each readable mount also has
+`host_disk_used_ratio:<mount>`, where `<mount>` is the `host.diskPaths` entry verbatim
+(everything after the first `:`). A mount the agent cannot read has no per-mount gauge
+and is not part of the maximum, so the maximum is over the readable mounts only. A
+failed read increments the agent counter `host_sample_errors` (dimension `instanceId`),
+carried as an ordinary counter series.
+
 ## 5. Dimensions and cardinality
 
 | Dimension               | Values                                                     | Cap                                     |
@@ -381,6 +398,9 @@ per instance per bucket MUST be capped at `maxSeriesPerBucket` (default 2000).
 
 `FR-HLT-002`: `status` is `healthy` | `degraded` | `unhealthy`, derived from a
 documented rule set in spec 011 §2 rather than hand-set per condition.
+
+`resourceUsage` is optional, as is its `activeTasks`: an agent with no measurement omits
+them rather than sending `0` (`FR-HLT-004`).
 
 ## 7. Schema evolution
 
