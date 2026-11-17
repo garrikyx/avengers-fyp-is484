@@ -173,7 +173,15 @@ class BackendPublisher:
             if not probe_due:
                 return None
 
-        heartbeat = self._heartbeat_provider() if self._heartbeat_provider else None
+        heartbeat = None
+        if self._heartbeat_provider is not None:
+            # A heartbeat that fails validation must not escape run() and stop
+            # the agent (NFR-REL-005): count it and publish the batch without it.
+            try:
+                heartbeat = self._heartbeat_provider()
+            except Exception:
+                self._counters.increment("heartbeat_errors")
+                self._logger.exception("heartbeat skipped: could not be built")
         items = self._buffer.take(self._max_batch_items)
         if not items and heartbeat is None:
             return None

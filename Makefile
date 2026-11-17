@@ -1,4 +1,4 @@
-.PHONY: sync ci requirement-coverage parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint \
+.PHONY: sync ci requirement-coverage parser-test pipeline-test pipeline-demo parser-demo metrics-demo metrics-quickstart metrics-bridge-quickstart rules-test rules-quickstart rules-reload-demo stream-processor-quickstart callback-test callback-demo publish-test publish-demo nl-eval mcp-run mcp-test lint agent-load \
 	ollama-check ollama-setup backend-run simulator-run agent-run teams-run playground mcp-inspector
 
 # Local LLM for the NL query path (spec 008). Keep OLLAMA_MODEL in step with
@@ -116,6 +116,11 @@ mcp-run: sync
 
 mcp-test: sync
 	uv run pytest tests/unit/mcp -v
+
+# NFR-PERF-001/003 footprint at Q-1 rates (~7 min); results: docs/plan/agent-load-test.md
+agent-load: sync
+	uv run python tools/agent_load.py --rate 5000 --seconds 300
+	uv run python tools/agent_load.py --rate 20000 --seconds 60
 
 # Same checks as .github/workflows/ci.yml (UBS-138).
 ci:

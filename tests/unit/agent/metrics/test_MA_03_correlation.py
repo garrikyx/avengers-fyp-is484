@@ -374,6 +374,56 @@ def test_hard_cap_eviction_evicts_the_oldest_and_counts_as_unmatched() -> None:
     assert correlator.stats.orphan_responses == 1  # unchanged: ORD-3 matched
 
 
+def test_ttl_sweep_evicts_only_the_expired_prefix() -> None:
+    _aggregator, correlator, clock = build()
+
+    correlator.ingest(new_order("ORD-1", at=_T0))
+    clock.advance(10 * 60)
+    correlator.ingest(new_order("ORD-2", at=_T0 + timedelta(minutes=10)))
+    clock.advance(5 * 60 + 1)  # ORD-1 is past the 15m TTL, ORD-2 is not
+    correlator.tick()
+
+    assert correlator.stats.ttl_evictions == 1
+    correlator.ingest(ack("ORD-2", at=_T0 + timedelta(minutes=15, seconds=2)))
+    assert correlator.stats.orphan_responses == 0
+
+
+def test_tick_expires_an_order_that_arrived_out_of_time_order() -> None:
+    # Two FIX logs read one after the other: an older order can arrive behind a
+    # newer one, so the per-line front check alone would never reach it.
+    _aggregator, correlator, clock = build()
+
+    correlator.ingest(new_order("ORD-NEW", at=_T0 + timedelta(minutes=10)))
+    correlator.ingest(new_order("ORD-OLD", at=_T0))
+    clock.advance(15 * 60 + 1)  # ORD-OLD is past the 15m TTL, ORD-NEW is not
+    correlator.tick()
+
+    assert correlator.stats.ttl_evictions == 1
+    assert correlator.pending_order_count() == 1  # only ORD-NEW
+
+
+def test_resent_order_moves_to_the_back_of_the_eviction_order() -> None:
+    clock = FakeClock()
+    aggregator = MetricsAggregator(
+        config=AggregatorConfig(metric_dimensions=dict(LATENCY_DIMENSIONS)), clock=clock
+    )
+    correlator = LatencyCorrelator(aggregator, clock=clock, max_entries=2)
+
+    correlator.ingest(new_order("ORD-1", at=_T0))
+    correlator.ingest(new_order("ORD-2", at=_T0 + timedelta(milliseconds=1)))
+    # Re-sending ORD-1 replaces its entry rather than evicting anything...
+    correlator.ingest(new_order("ORD-1", at=_T0 + timedelta(milliseconds=2)))
+    assert correlator.stats.cap_evictions == 0
+    # ...so the next order over the cap evicts ORD-2, now the oldest.
+    correlator.ingest(new_order("ORD-3", at=_T0 + timedelta(milliseconds=3)))
+    assert correlator.stats.cap_evictions == 1
+
+    correlator.ingest(ack("ORD-1", at=_T0 + timedelta(milliseconds=4)))
+    assert correlator.stats.orphan_responses == 0
+    correlator.ingest(ack("ORD-2", at=_T0 + timedelta(milliseconds=5)))
+    assert correlator.stats.orphan_responses == 1
+
+
 def test_implausibly_large_latency_is_an_anomaly_not_recorded() -> None:
     clock = FakeClock()
     aggregator = MetricsAggregator(

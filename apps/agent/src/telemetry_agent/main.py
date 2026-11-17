@@ -504,8 +504,9 @@ async def _shutdown(
                 await aclose()
     agent.monitor.close()
     logger.info(
-        "stopped: ingest %s, evaluator %s, publisher %s, events %s",
+        "stopped: ingest %s, pipeline %s, evaluator %s, publisher %s, events %s",
         agent.ingestor.stats(),
+        agent.bridge.stats().as_metrics(),
         agent.evaluator.counters.snapshot(),
         agent.publisher.counters.snapshot(),
         agent.ingestor.event_emitter.counters.snapshot()

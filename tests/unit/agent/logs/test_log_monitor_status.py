@@ -45,6 +45,20 @@ def test_status_after_read_reports_elapsed_lag(tmp_path: Path) -> None:
     assert 2990 <= lagged_status.read_lag_ms <= 3010
 
 
+def test_read_stamped_after_now_reports_zero_lag_not_negative(tmp_path: Path) -> None:
+    # The pump thread can read a line after the heartbeat took `now`; a negative
+    # lag fails heartbeat validation and used to stop the agent.
+    monitor, log_path = make_monitor(tmp_path)
+    log_path.write_text("line one\n", newline="\n")
+    list(monitor.poll_lines())
+    last_read_at = monitor.get_status().last_read_at
+    assert last_read_at is not None
+
+    status = monitor.get_status(now=last_read_at - timedelta(milliseconds=2))
+
+    assert status.read_lag_ms == 0.0
+
+
 def test_status_reports_offset_progress_between_polls(tmp_path: Path) -> None:
     monitor, log_path = make_monitor(tmp_path)
     log_path.write_text("first\n", newline="\n")
