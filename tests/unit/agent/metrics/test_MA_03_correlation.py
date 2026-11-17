@@ -20,6 +20,41 @@ _T0 = datetime.fromtimestamp(_CLOCK_START, tz=UTC)
 _ENVELOPE = dict(instance_id="magic-prod-01", session_id="MAGIC->EXCH1")
 
 
+def test_NFR_REL_009_reject_storm_does_not_accumulate_pending_or_expiry_state() -> None:
+    clock = FakeClock(start=_CLOCK_START)
+    aggregator = MetricsAggregator(
+        AggregatorConfig(metric_dimensions=LATENCY_DIMENSIONS), clock=clock
+    )
+    correlator = LatencyCorrelator(aggregator, clock=clock)
+    for i in range(2000):
+        key = str(i)
+        correlator.ingest(new_order(key))
+        correlator.ingest(ack(key, _T0, exec_type="Rejected", ord_status="Rejected"))
+    assert correlator.pending_order_count() == 0
+    assert len(correlator._expiry) <= 64
+    assert correlator.stats.unmatched_orders == 0
+
+
+def test_FR_MET_010_replaced_key_survives_stale_expiry_and_late_timestamps() -> None:
+    clock = FakeClock(start=_CLOCK_START)
+    aggregator = MetricsAggregator(
+        AggregatorConfig(metric_dimensions=LATENCY_DIMENSIONS), clock=clock
+    )
+    correlator = LatencyCorrelator(aggregator, clock=clock, ttl_seconds=10)
+    correlator.ingest(new_order("same"))
+    clock.advance(5)
+    correlator.ingest(new_order("same", at=_T0 + timedelta(seconds=5)))
+    correlator.ingest(new_order("late", at=_T0 - timedelta(seconds=1)))
+    clock.advance(6)
+    correlator.tick()
+    assert correlator.pending_order_count() == 1
+    assert correlator.stats.ttl_evictions == 1  # only late, not replaced context
+    clock.advance(5)
+    correlator.tick()
+    assert correlator.pending_order_count() == 0
+    assert correlator.stats.ttl_evictions == 2
+
+
 def new_order(
     cl_ord_id_hash: str, at: datetime = _T0, **overrides: object
 ) -> NewOrderEvent:

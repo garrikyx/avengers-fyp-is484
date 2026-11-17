@@ -162,7 +162,11 @@ long-running agent even though bucket *data* expires):
 - `max_series_per_bucket` (default 2000, `FR-MET-030`) — total series summed
   across *every* metric per bucket, a separate and often tighter guard: two
   metrics can each be comfortably under their own cap and still sum past this
-  one.
+  one. The last 200 slots are reserved for the metrics that `level:` and
+  signature rules read (`app_log_lines`, `app_log_errors`,
+  `app_error_signatures`; `RESERVED_SERIES_METRICS` in `metrics/counters.py`).
+  Every other metric folds at 1800, so FIX traffic that fills a bucket can't
+  fold away an `[F]` line. The total still never exceeds 2000.
 
 Either cap folds overflow into `__other__` and increments
 `MetricsAggregator.cardinality_folded` (`FR-MET-029`: "...and

@@ -150,8 +150,10 @@ not on every commit, and its failure MUST NOT block merges (it reports drift ins
 3. Inject a reject burst; assert `HighRejectRate` fires, the callback is received,
    signature verifies, and the alert appears in `GET /telemetry/alerts`.
 4. Rotate the log mid-burst; assert no gap beyond `NFR-REL-002`.
-5. Kill the backend for 2 minutes; assert alerting and callbacks continue and buffered
-   data is published on recovery.
+5. Make the backend unreachable for 5 minutes (300 real seconds in the full run);
+   assert alerting and callbacks continue and buffered data is published on recovery.
+   Preserve backend memory for this connectivity-outage scenario (ADR 0010); process
+   destruction and its accepted cache loss under FR-QRY-005 are tested separately.
 6. Restart the agent; assert resumption and `restarted: true` marking.
 7. Stop the burst; assert the alert resolves after `resolveAfter` and a resolution
    callback arrives.

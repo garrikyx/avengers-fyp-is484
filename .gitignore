@@ -60,6 +60,13 @@ offsets.json
 /.teams-state/
 
 #graphify
+# Project installs generate local agent integrations and backups.
+/.agents/skills/graphify/
+/.claude/CLAUDE.md
+/.claude/skills/graphify/
+/.codex/skills/graphify/
+/.claude/*.graphify-bak
+/.codex/*.graphify-bak
 graphify-out/cost.json
 graphify-out/*
 !graphify-out/graph.json

@@ -61,7 +61,7 @@ parsing:
 # --- Parser pipeline + rule evaluation (UBS-48/49, UBS-112, UBS-113) ---
 pipeline:
   parseWorkers: 1            # FixParser keeps per-session state: one worker
-  evaluationInterval: 10s    # RuleEvaluator tick
+  evaluationInterval: 100ms  # Day-1 five-second visibility profile (ADR 0010)
 
 # --- Host Monitor (UBS-129; spec 010 `host:`, spec 002 s7.1) ---
 # Samples OS counters only (never file contents). Feeds the host_* gauges behind
@@ -103,7 +103,8 @@ publish:
   # ^ Metrics, events, alerts and the heartbeat share this batch endpoint.
   allowInsecureEndpoint: true          # LOCAL DEV ONLY (plain http)
   dryRun: false
-  interval: 10s
+  interval: 1s
+  metricsBucketSeconds: 1    # Day-1 profile; backend retains its 10s canonical grid
   connectTimeout: 3s
   timeout: 10s
   maxBatchItems: 500

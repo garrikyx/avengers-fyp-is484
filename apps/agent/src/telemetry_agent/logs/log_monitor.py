@@ -308,7 +308,7 @@ class LogMonitor:
         )
         self._state_dirty = True
 
-    def _checkpoint_if_due(self, *, force: bool = False) -> None:
+    def checkpoint_if_due(self, *, force: bool = False) -> None:
         """Persist progress even when a continuously busy file never reaches EOF."""
         if not self._state_dirty:
             return
@@ -326,7 +326,7 @@ class LogMonitor:
             self._stall_reported = False
             if self._commit_on_read:
                 self._sync_harvester(harvester)
-                self._checkpoint_if_due()
+                self.checkpoint_if_due()
             yield read_line
 
     def _drain_retired_harvesters(self) -> Generator[ReadLine]:
@@ -392,21 +392,26 @@ class LogMonitor:
         # Stream lines from active harvester
         if self._harvester is None:
             self._check_stall()
-            self._checkpoint_if_due()
+            self.checkpoint_if_due()
             return
 
         yield from self._read_harvester(self._harvester)
         self._check_stall()
-        self._checkpoint_if_due()
+        self.checkpoint_if_due()
 
-    def ack_line(self, end_offset: int) -> None:
+    def ack_line(
+        self, end_offset: int, *, dev: int | None = None, ino: int | None = None
+    ) -> None:
         """Advance committed offset after successful parse+ingest (FR-PIP-006)."""
-        if self._harvester is None:
+        if (dev is None or ino is None) and self._harvester is None:
             return
+        if dev is None or ino is None:
+            assert self._harvester is not None
+            dev, ino = self._harvester.dev, self._harvester.ino
         self.offset_tracker.commit_offset(
             source_path=str(self.file_path),
-            dev=self._harvester.dev,
-            ino=self._harvester.ino,
+            dev=dev,
+            ino=ino,
             offset=end_offset,
         )
         self._state_dirty = True
@@ -437,7 +442,10 @@ class LogMonitor:
         last_read_at = self._harvester.last_read_at if self._harvester else None
         read_lag_ms: float | None = None
         if last_read_at is not None:
-            read_lag_ms = (now - last_read_at).total_seconds() * 1000
+            # The reader may advance after the heartbeat captures `now`.
+            # A concurrent read (or backwards clock step) is zero lag, not a
+            # negative value that would invalidate and terminate publication.
+            read_lag_ms = max(0.0, (now - last_read_at).total_seconds() * 1000)
 
         return FileReadStatus(
             path=str(self.file_path),
@@ -465,4 +473,4 @@ class LogMonitor:
                 self._sync_harvester(harvester)
             harvester.close()
         self._startup_backfill_harvesters = []
-        self._checkpoint_if_due(force=True)
+        self.checkpoint_if_due(force=True)

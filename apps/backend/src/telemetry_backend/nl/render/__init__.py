@@ -142,12 +142,14 @@ def render_answer(inp: RenderInput) -> RenderOutput:
         if rejected is None and submitted is None:
             parts.append("No order activity in the selected time range.")
         else:
-            lead = (
+            parts.append(
                 f"{app} recorded {fmt.format_int(rejected)} rejected orders "
-                f"out of {fmt.format_int(submitted)} submitted "
-                f"({fmt.format_rate(rate if isinstance(rate, float) else None)})."
+                f"out of {fmt.format_int(submitted)} submitted."
             )
-            parts.append(lead)
+            parts.append(
+                f"Reject rate is "
+                f"{fmt.format_rate(rate if isinstance(rate, float) else None)}."
+            )
             ranked = fmt.top_groups_by_counter(groups, "orders_rejected")
             breakdown = fmt.breakdown_phrase(ranked, audience=inp.audience)
             if breakdown:
