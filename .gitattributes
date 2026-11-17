@@ -21,3 +21,7 @@ graphify-out/graph.json merge=graphify
 
 # same for the report
 graphify-out/GRAPH_REPORT.md linguist-generated=true
+# Windows batch files need CRLF line endings for labels and goto to work.
+*.bat text eol=crlf
+# Shell scripts must keep LF so bash runs them on macOS/Linux.
+*.sh text eol=lf

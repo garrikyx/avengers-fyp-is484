@@ -519,7 +519,14 @@ async def _shutdown(
 def _install_signals(
     loop: asyncio.AbstractEventLoop, agent: Agent, stop: asyncio.Event
 ) -> None:
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    # SIGBREAK (Windows only): Ctrl+Break is the only console signal another
+    # process can send to a Windows process group, so it is how a supervisor
+    # stops the agent gracefully there (drain, publish, checkpoint offsets).
+    stops = [signal.SIGINT, signal.SIGTERM]
+    sigbreak = getattr(signal, "SIGBREAK", None)
+    if sigbreak is not None:
+        stops.append(sigbreak)
+    for sig in stops:
         try:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:  # Windows event loop

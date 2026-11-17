@@ -151,3 +151,55 @@ def test_non_alert_answer_has_no_alert_citations() -> None:
     response = outcome.answer  # type: ignore[union-attr]
     assert response.intent == "latency_summary"
     assert not [c for c in response.citations if c.type == "alert"]
+
+
+_DEMO_RULES = (
+    "HighRejectRate",
+    "RejectSpike",
+    "AbnormalRejectRate",
+    "AbnormalExecutionIssueRate",
+    "AppOutOfMemory",
+    "AppLogFailure",
+)
+
+
+def _alert_status(store: AlertStore):  # type: ignore[no-untyped-def]
+    outcome = asyncio.run(
+        _service(store).interpret_and_query(
+            "Any alerts open for Magic?",
+            context=NlQueryContext(default_application="Magic"),
+            now=NOW,
+        )
+    )
+    assert outcome.kind == "answer"
+    return outcome.answer  # type: ignore[union-attr]
+
+
+def test_alert_status_lists_and_cites_every_active_alert_not_just_three() -> None:
+    """UBS-134 demo bug: 6 active alerts, but the answer listed and cited 3."""
+    store = AlertStore()
+    for n, rule in enumerate(_DEMO_RULES):
+        store.merge(make_alert_event(alert_id=f"a-{n}", rule_name=rule))
+
+    response = _alert_status(store)
+
+    assert "6 active alert(s)" in response.answer
+    assert "showing" not in response.answer
+    for rule in _DEMO_RULES:
+        assert rule in response.answer
+    cited = [c.alert_id for c in response.citations if c.type == "alert"]
+    assert len(cited) == 6
+    assert len(response.alert_summaries) == 6
+
+
+def test_alert_status_says_how_many_it_shows_when_there_are_too_many() -> None:
+    store = AlertStore()
+    for n in range(12):
+        store.merge(make_alert_event(alert_id=f"a-{n}", rule_name=f"Rule{n}"))
+
+    response = _alert_status(store)
+
+    assert "12 active alert(s)" in response.answer
+    assert "showing the newest 10 of 12" in response.answer
+    assert len([c for c in response.citations if c.type == "alert"]) == 10
+    assert len(response.alert_summaries) == 12

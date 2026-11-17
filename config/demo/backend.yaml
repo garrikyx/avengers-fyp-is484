@@ -1,0 +1,27 @@
+# UBS-134 demo profile for the Telemetry Backend. LOCAL DEMO ONLY.
+#
+# Same as config/backend.yaml, except AgentHeartbeatMissing fires after 20s
+# without a heartbeat instead of 60s, so the "agent stopped" step fits the demo.
+# The demo agent sends a heartbeat every 5s (config/demo/agent.yaml).
+#
+# NL uses local Ollama (llama3.2). Rule-matched questions, including the demo's
+# headline reject question, never reach the LLM, so they still answer without it.
+
+ingest:
+  maxBatchesPerMinutePerAgent: 120
+
+alerting:
+  missingHeartbeatThreshold: 20s
+
+nl:
+  enabled: true
+  llm:
+    provider: ollama
+    baseUrl: http://127.0.0.1:11434
+    model: llama3.2
+    timeout: 6s
+    keepAlive: 30m
+    numPredict: 256
+    warmUp: true
+    structuredOutput: true
+    requireApiKey: false

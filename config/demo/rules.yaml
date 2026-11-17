@@ -1,0 +1,81 @@
+# UBS-134 demo rules. LOCAL DEMO ONLY.
+#
+# Same HighRejectRate rule and tiers as config/rules.yaml (3% warning, 5%
+# critical), with the window and delays shortened so it fires and resolves
+# within a live demo. Production timings (5m window, for 2m, resolveAfter 5m)
+# stay in config/rules.yaml; FR-RUL-004 is still exercised, just faster.
+
+rules:
+  - name: HighRejectRate
+    kind: rate
+    source: indicator
+    metric: reject_rate
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 0.03
+      - severity: critical
+        threshold: 0.05
+    window: 1m       # shortest configured window (1m, 5m, 15m)
+    minSamples: 10
+    for: 10s
+    resolveAfter: 15s
+
+  # Showcase rules: same definitions as config/rules.yaml, demo delays.
+
+  # Fires with the burst (`demo_windows.bat burst`): > 50 rejects in 1 minute.
+  - name: RejectSpike
+    kind: threshold
+    source: counter
+    metric: orders_rejected
+    operator: ">"
+    tiers:
+      - severity: warning
+        threshold: 50
+    window: 1m
+    for: 10s
+    resolveAfter: 15s
+
+  # Fires when the log generator stops (close the simulator window).
+  - name: NoLogActivity
+    kind: absence
+    source: counter
+    metric: messages_total
+    extraCounters: [app_log_lines]
+    operator: "=="
+    tiers:
+      - severity: critical
+        threshold: 0
+    window: 1m
+    dependsOnLogActivity: false
+
+  # Application.log signature and level rules (UBS-122/128). The simulator
+  # writes a random [F] java.lang.OutOfMemoryError line, so these fire on
+  # their own while it runs.
+  - name: AppOutOfMemory
+    kind: signature
+    source: counter
+    metric: app_error_signatures
+    signature: out_of_memory
+    operator: ">="
+    tiers:
+      - severity: warning
+        threshold: 1
+      - severity: critical
+        threshold: 3
+    window: 1m
+    for: 0s
+    dependsOnLogActivity: false
+
+  - name: AppLogFailure
+    kind: threshold
+    source: counter
+    metric: app_log_errors
+    level: F
+    operator: ">="
+    tiers:
+      - severity: critical
+        threshold: 1
+    window: 1m
+    for: 0s
+    dependsOnLogActivity: false

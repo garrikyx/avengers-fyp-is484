@@ -1,0 +1,74 @@
+# UBS-134 demo profile for the Telemetry Agent. LOCAL DEMO ONLY.
+#
+# Started by `uv run python -m scripts.demo`, which runs the agent with its
+# working directory set to the demo run folder (.demo-run/), so the relative
+# log and state paths below point at the simulator's output there.
+#
+# Differences from config/agent.yaml, all to fit a ~10-minute live demo:
+# - heartbeat every 5s, so the backend notices a stopped agent quickly;
+# - demo rules (rules.yaml next to this file) with short windows and delays;
+# - host monitor off, so host gauges don't add noise to the story.
+# Everything else (Day-1 1s buckets/publication, 100ms evaluation, local
+# callback receiver on :9000, backend on :8080) matches the dev config.
+
+agent:
+  id: magic-agent-sg-01
+  instanceIds: [magic-prod-01]
+  version: 0.1.0
+
+heartbeat:
+  interval: 5s
+
+logs:
+  paths:
+    - ./logs/Application.log
+    - ./logs/Fix.log
+  stateDir: ./.agent-state
+  appLogPatterns:
+    - '^\d{2}:\d{2}:\d{2}\.\d+ <\d+> \[[NWEIF]+\]'
+
+parsing:
+  errorSignatures:
+    - label: out_of_memory
+      match: "OutOfMemoryError|std::bad_alloc"
+    - label: db_connection_lost
+      match: "connection (lost|refused).*(db|database)"
+    - label: connection_disconnected
+      match: "connection disconnected"
+    - label: connection_timeout
+      match: "timed out after"
+    - label: venue_connection_failed
+      match: "failed to complete connection"
+  maxDynamicSignatureLabels: 50
+
+pipeline:
+  parseWorkers: 1
+  evaluationInterval: 100ms  # Day-1 five-second visibility profile (ADR 0010)
+
+host:
+  enabled: false
+
+rules:
+  path: rules.yaml
+  reloadCheckInterval: 10s
+
+publish:
+  enabled: true
+  endpoint: http://127.0.0.1:8080/telemetry/batch
+  allowInsecureEndpoint: true          # LOCAL DEMO ONLY (plain http)
+  dryRun: false
+  interval: 1s
+  metricsBucketSeconds: 1
+  connectTimeout: 3s
+  timeout: 10s
+  retry: { base: 1s, factor: 2, cap: 5s, jitter: 0.2 }
+
+callbacks:
+  enabled: true
+  endpoint: http://127.0.0.1:9000/magic/callbacks/telemetry-alerts
+  allowInsecureCallback: true          # LOCAL DEMO ONLY (plain http)
+  dryRun: false
+  connectTimeout: 3s
+  timeout: 10s
+  maxAttempts: 5
+  retry: { base: 1s, factor: 2, cap: 10s, jitter: 0.2 }

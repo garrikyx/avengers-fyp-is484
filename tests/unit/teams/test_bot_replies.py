@@ -9,8 +9,9 @@ from __future__ import annotations
 import re
 
 import httpx
+from telemetry_shared.models.alerts_query import AlertDelivery
 from telemetry_shared.models.metrics_query import DataCompleteness, QueryGroup
-from telemetry_shared.models.nl_query import NlCitation
+from telemetry_shared.models.nl_query import NlAlertSummary, NlCitation
 
 from tests.unit.teams.fixtures import (
     answer,
@@ -386,3 +387,29 @@ def test_card_sections_follow_the_answer_order() -> None:
     caveats = position(lambda i: "default time range" in " ".join(texts(i)))
     assert headline == 0
     assert headline < breakdown < alert < caveats
+
+
+def test_alert_badge_counts_every_active_alert_not_only_the_cited_ones() -> None:
+    """UBS-134 demo bug: the text said 6 active alerts, the badge said 3."""
+    summaries = [
+        NlAlertSummary(
+            alert_id=f"a-{n}",
+            rule_name=f"Rule{n}",
+            severity="critical",
+            status="firing",
+            instance_id="magic-prod-01",
+            delivery=AlertDelivery(status="delivered", attempts=1),
+        )
+        for n in range(6)
+    ]
+    response = answer(
+        citations=[NlCitation(type="alert", alert_id=f"a-{n}") for n in range(3)]
+    ).model_copy(update={"alert_summaries": summaries})
+    exchange = converse(message("any alerts?"), json_ok(response))
+
+    badges = [
+        c
+        for c in exchange.card["body"]
+        if c.get("type") == "Container" and c.get("style") == "attention"
+    ]
+    assert "6 active alerts" in texts(badges[0])[0]

@@ -66,3 +66,5 @@ graphify-out/*
 !graphify-out/manifest.json
 # Teams app package output
 apps/teams/appPackage/dist/
+# UBS-134 demo run folder (logs, offsets, process output)
+.demo-run/
