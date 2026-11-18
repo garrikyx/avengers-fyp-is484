@@ -35,6 +35,7 @@ def validate_interpreted_query(
     engine: QueryEngine,
     store: MetricStore,
     now: datetime,
+    default_last: str,
 ) -> ValidationResult:
     issues = _schema_issues(interpreted)
     if issues:
@@ -43,6 +44,25 @@ def validate_interpreted_query(
     clamped_range, clamp_caveats = _clamp_time_range(
         interpreted.time_range, store=store, now=now
     )
+    if clamped_range is None:
+        # Nothing of the range is retained (e.g. "yesterday" with 6 hours of
+        # data). A comparison can still use the recent window and the one
+        # before it; any other question has no data to answer from.
+        if interpreted.intent != "compare_period":
+            raise InterpretedValidationError(
+                [
+                    ValidationIssue(
+                        "timeRange",
+                        "the requested range is outside the retention window; "
+                        "earlier data is not retained.",
+                    )
+                ]
+            )
+        clamped_range = QueryTimeRange(last=default_last)
+        clamp_caveats = [
+            "The requested period is outside the retention window, so this "
+            f"compares the last {default_last} with the {default_last} before it."
+        ]
     if clamped_range is not interpreted.time_range:
         interpreted = interpreted.model_copy(update={"time_range": clamped_range})
 
@@ -106,7 +126,8 @@ def _schema_issues(interpreted: InterpretedQuery) -> list[ValidationIssue]:
 
 def _clamp_time_range(
     time_range: QueryTimeRange, *, store: MetricStore, now: datetime
-) -> tuple[QueryTimeRange, list[str]]:
+) -> tuple[QueryTimeRange | None, list[str]]:
+    """The range clamped to retention, or None when none of it is retained."""
     caveats: list[str] = []
     if time_range.last is not None:
         return time_range, caveats
@@ -133,6 +154,8 @@ def _clamp_time_range(
         )
     if not changed:
         return time_range, caveats
+    if from_utc >= to_utc:
+        return None, caveats
     return (
         QueryTimeRange(from_utc=from_utc, to_utc=to_utc),
         caveats,

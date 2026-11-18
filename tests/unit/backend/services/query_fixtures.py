@@ -30,7 +30,7 @@ def make_snapshot(
     dimensions: dict[str, str] | None = None,
     bucket_start: datetime | None = None,
 ) -> Snapshot:
-    dims = dimensions or {"session_id": "MAGIC->EXCH1", "symbol": "ABC"}
+    dims = dimensions or {"session": "MAGIC->EXCH1", "symbol": "ABC"}
     return Snapshot(
         schema_version=1,
         agent_id=agent_id,

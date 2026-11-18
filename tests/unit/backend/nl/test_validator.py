@@ -38,7 +38,7 @@ def test_unknown_metric_is_rejected() -> None:
     )
     with pytest.raises(InterpretedValidationError):
         validate_interpreted_query(
-            interpreted, engine=engine, store=engine.store, now=NOW
+            interpreted, engine=engine, store=engine.store, now=NOW, default_last="30m"
         )
 
 
@@ -51,5 +51,5 @@ def test_symbol_drilldown_requires_symbol() -> None:
     )
     with pytest.raises(InterpretedValidationError):
         validate_interpreted_query(
-            interpreted, engine=engine, store=engine.store, now=NOW
+            interpreted, engine=engine, store=engine.store, now=NOW, default_last="30m"
         )

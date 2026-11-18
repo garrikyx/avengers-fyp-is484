@@ -64,7 +64,7 @@ def _service(
             store.merge(
                 make_snapshot(
                     counters={"orders_rejected": count},
-                    dimensions={"session_id": "S", "reject_reason": reason},
+                    dimensions={"session": "S", "rejectReason": reason},
                     bucket_start=start,
                 ),
                 canonical_start=start,

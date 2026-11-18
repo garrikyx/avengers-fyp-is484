@@ -26,21 +26,25 @@ make backend-run
 # or: uv run telemetry-backend --config config/backend.yaml
 ```
 
-**2. Simulator.** Writes fake Magic logs (`logs/Fix.log`, `logs/Application.log`) with orders, fills and rejects.
+**2. Simulator.** Writes fake Magic logs (`logs/Fix.log`, `logs/Application.log`) with
+orders, fills and rejects.
 
 ```sh
 make simulator-run
 # or: uv run python apps/simulator/src/simulator/mock_logger.py
 ```
 
-**3. Agent.** Reads those logs, turns them into metrics, and sends them to the backend every ~10s.
+**3. Agent.** Reads those logs, turns them into metrics, and sends them to the backend
+every ~10s.
 
 ```sh
 make agent-run
 # or: uv run telemetry-agent --config config/agent.yaml
 ```
 
-**4. Teams bot.** The bot itself, listening on :3978. The dummy credentials plus `ANONYMOUS_ALLOWED=true` let it run without an Azure app. **Dev only, never use this on a deployed bot.**
+**4. Teams bot.** The bot itself, listening on :3978. The dummy credentials plus
+`ANONYMOUS_ALLOWED=true` let it run without an Azure app. **Dev only, never use this on
+a deployed bot.**
 
 ```sh
 make teams-run
@@ -52,14 +56,15 @@ CONNECTIONS__SERVICE_CONNECTION__SETTINGS__ANONYMOUS_ALLOWED=true \
 uv run telemetry-teams
 ```
 
-**5. Agents Playground.** Microsoft's local Teams-style chat window, pointed at the bot. Needs Node; the first run downloads the tool.
+**5. Agents Playground.** Microsoft's local Teams-style chat window, pointed at the bot.
+Needs Node; the first run downloads the tool.
 
 ```sh
 make playground
 # or: npx @microsoft/teams-app-test-tool start -e http://localhost:3978/api/messages -c msteams
 ```
 
-Open http://localhost:56150. The log panel on the right should say "Connected". Type a
+Open <http://localhost:56150>. The log panel on the right should say "Connected". Type a
 question in the box at the bottom.
 
 If every answer says "0 submitted", restart the simulator: one started before the
@@ -68,19 +73,19 @@ order-flow change writes lines without orders.
 ## Questions to try
 
 The backend recognises ten kinds of question. Every phrasing below was sent to a running
-backend and answered by its rule matcher, with no LLM involved. The simulator and the agent
-must both be running: a short window like "last 15 minutes" is rejected ("available
-range is ...") when no data arrived in that window.
+backend and answered by its rule matcher, with no LLM involved. The simulator and the
+agent must both be running: a short window like "last 15 minutes" is rejected
+("available range is ...") when no data arrived in that window.
 
-| Ask about | Try |
-| --- | --- |
-| Why orders are rejecting | "Why are orders rejecting in the last 30 minutes?"<br>"What's the reject rate for the last 15 minutes?"<br>"Reject rate on instance magic-prod-01" |
-| Overall order flow | "How is Magic doing in the last 10 minutes?"<br>"How is Magic doing today?"<br>"Order flow summary for the last 1 hour" |
-| Alerts | "Any alerts open for Magic?"<br>"Show active alerts"<br>"Any alerts on magic-prod-01?" |
-| FIX sessions | "Are the FIX sessions up?"<br>"Session status for the last 1 hour" |
-| Is telemetry working | "Is telemetry actually working?"<br>"Agent health" |
-| Parse problems | "Are we failing to parse anything?"<br>"Show parse errors in the last 1 hour" |
-| Over time | "Show rejects over the last 1 hour"<br>"Reject trend over the last 2 hours" |
+| Ask about                | Try                                                                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Why orders are rejecting | "Why are orders rejecting in the last 30 minutes?", "What's the reject rate for the last 15 minutes?", "Reject rate on instance magic-prod-01" |
+| Overall order flow       | "How is Magic doing in the last 10 minutes?", "How is Magic doing today?", "Order flow summary for the last 1 hour"                            |
+| Alerts                   | "Any alerts open for Magic?", "Show active alerts", "Any alerts on magic-prod-01?"                                                             |
+| FIX sessions             | "Are the FIX sessions up?", "Session status for the last 1 hour"                                                                               |
+| Is telemetry working     | "Is telemetry actually working?", "Agent health"                                                                                               |
+| Parse problems           | "Are we failing to parse anything?", "Show parse errors in the last 1 hour"                                                                    |
+| Over time                | "Show rejects over the last 1 hour", "Reject trend over the last 2 hours"                                                                      |
 
 Also try:
 
@@ -97,25 +102,21 @@ Also try:
 - Wait a few minutes with the simulator running, then ask "Any alerts open for Magic?".
   An alert only shows if a rule has fired; the first card has none.
 
-**Known issues (backend, not the bot):**
-
-- "What's rejecting on AAPL?" answers "0 rejects" for every symbol. Filtering by symbol
-  returns nothing even when that symbol has rejects.
-- "Are rejects worse than yesterday?" fails with "fromUtc is not before toUtc": yesterday
-  is outside the 6-hour data window.
-- The breakdown by reject reason shows "All": the backend can't match the agent's
-  `rejectReason` and `instanceId` names when grouping.
+"Are rejects worse than yesterday?" can't compare with yesterday, because the backend
+keeps only 6 hours of data. It compares the last 30 minutes with the 30 minutes before
+and says so in the caveat line. Other questions about periods outside the window get a
+clarification instead of an answer.
 
 **Time wording matters.** These are understood: "last 15 minutes", "last 60 minutes",
-"last 2 hours", "last 1 hour", "today" (capped at 6 hours of data), "since 09:00", "between
-09:00 and 10:00". These are **not**: "last hour", "past hour", "since 9am", "between 9am
-and 10am". They silently use the default 30 minutes, and the card's caveat line says
-"Using default time range of last 30m."
+"last 2 hours", "last 1 hour", "today" (capped at 6 hours of data), "since 09:00",
+"between 09:00 and 10:00". These are **not**: "last hour", "past hour", "since 9am",
+"between 9am and 10am". They silently use the default 30 minutes, and the card's caveat
+line says "Using default time range of last 30m."
 
 Phrasings the rules don't match, such as "give me a rejection summary", go to the local
 Ollama model, which usually takes 1 to 5 seconds. If it can't answer within 6 seconds,
-the backend falls back to keyword matching or replies with suggested questions.
-Some answers (latency, sessions, trend) are short one-liners until UBS-99's full answer
+the backend falls back to keyword matching or replies with suggested questions. Some
+answers (latency, sessions, trend) are short one-liners until UBS-99's full answer
 renderer lands.
 
 ## Alert notifications (UBS-120)
@@ -133,8 +134,8 @@ never reads the backend's stores.
    `export MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN=<anything long>`.
 2. In `config/backend.yaml` set `notifications.teams.enabled: true`, then start the
    backend (step 1 above). Without the token it refuses to start, by design.
-3. Start the bot (step 4) with `TEAMS_NOTIFY_ALLOW_PERSONAL=true` as well. The Playground
-   is a 1:1 chat, and the bot otherwise only remembers group chats.
+3. Start the bot (step 4) with `TEAMS_NOTIFY_ALLOW_PERSONAL=true` as well. The
+   Playground is a 1:1 chat, and the bot otherwise only remembers group chats.
 4. Open the Playground (step 5) and **send any message**. That is how the bot learns
    which chat to post into. It is saved in `.teams-state/conversation.json`, so it
    survives a restart.
@@ -156,33 +157,34 @@ strict `xfail` test (`test_a_second_outage_of_the_same_agent_posts_again`) marks
 
 ## Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `TELEMETRY_BACKEND_URL` | `http://127.0.0.1:8080` | Backend public API base URL |
-| `TEAMS_DEFAULT_APPLICATION` | `Magic` | Application every question is scoped to |
-| `TEAMS_DEFAULT_TIMEZONE` | `Asia/Singapore` | Used when Teams does not report the user's timezone |
-| `TEAMS_BACKEND_TIMEOUT_SECONDS` | `12` | Backend request timeout; keep above the backend `nl.llm.timeout` (6s) |
-| `TEAMS_BIND_HOST` | `127.0.0.1` | Interface to listen on (use `0.0.0.0` in a container) |
-| `PORT` | `3978` | Port the bot listens on |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | | Azure app (client) ID |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | | Azure app secret, never commit |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | | Azure tenant ID |
-| `MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN` | | Shared secret the backend sends on `POST /api/notify`; unset closes the route |
-| `TEAMS_NOTIFY_STATE_PATH` | `.teams-state/conversation.json` | Where the remembered chat is saved |
-| `TEAMS_NOTIFY_CONVERSATION_ID` | | Only use this group chat for alerts |
-| `TEAMS_NOTIFY_ALLOW_PERSONAL` | `false` | Also accept a 1:1 chat (Agents Playground, demos only) |
+| Variable                                                  | Default                          | Purpose                                                                       |
+| --------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------- |
+| `TELEMETRY_BACKEND_URL`                                   | `http://127.0.0.1:8080`          | Backend public API base URL                                                   |
+| `TEAMS_DEFAULT_APPLICATION`                               | `Magic`                          | Application every question is scoped to                                       |
+| `TEAMS_DEFAULT_TIMEZONE`                                  | `Asia/Singapore`                 | Used when Teams does not report the user's timezone                           |
+| `TEAMS_BACKEND_TIMEOUT_SECONDS`                           | `12`                             | Backend request timeout; keep above the backend `nl.llm.timeout` (6s)         |
+| `TEAMS_BIND_HOST`                                         | `127.0.0.1`                      | Interface to listen on (use `0.0.0.0` in a container)                         |
+| `PORT`                                                    | `3978`                           | Port the bot listens on                                                       |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID`     |                                  | Azure app (client) ID                                                         |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` |                                  | Azure app secret, never commit                                                |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID`     |                                  | Azure tenant ID                                                               |
+| `MAGIC_TELEMETRY_TEAMS_NOTIFY_TOKEN`                      |                                  | Shared secret the backend sends on `POST /api/notify`; unset closes the route |
+| `TEAMS_NOTIFY_STATE_PATH`                                 | `.teams-state/conversation.json` | Where the remembered chat is saved                                            |
+| `TEAMS_NOTIFY_CONVERSATION_ID`                            |                                  | Only use this group chat for alerts                                           |
+| `TEAMS_NOTIFY_ALLOW_PERSONAL`                             | `false`                          | Also accept a 1:1 chat (Agents Playground, demos only)                        |
 
 A `.env` file in the working directory is loaded automatically (git-ignored; see
 `.env.example`).
 
 ## Real Teams (later, not tested against a real tenant)
 
-1. Create an **Azure Bot** (Single Tenant, new Entra app). Note the App ID and Tenant ID,
-   and create a client secret. Put the three values in `.env` instead of the dummy ones
-   in step 4, and drop `ANONYMOUS_ALLOWED`.
-2. Tunnel port 3978 (`ngrok http 3978` or a dev tunnel with anonymous access) and set the
-   bot's **Messaging endpoint** to `https://<tunnel>/api/messages`. Add the **Microsoft
-   Teams** channel.
-3. For a group chat, build the app package with `APP_ID=<app id> apps/teams/appPackage/build.sh`
-   and upload the zip in Teams (**Apps → Manage your apps → Upload a custom app**). Your
-   tenant may block custom app uploads.
+1. Create an **Azure Bot** (Single Tenant, new Entra app). Note the App ID and Tenant
+   ID, and create a client secret. Put the three values in `.env` instead of the dummy
+   ones in step 4, and drop `ANONYMOUS_ALLOWED`.
+2. Tunnel port 3978 (`ngrok http 3978` or a dev tunnel with anonymous access) and set
+   the bot's **Messaging endpoint** to `https://<tunnel>/api/messages`. Add the
+   **Microsoft Teams** channel.
+3. For a group chat, build the app package with
+   `APP_ID=<app id> apps/teams/appPackage/build.sh` and upload the zip in Teams (**Apps
+   → Manage your apps → Upload a custom app**). Your tenant may block custom app
+   uploads.

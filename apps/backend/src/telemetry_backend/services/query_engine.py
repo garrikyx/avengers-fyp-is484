@@ -155,6 +155,7 @@ class QueryEngine:
         from_utc, to_utc = self.prepare_metrics_query(request, now=now)
 
         stored_group_by = tuple(resolve_dimension_name(dim) for dim in request.group_by)
+        dimension_filters = self._dimension_filters(request.filters)
         resolved_metrics = self._resolve_requested_metrics(request.metrics)
         instance_ids = self._resolve_instances(request.filters, now=now)
 
@@ -179,6 +180,7 @@ class QueryEngine:
                     to_utc=to_utc,
                     step=request.step,
                     group_by=stored_group_by,
+                    filters=dimension_filters,
                 )
                 self._accumulate_series(
                     accumulated,
@@ -191,11 +193,11 @@ class QueryEngine:
                 from_utc=from_utc,
                 to_utc=to_utc,
                 group_by=stored_group_by,
+                filters=dimension_filters,
             ):
                 key: DimKey = tuple(sorted(group.dimensions.items()))
                 self._accumulate_group(accumulated, key, group, merged_histograms)
 
-        filtered = self._apply_dimension_filters(accumulated, request.filters)
         window_seconds = max((to_utc - from_utc).total_seconds(), 0.0)
         query_groups = [
             self._to_query_group(
@@ -204,7 +206,7 @@ class QueryEngine:
                 window_seconds=window_seconds,
                 include_series=request.series,
             )
-            for acc in filtered.values()
+            for acc in accumulated.values()
         ]
 
         truncated = False
@@ -223,7 +225,7 @@ class QueryEngine:
                 ),
             )
 
-        totals = self._build_totals(filtered, request, window_seconds=window_seconds)
+        totals = self._build_totals(accumulated, request, window_seconds=window_seconds)
         latency = self._build_latency_summary(merged_histograms, request)
         data_completeness = self._build_data_completeness(
             reporting_agents=reporting_agents,
@@ -446,39 +448,17 @@ class QueryEngine:
                     values[name] = getattr(group.indicators, ind_key).value
         return values
 
-    def _apply_dimension_filters(
-        self,
-        groups: dict[DimKey, _AccumulatedGroup],
-        filters: dict[str, str | list[str]],
-    ) -> dict[DimKey, _AccumulatedGroup]:
-        dimension_filters: dict[str, str | list[str]] = {}
-        for key, value in filters.items():
-            if key in ("application", "instanceId", "instance_id"):
-                continue
-            dimension_filters[resolve_dimension_name(key)] = value
-
-        if not dimension_filters:
-            return groups
-
-        return {
-            key: group
-            for key, group in groups.items()
-            if self._matches_filters(group.dimensions, dimension_filters)
-        }
-
     @staticmethod
-    def _matches_filters(
-        dimensions: dict[str, str],
+    def _dimension_filters(
         filters: dict[str, str | list[str]],
-    ) -> bool:
-        for dim, expected in filters.items():
-            actual = dimensions.get(dim)
-            if isinstance(expected, list):
-                if actual not in expected:
-                    return False
-            elif actual != expected:
-                return False
-        return True
+    ) -> dict[str, str | list[str]]:
+        """Filters on series dimensions, by stored name. Application and
+        instance select which instances are read instead."""
+        return {
+            resolve_dimension_name(key): value
+            for key, value in filters.items()
+            if key not in ("application", "instanceId", "instance_id")
+        }
 
     def _to_query_group(
         self,

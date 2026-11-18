@@ -9,12 +9,15 @@ from telemetry_shared.models.nl_query import IntentId
 
 from telemetry_backend.nl.catalogue import INTENT_DEFINITIONS
 
-# One example per common intent, in the order users usually need them.
+# One example per common intent, in the order users usually need them. Teams
+# shows at most six actions on a card, so don't add more.
 _SUGGESTION_INTENTS: tuple[IntentId, ...] = (
     "order_flow_summary",
     "rejection_summary",
     "latency_summary",
     "alert_status",
+    "session_status",
+    "agent_health",
 )
 
 

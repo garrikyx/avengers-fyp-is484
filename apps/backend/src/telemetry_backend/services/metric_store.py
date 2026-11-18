@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -128,6 +128,19 @@ class _CanonicalBucket:
 
 def _dim_key(dimensions: dict[str, str]) -> DimKey:
     return tuple(sorted(dimensions.items()))
+
+
+def _matches_filters(
+    dimensions: Mapping[str, str], filters: Mapping[str, str | list[str]]
+) -> bool:
+    for dim, expected in filters.items():
+        actual = dimensions.get(dim)
+        if isinstance(expected, list):
+            if actual not in expected:
+                return False
+        elif actual != expected:
+            return False
+    return True
 
 
 class MetricStore:
@@ -626,6 +639,7 @@ class MetricStore:
         to_utc: datetime,
         step: str,
         group_by: tuple[str, ...] = (),
+        filters: Mapping[str, str | list[str]] | None = None,
     ) -> list[tuple[datetime, list[MetricsGroup]]]:
         """Per-step bucket reads; empty group list means a null gap."""
         step_seconds = {"10s": 10, "1m": 60, "5m": 300}[step]
@@ -643,6 +657,7 @@ class MetricStore:
                 from_utc=current,
                 to_utc=step_end - timedelta(microseconds=1),
                 group_by=group_by,
+                filters=filters,
             )
             points.append((current, groups))
             current += timedelta(seconds=step_seconds)
@@ -661,10 +676,14 @@ class MetricStore:
         from_utc: datetime,
         to_utc: datetime,
         group_by: tuple[str, ...] = (),
+        filters: Mapping[str, str | list[str]] | None = None,
     ) -> list[MetricsGroup]:
         """Sum counters and merge histograms across every canonical bucket
         in range and every contributing agent, grouped by `group_by`
-        (empty = the one window-wide total row). Ratios and latency
+        (empty = the one window-wide total row). Only series whose
+        dimensions match every `filters` entry (a value or a list of allowed
+        values) contribute, so a filter can name a dimension that is not
+        grouped on. Ratios and latency
         summaries are derived from those sums, never from any single
         agent's own precomputed values (`FR-STM-003`/`FR-STM-004`).
         """
@@ -680,6 +699,8 @@ class MetricStore:
             for bucket in in_range:
                 for dim_key, per_contribution in bucket.series.items():
                     dims = dict(dim_key)
+                    if filters and not _matches_filters(dims, filters):
+                        continue
                     row_key = tuple(
                         sorted((dim, dims.get(dim, "unspecified")) for dim in group_by)
                     )

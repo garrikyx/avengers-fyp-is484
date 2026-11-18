@@ -1,6 +1,7 @@
 # ADR 0007 — Expose telemetry to Microsoft 365 Copilot through an MCP server
 
-Status: Proposed · Date: 2026-10-16 · Deciders: TBD
+Status: Accepted · Date: 2026-10-16 · Updated: 2026-11-18 · Deciders: team, with sponsor
+confirmation
 
 ## Context
 
@@ -14,6 +15,10 @@ On the 2026-10-16 call the sponsor described the target explicitly:
 - an **MCP server** runs the telemetry access;
 - "Microsoft 365 Copilot agent connect to this MCP server";
 - developers, support and business users then query it and are alerted through it.
+
+The sponsor confirmed this target (an MCP server connected to their Microsoft 365
+Copilot) when the team followed up, so the ADR moved from Proposed to Accepted on
+2026-11-18.
 
 Options considered:
 

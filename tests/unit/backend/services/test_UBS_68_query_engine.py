@@ -83,9 +83,9 @@ def test_UBS_68_group_by_reject_reason() -> None:
         make_snapshot(
             counters={"orders_rejected": 5},
             dimensions={
-                "session_id": "MAGIC->EXCH1",
+                "session": "MAGIC->EXCH1",
                 "symbol": "ABC",
-                "reject_reason": "OrderExceedsLimit",
+                "rejectReason": "OrderExceedsLimit",
             },
         ),
         canonical_start=BASE_TIME,
@@ -95,9 +95,9 @@ def test_UBS_68_group_by_reject_reason() -> None:
         make_snapshot(
             counters={"orders_rejected": 3},
             dimensions={
-                "session_id": "MAGIC->EXCH1",
+                "session": "MAGIC->EXCH1",
                 "symbol": "ABC",
-                "reject_reason": "UnknownSymbol",
+                "rejectReason": "UnknownSymbol",
             },
         ),
         canonical_start=BASE_TIME,
