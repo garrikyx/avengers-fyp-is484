@@ -6,4 +6,8 @@ need_run_folder
 set_title "4 agent"
 claim_pid agent
 cd "$RUN"
-exec "$VENV/telemetry-agent" --config "$ROOT/config/demo/agent.yaml"
+# The run folder's copy of config/demo/agent.yaml (demo.sh start runs
+# `scripts.demo_showcase prepare`), so `demo.sh reload` never edits the repo.
+CONFIG="$RUN/config/agent.yaml"
+[ -f "$CONFIG" ] || CONFIG="$ROOT/config/demo/agent.yaml"
+exec "$VENV/telemetry-agent" --config "$CONFIG"

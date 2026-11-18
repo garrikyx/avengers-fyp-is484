@@ -12,10 +12,22 @@
 #   scripts/demo_mac/demo.sh app-normal   no more fault lines: those alerts resolve
 #   scripts/demo_mac/demo.sh logs-stop    stop the log generator: NoLogActivity
 #   scripts/demo_mac/demo.sh logs-start   restart it with the same settings
-#   scripts/demo_mac/demo.sh agent-stop   stop the agent: AgentHeartbeatMissing
+#   scripts/demo_mac/demo.sh agent-stop   stop the agent: AgentHeartbeatMissing (again on a second outage)
 #   scripts/demo_mac/demo.sh agent-start  start the agent again (resumes from saved offsets)
-#   scripts/demo_mac/demo.sh ask "..."    ask the NL API a question and print the answer
 #   scripts/demo_mac/demo.sh stop         stop every demo component
+#
+# Showcase (scripts/demo_showcase.py; see the runbook's "Showcase commands"):
+#   ask ["question"] [--executive]  ask through the MCP server (Copilot's path); no question = a tour
+#   privacy                 UBS-137 leak sentinel, then live events/alerts/callbacks checked for leaks
+#   tamper                  forged callback signature: the Magic stub answers 401
+#   stub-stop / stub-start  Magic endpoint down/up: callbacks retry, delivery status shows it
+#   replay [RULE]           rule test mode on this run's logs; nothing is sent to Magic
+#   reload strict|reset     edit the run's rules.yaml live; the agent reloads it in ~10 s
+#   reconcile               pause the log generator; generated vs queried counts (lost 0)
+#   outage [SECONDS]        UBS-140 harness, quick mode: outage + rotation + restart, exact counts
+#   malformed [N]           append broken lines: parse errors counted, agent keeps going
+#   health                  agent health detail and backend Prometheus counters
+#   mcp-check               would Copilot's dev tunnel be accepted by the MCP server?
 #
 # Where each component shows up:
 #   default          one titled Terminal.app window per component (osascript)
@@ -73,22 +85,8 @@ preflight() {
     say "Run \"scripts/demo_mac/demo.sh stop\" or close the old windows first."
     exit 1
   fi
-  local models
-  if models="$(curl -sf -m 2 http://127.0.0.1:11434/api/tags 2>/dev/null)"; then
-    if printf '%s' "$models" | grep -q '"name":"llama3.2[:"]'; then
-      if printf '%s' "$models" | grep -q '"name":"llama3.2"\|"name":"llama3.2:latest"'; then
-        say "Ollama: llama3.2 available"
-      else
-        say "WARNING: config/demo/backend.yaml asks Ollama for llama3.2, but only a tagged"
-        say "         variant is pulled. Fix with: ollama cp llama3.2:3b llama3.2"
-      fi
-    else
-      say "WARNING: Ollama has no llama3.2. Run: ollama pull llama3.2"
-      say "         Free-form questions get the fallback reply; rule-matched ones still answer."
-    fi
-  else
-    say "Ollama not running: rule-matched questions (the headline question) still answer."
-  fi
+  # Asks Ollama for the exact model in config/demo/backend.yaml (shared with the bat).
+  (cd "$ROOT" && "$PY" -c 'from scripts.demo import ollama_status; print(ollama_status())')
   if [ -z "${DEMO_SKIP_PLAYGROUND:-}" ] && ! command -v npx >/dev/null 2>&1; then
     say "WARNING: npx not found (brew install node); the Agents Playground will not start."
   fi
@@ -103,6 +101,8 @@ cmd_start() {
   rm -rf "$RUN"
   mkdir -p "$RUN/logs" "$PIDS" "$PROC"
   save_sim "$NORMAL_RATE" 0
+  # The agent runs from a copy of config/demo, so `reload` never edits the repo.
+  show prepare
   # UBS-120: one random secret per run for the backend and the bot (no dev fallback).
   [ -n "$token" ] || token="$("$PY" -c 'import secrets; print(secrets.token_hex(24))')"
   (umask 077 && printf '%s\n' "$token" >"$RUN/notify-token")
@@ -159,40 +159,28 @@ restart_simulator() { # new-rate|"" new-faults|""
   say "Simulator restarted: reject rate $RATE, app faults $FAULTS."
 }
 
-cmd_alerts() {
-  local body
-  if ! body="$(curl -sf -m 5 "$BACKEND/telemetry/alerts?status=all&limit=50")"; then
-    say "Backend not reachable on $BACKEND."; return 1
-  fi
-  printf '%s' "$body" | "$PY" -c '
-import json, sys
-from datetime import datetime
-r = json.load(sys.stdin)
-def t(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone().strftime("%H:%M:%S") if s else ""
-rows = r.get("alerts") or []
-if not rows:
-    print("No alerts yet.")
-else:
-    fmt = "{:<28} {:<9} {:<9} {:>12} {:>9} {:>9} {:>9}"
-    print(fmt.format("rule", "severity", "status", "observed", "threshold", "first", "resolved"))
-    for a in rows:
-        obs = a.get("observedValue")
-        print(fmt.format(a.get("ruleName", "")[:28], a.get("severity", ""), a.get("status", ""),
-                         "" if obs is None else f"{obs:.4g}", str(a.get("threshold", "")),
-                         t(a.get("firstObservedUtc")), t(a.get("resolvedAtUtc"))))
-c = r.get("counts") or {}
-print("Active: %s  (critical %s, warning %s)" % (c.get("active", 0), c.get("critical", 0), c.get("warning", 0)))
-'
+cmd_alerts() { show alerts || true; }
+
+# Through the MCP server, the same path Copilot uses. No question: a short tour.
+cmd_ask() { show ask "$@" || say "  Ask failed; is the MCP server (:8765) up?"; }
+
+cmd_stub_start() {
+  need_run_folder
+  if is_running magic_stub; then say "Magic stub is already running."; return 0; fi
+  launch magic_stub
+  wait_port 9000 "Magic stub"
+  say "Magic callback endpoint is back. Callbacks still retrying are delivered; ones that used all 5 attempts stay \"failed\"."
 }
 
-cmd_ask() { # question
-  local q="${1:-$HEADLINE}"
-  say "Q: $q"
-  curl -sf -m 30 -X POST "$BACKEND/telemetry/nl/query" -H 'content-type: application/json' \
-    -d "$("$PY" -c 'import json,sys; print(json.dumps({"question": sys.argv[1]}))' "$q")" \
-    | "$PY" -c 'import json,sys; r=json.load(sys.stdin); print("A:", r.get("answer") or r.get("reply") or r); print("   (source:", r.get("source"), ")")' \
-    || say "  NL query failed; is the backend up?"
+cmd_reconcile() {
+  need_run_folder
+  say "Pausing the log generator so the counts can settle ..."
+  stop_component simulator
+  local rc=0
+  show reconcile || rc=$?
+  launch simulator
+  say "Log generator restarted."
+  return "$rc"
 }
 
 cmd_stop() {
@@ -230,7 +218,7 @@ orders_flowing() {
 
 cmd_run() {
   [ "${1:-}" = "--auto" ] && AUTO=1
-  step "1/8  Start the stack"
+  step "1/9  Start the stack"
   cmd_start
   local i=0
   until orders_flowing; do
@@ -239,41 +227,47 @@ cmd_run() {
   done
   say "  Orders are flowing into the backend."
 
-  step "2/8  Normal trading (builds the 3-minute anomaly baseline)"
+  step "2/9  Normal trading (builds the 3-minute anomaly baseline)"
   cmd_ask "$HEADLINE"
   pause 180 "Show the playground and the metrics while the baseline builds"
 
-  step "3/8  Reject burst"
+  step "3/9  Reject burst"
   restart_simulator "$BURST_RATE" ""
   pause 45 "HighRejectRate, RejectSpike and the Abnormal* rules fire"
   cmd_alerts
   cmd_ask "Any alerts open for Magic?"
 
-  step "4/8  Back to normal: the reject alerts resolve"
+  step "4/9  Back to normal: the reject alerts resolve"
   restart_simulator "$NORMAL_RATE" ""
   pause 90 "The burst ages out of the 1-minute window"
   cmd_alerts
 
-  step "5/8  Application faults (Application.log [F] lines)"
+  step "5/9  Application faults (Application.log [F] lines)"
   restart_simulator "" "$FAULT_RATE"
   pause 20 "AppOutOfMemory and AppLogFailure fire"
   cmd_alerts
   restart_simulator "" 0
 
-  step "6/8  Log generator stops: NoLogActivity"
+  step "6/9  Log generator stops: NoLogActivity"
   stop_component simulator
   pause 75 "A full minute with no new lines"
   cmd_alerts
   launch simulator
 
-  step "7/8  Agent stops: AgentHeartbeatMissing"
+  step "7/9  Agent stops: AgentHeartbeatMissing"
   stop_component agent
   pause 35 "The backend notices the missing heartbeat"
   cmd_alerts
   launch agent
   say "  Agent restarted from its saved offsets."
 
-  step "8/8  Summary"
+  step "8/9  Showcase: tampered callback, exact counts, privacy, rule test mode"
+  show tamper || true
+  cmd_reconcile || true
+  show privacy || true
+  show replay HighRejectRate || true
+
+  step "9/9  Summary"
   pause 30 "Everything resolves"
   cmd_alerts
   say ""
@@ -298,9 +292,21 @@ case "$CMD" in
   logs-start) need_run_folder; if is_running simulator; then say "Log generator is already running."; else launch simulator; say "Log generator restarted. NoLogActivity resolves once lines arrive again."; fi ;;
   agent-stop) stop_component agent; say "Agent stopped. AgentHeartbeatMissing should fire in about 20-30 s." ;;
   agent-start) need_run_folder; if is_running agent; then say "Agent is already running."; else launch agent; say "Agent started again from its saved offsets."; fi ;;
+  stub-stop) stop_component magic_stub; say "Magic callback endpoint is down. Callbacks retry 5 times over about 15 s, then show \"failed\"; \"demo.sh alerts\" shows it." ;;
+  stub-start) cmd_stub_start ;;
+  reconcile) cmd_reconcile ;;
+  privacy) show privacy ;;
+  tamper) show tamper ;;
+  replay) show replay "$@" ;;
+  reload) show reload "$@" ;;
+  outage) show outage "$@" ;;
+  malformed) show malformed "$@" ;;
+  health) show health ;;
+  mcp-check) show mcp-check ;;
   *)
     say "Unknown command \"$CMD\"."
-    say "Use: start, run, alerts, ask, burst, normal, app-fault, app-normal, logs-stop, logs-start, agent-stop, agent-start, stop."
+    say "Use: start, run, alerts, ask, burst, normal, app-fault, app-normal, logs-stop, logs-start, agent-stop, agent-start,"
+    say "     stub-stop, stub-start, reconcile, privacy, tamper, replay, reload, outage, malformed, health, mcp-check, stop."
     exit 2
     ;;
 esac
