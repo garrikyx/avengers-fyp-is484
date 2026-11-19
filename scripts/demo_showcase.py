@@ -59,6 +59,14 @@ DEMO_CONFIG = ROOT / "config" / "demo"
 RUN_CONFIG = RUN / "config"
 # Written by `prepare` when a run starts; `reconcile` counts from here.
 RUN_STARTED = RUN / "started-at.txt"
+# The bot's saved alert chat (TEAMS_NOTIFY_STATE_PATH, relative to the repo,
+# where every launcher starts the bot). The Agents Playground opens a new chat
+# each run, and the bot keeps the first chat it sees, so a saved one from an
+# earlier run sends every alert card to a dead chat (404 ConversationNotFound)
+# even after "hi". `prepare` clears it; the next "hi" registers the new chat.
+TEAMS_CHAT_STATE = ROOT / os.environ.get(
+    "TEAMS_NOTIFY_STATE_PATH", ".teams-state/conversation.json"
+)
 CONFIG_FILES = ("agent.yaml", "rules.yaml", "anomaly.yaml")
 MCP_URL = "http://127.0.0.1:8765/mcp"
 STUB_URL = "http://127.0.0.1:9000/magic/callbacks/telemetry-alerts"
@@ -244,6 +252,9 @@ def agent_config() -> Path:
 def cmd_prepare() -> int:
     RUN_CONFIG.mkdir(parents=True, exist_ok=True)
     RUN_STARTED.write_text(datetime.now(UTC).isoformat() + "\n", encoding="utf-8")
+    if TEAMS_CHAT_STATE.exists():
+        TEAMS_CHAT_STATE.unlink()
+        say('  Cleared the saved alert chat; say "hi" in the Playground for cards.')
     for name in CONFIG_FILES:
         shutil.copyfile(DEMO_CONFIG / name, RUN_CONFIG / name)
     say(f"  Demo config copied to {RUN_CONFIG} (edits there never touch the repo).")
