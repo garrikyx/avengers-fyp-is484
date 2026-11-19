@@ -227,6 +227,7 @@ class NlQueryService:
                 engine=self._engine,
                 store=self._engine.store,
                 now=now,
+                default_last=self._config.default_time_range,
             )
         except InterpretedValidationError as exc:
             details = [f"{issue.field}: {issue.issue}" for issue in exc.issues]

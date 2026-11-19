@@ -49,7 +49,7 @@ def _service(
             store.merge(
                 make_snapshot(
                     counters={"orders_rejected": count},
-                    dimensions={"session_id": "S", "reject_reason": reason},
+                    dimensions={"session": "S", "rejectReason": reason},
                     bucket_start=start,
                 ),
                 canonical_start=start,
@@ -141,7 +141,7 @@ def test_the_boundary_bucket_is_counted_once() -> None:
     store.merge(
         make_snapshot(
             counters={"orders_rejected": 40},
-            dimensions={"session_id": "S", "reject_reason": "UnknownSymbol"},
+            dimensions={"session": "S", "rejectReason": "UnknownSymbol"},
             bucket_start=start,
         ),
         canonical_start=start,

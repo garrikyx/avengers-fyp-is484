@@ -1,7 +1,8 @@
 """Metric and dimension alias resolution (`FR-QRY-034`).
 
-The query API uses spec 004/007 wire names; the agent and Metric Store use
-Python snake_case dimension keys on the wire snapshot series.
+The Metric Store keeps series dimensions under their wire names (spec 004 §5,
+`ALLOWED_DIMENSION_KEYS`), the only keys ingestion accepts. The query API also
+accepts spec 007 and snake_case spellings and resolves them to those names.
 """
 
 from __future__ import annotations
@@ -30,26 +31,24 @@ DERIVED_METRICS: frozenset[str] = frozenset(
 
 # API / spec dimension name -> stored series dimension key.
 API_DIMENSION_TO_STORED: dict[str, str] = {
-    "sessionId": "session_id",
-    "session": "session_id",
-    "rejectReason": "reject_reason",
-    "instanceId": "instance_id",
-    "symbol": "symbol",
-    "side": "side",
-    "ordType": "ord_type",
-    "ord_type": "ord_type",
-    "msgType": "msg_type",
-    "application": "application",
-}
-
-STORED_TO_API_DIMENSION: dict[str, str] = {
-    "session_id": "sessionId",
+    "sessionId": "session",
+    "session": "session",
+    "session_id": "session",
+    "rejectReason": "rejectReason",
     "reject_reason": "rejectReason",
+    "instanceId": "instanceId",
     "instance_id": "instanceId",
     "symbol": "symbol",
     "side": "side",
+    "ordType": "ordType",
     "ord_type": "ordType",
-    "msg_type": "msgType",
+    "msgType": "msgType",
+    "application": "application",
+}
+
+# Stored names that differ from the API name; every other key is the same.
+STORED_TO_API_DIMENSION: dict[str, str] = {
+    "session": "sessionId",
 }
 
 KNOWN_COUNTERS: frozenset[str] = frozenset(
