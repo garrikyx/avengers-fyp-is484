@@ -17,6 +17,10 @@ class McpServerConfig:
     request_timeout_seconds: float = 12.0
     bind_host: str = "127.0.0.1"
     port: int = 8765
+    # Extra Host headers to accept besides localhost, e.g. a dev tunnel's
+    # hostname, so Copilot Studio can reach a locally bound server. The SDK's
+    # DNS-rebinding check stays on; it just learns these names too.
+    allowed_hosts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.request_timeout_seconds <= 0:
@@ -46,6 +50,11 @@ class McpServerConfig:
             ),
             bind_host=source.get("MCP_BIND_HOST", defaults.bind_host),
             port=_number(source, "MCP_PORT", int, defaults.port),
+            allowed_hosts=tuple(
+                host.strip()
+                for host in source.get("MCP_ALLOWED_HOSTS", "").split(",")
+                if host.strip()
+            ),
         )
 
 

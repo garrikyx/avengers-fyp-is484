@@ -159,10 +159,74 @@ curl -s "http://127.0.0.1:8080/telemetry/alerts?status=active"
 
 `status` takes `active`, `resolved` or `all`.
 
-**Ollama model name.** `config/demo/backend.yaml` asks for `llama3.2`, but a machine
-with only `llama3.2:3b` pulled answers "model not found". The launcher warns about this.
-The headline question is rule-matched and still answers; free-form questions get the
-fallback reply until the name matches.
+**Ollama model name.** `config/demo/backend.yaml` asks for `llama3.2`, but a
+machine with only `llama3.2:3b` pulled answers "model not found". Preflight now
+asks Ollama for that exact model (`/api/show`) and warns if it is missing. Fix it
+with `ollama cp llama3.2:3b llama3.2`. The headline question is rule-matched and
+still answers; free-form questions get the fallback reply until the name matches.
+
+## Showcase commands (the rest of what's built)
+
+The storyline covers the core path. These commands show the built features it
+doesn't: privacy, callback signing and retries, rule tooling, exact counts,
+resilience, Copilot and health. They work from either launcher
+(`scripts\demo_windows.bat <command>` or `scripts/demo_mac/demo.sh <command>`) and
+share one implementation, `scripts/demo_showcase.py`
+(`uv run python -m scripts.demo_showcase <command>`). The guided script runs the
+main ones with `uv run python -m scripts.demo --showcase`.
+
+| Command | What the audience sees | Proves | Measured on Windows (2026-11-18) |
+| --- | --- | --- | --- |
+| `ask` | Six questions through the MCP server (Copilot's path): rejections, order flow, open alerts, reason trends, agent health, parse health. Each shows the answer, intent, whether a rule or the LLM answered it, data completeness and citations | #3, UAT-06, MCP (ADR 0007) | All six rule-matched; asked during an alert, the answer names the alert and its callback delivery |
+| `ask "..." --executive` | The same answer worded for an executive audience | NL audiences | |
+| `privacy` | The UBS-137 leak sentinel runs (13 tests). Then one live event (IDs hashed, no tag-58 text) and a scan of the events API, alerts API and every callback for plaintext order IDs or reject text | #5, UAT-12, NFR-SEC-002 | 13 passed; none found, against 16,385 plaintext IDs in the raw logs |
+| `tamper` | The last callback re-sent with a forged signature; the Magic stub answers 401 | #2, UAT-03, FR-CBK-005 | 401 |
+| `stub-stop` then `normal` or `burst`, then `stub-start` | Callbacks fail and retry (5 attempts with 1/2/4/8 s backoff, about 15 s). `alerts` shows "pending", then "failed (5 attempts)" or, if the stub is back within ~10 s, "delivered" | FR-CBK retry and delivery status | 4 callbacks went pending, then failed after 5 attempts; new alerts delivered once the stub was back |
+| `alerts` | Every alert so far with a short ID, values, times and callback delivery. Backend-raised alerts show "n/a" for delivery | UAT-04 | |
+| `replay [RULE]` | Rule test mode on this run's own rotated logs: pending, firing critical, step down to warning, resolved, "dispatched: 0" | UBS-36 | 7 files, 4,475 lines, full lifecycle |
+| `reload strict` / `reload reset` | Edits the run folder's `rules.yaml` (HighRejectRate warning 0.03 to 0.004) with no restart; the alert fires on normal traffic, then clears | Live reload | Fired 16 s after the save, cleared 25 s after the reset |
+| `reconcile` | Pauses the log generator, counts orders and rejects in every rotated `Fix.log*`, compares with the backend query for the whole run | #4, UAT-05/07/09 | 1,819 orders and 214 rejects on both sides across 8 files: lost 0 |
+| `outage [SECONDS]` | The UBS-140 harness in quick mode: a 30 s connectivity outage, rotation and a graceful restart against ground truth | #4, UAT-08 | Visibility 0.99/0.99/1.06 s; 1,771 = 1,771 orders; a signed callback during the outage; restart resumed in 0.07 s; about 40 s to run |
+| `malformed [N]` | N broken lines appended to `Fix.log`; the agent's parse-error count rises and it stays healthy | UAT-11, NFR-REL-001 | 0 to 5 parse errors from 20 lines (one of the four broken shapes counts as a parse error; the agent skips the others), agent healthy |
+| `agent-stop` / `agent-start` twice | Two AgentHeartbeatMissing occurrences with different IDs | UAT-10, UBS-136 | Alert after about 20 s each time; two distinct IDs |
+| `health` | Agent health (lag per file, parse errors, callback failures, publish queue, drops) and backend Prometheus counters from `:8081/metrics` | UAT-01 | |
+| `mcp-check` | Whether the MCP server would accept a dev tunnel's Host header | Copilot readiness | 421 by default; 200 with `MCP_ALLOWED_HOSTS` set |
+
+The agent runs from a copy of `config/demo/` in `.demo-run/config/`, so `reload`
+never edits the repo. The simulator keeps 50 rotated archives, so `reconcile` sees
+every file in a demo-length run.
+
+### Suggested 15-minute running order
+
+1. Start (`scripts\demo_windows.bat`), say "hi" in the Playground, `ask` while the
+   baseline builds (3 minutes).
+2. `burst`: Playground alert cards, `alerts`, `tamper`. Ask the headline question
+   while the alerts fire.
+3. `stub-stop`, `normal`, `alerts` (callbacks retrying), `stub-start`.
+4. `replay`, then `reload strict` / `reload reset`.
+5. `app-fault` / `app-normal`, `logs-stop` / `logs-start` (rules showcase above).
+6. `agent-stop` / `agent-start` twice, then `reconcile` (lost 0).
+7. `privacy`, `malformed`, `health`.
+8. Optional if there is time: `outage 30` (about 40 s).
+
+### Copilot through a dev tunnel
+
+The MCP server binds to localhost and keeps the SDK's DNS-rebinding protection,
+which refuses any other Host header with 421. A dev tunnel forwards its own
+hostname, so set it before starting the stack:
+
+```bat
+devtunnel host -p 8765 --allow-anonymous
+set MCP_ALLOWED_HOSTS=<tunnel-id>-8765.<region>.devtunnels.ms
+scripts\demo_windows.bat
+scripts\demo_windows.bat mcp-check
+```
+
+On macOS, `export MCP_ALLOWED_HOSTS=...` before `demo.sh start`. Then add
+`https://<tunnel host>/mcp` in Copilot Studio under Tools, Model Context Protocol
+(`apps/mcp/README.md`, "Connect Copilot"). Anonymous tunnels are POC-only: stop the
+tunnel after the demo. This path has not been run against a real Copilot Studio
+tenant here; rehearse it once on the demo machine.
 
 ## macOS: one script per component plus `demo.sh`
 
@@ -242,8 +306,11 @@ agent drains, publishes and checkpoints, then SIGKILL after 10 s.
   questions on stage.
 - **Steps 6 and 7 are a graceful stop.** Crash and disconnected-loss bounds are covered
   by FR-PUB-008 and ADR 0010, not by this demo.
-- **The leak sentinel (#5) is not a demo step.** Show it by running
-  `uv run pytest -q tests/integration/test_UBS_137_data_leak_sentinel.py` (UBS-137).
+- **The leak sentinel (#5) is an automated test, not live traffic.** `privacy`
+  runs it (`tests/integration/test_UBS_137_data_leak_sentinel.py`) and also scans
+  this run's live events, alerts and callbacks.
+- **Callbacks that used all 5 attempts stay "failed".** They are not resent when
+  the Magic endpoint comes back (`stub-start`); only new transitions are delivered.
 
 Fixed on main since the first version of this runbook:
 

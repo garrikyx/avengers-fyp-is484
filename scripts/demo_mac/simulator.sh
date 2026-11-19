@@ -11,4 +11,5 @@ set_title "3 simulator (rejects $RATE, faults $FAULTS)"
 claim_pid simulator
 cd "$RUN"
 exec "$PY" "$ROOT/apps/simulator/src/simulator/mock_logger.py" \
-  --interval 0.05 --max-bytes 100000 --reject-rate "$RATE" --app-faults "$FAULTS"
+  --interval 0.05 --max-bytes 100000 --keep-rotated-files 50 \
+  --reject-rate "$RATE" --app-faults "$FAULTS"

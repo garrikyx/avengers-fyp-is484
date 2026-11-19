@@ -123,6 +123,46 @@ def test_restart_backfills_multiple_rotations_created_while_offline(
     restarted_monitor.close()
 
 
+def test_restart_backfill_survives_a_caller_that_stops_part_way(
+    tmp_path: Path,
+) -> None:
+    """poll_once stops after 256 lines; the next poll resumes the backfill.
+
+    Regression: abandoning the generator closed the archive's handle but kept
+    it queued, so the next poll raised "I/O operation on closed file" and the
+    agent's pipeline thread died after every restart that followed a rotation.
+    """
+    active_path = tmp_path / "Fix.log"
+    state_path = tmp_path / "offsets.json"
+    active_path.write_text("read-before-stop\n", newline="\n")
+
+    first_monitor = LogMonitor(active_path, OffsetTracker(state_path))
+    assert _line_texts(list(first_monitor.poll_lines())) == ["read-before-stop"]
+    first_monitor.close()
+
+    rotated_path = tmp_path / "Fix.log.1"
+    active_path.rename(rotated_path)
+    offline = [f"offline-{i}" for i in range(10)]
+    with rotated_path.open("a", newline="\n") as handle:
+        handle.writelines(f"{text}\n" for text in offline)
+    active_path.write_text("new-active-file\n", newline="\n")
+
+    restarted_monitor = LogMonitor(active_path, OffsetTracker(state_path))
+    seen: list[str] = []
+    for _ in range(20):
+        lines = restarted_monitor.poll_lines()
+        for count, read_line in enumerate(lines, start=1):
+            seen.append(read_line.text)
+            if count == 3:
+                break
+        lines.close()  # what the interpreter does when poll_once breaks out
+        if seen and seen[-1] == "new-active-file":
+            break
+
+    assert seen == [*offline, "new-active-file"]
+    restarted_monitor.close()
+
+
 def test_does_not_emit_an_unterminated_line_until_it_is_complete(
     tmp_path: Path,
 ) -> None:

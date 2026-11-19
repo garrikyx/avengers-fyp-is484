@@ -121,3 +121,6 @@ save_sim() { # rate faults
   echo "$1" >"$RUN/sim-rate.txt"
   echo "$2" >"$RUN/sim-faults.txt"
 }
+
+# Showcase commands live in scripts/demo_showcase.py (shared with the bat and demo.py).
+show() { (cd "$ROOT" && "$PY" -m scripts.demo_showcase "$@"); }

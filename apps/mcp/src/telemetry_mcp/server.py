@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from telemetry_shared.models.nl_query import Audience
@@ -140,15 +141,42 @@ def _params(**values: str | int | None) -> dict[str, str | int]:
     return {key: value for key, value in values.items() if value is not None}
 
 
+LOCAL_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+
+
+def transport_security(config: McpServerConfig) -> TransportSecuritySettings | None:
+    """The SDK's DNS-rebinding protection, plus `MCP_ALLOWED_HOSTS`.
+
+    With no extra hosts this returns None, so the SDK applies its own local-only
+    default. A dev tunnel forwards its own hostname as Host; without it in this
+    list the SDK answers 421 and Copilot Studio cannot connect.
+    """
+    if not config.allowed_hosts:
+        return None
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[*LOCAL_HOSTS, *config.allowed_hosts],
+        allowed_origins=[
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            *(f"https://{host}" for host in config.allowed_hosts),
+        ],
+    )
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     config = McpServerConfig.from_env()
     logger.info(
-        "telemetry MCP server on http://%s:%s/mcp -> %s",
+        "telemetry MCP server on http://%s:%s/mcp -> %s (extra allowed hosts: %s)",
         config.bind_host,
         config.port,
         config.backend_base_url,
+        ", ".join(config.allowed_hosts) or "none",
     )
     build_server(config).run(
-        transport="streamable-http", host=config.bind_host, port=config.port
+        transport="streamable-http",
+        host=config.bind_host,
+        port=config.port,
+        transport_security=transport_security(config),
     )
