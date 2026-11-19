@@ -251,6 +251,7 @@ def agent_config() -> Path:
 
 def cmd_prepare() -> int:
     RUN_CONFIG.mkdir(parents=True, exist_ok=True)
+    RUN_STARTED.parent.mkdir(parents=True, exist_ok=True)
     RUN_STARTED.write_text(datetime.now(UTC).isoformat() + "\n", encoding="utf-8")
     if TEAMS_CHAT_STATE.exists():
         TEAMS_CHAT_STATE.unlink()

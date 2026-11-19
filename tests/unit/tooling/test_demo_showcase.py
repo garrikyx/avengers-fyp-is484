@@ -94,7 +94,15 @@ def test_reload_rejects_an_unknown_tier() -> None:
 def test_prepare_copies_the_demo_config_into_the_run_folder(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # Keep the test away from the repo's real .demo-run and .teams-state folders;
+    # the run folder doesn't exist yet on a clean checkout.
+    started = tmp_path / "run" / "started-at.txt"
+    chat_state = tmp_path / "teams" / "conversation.json"
+    chat_state.parent.mkdir()
+    chat_state.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(show, "RUN_CONFIG", tmp_path / "config")
+    monkeypatch.setattr(show, "RUN_STARTED", started)
+    monkeypatch.setattr(show, "TEAMS_CHAT_STATE", chat_state)
 
     show.cmd_prepare()
 
@@ -102,6 +110,8 @@ def test_prepare_copies_the_demo_config_into_the_run_folder(
         assert (tmp_path / "config" / name).read_bytes() == (
             show.DEMO_CONFIG / name
         ).read_bytes()
+    assert started.read_text(encoding="utf-8").strip()
+    assert not chat_state.exists()
 
 
 def test_leak_check_finds_plaintext_ids_and_tag_58_text_only() -> None:
