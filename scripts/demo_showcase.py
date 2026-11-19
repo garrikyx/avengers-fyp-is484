@@ -57,6 +57,8 @@ from scripts.demo import (
 
 DEMO_CONFIG = ROOT / "config" / "demo"
 RUN_CONFIG = RUN / "config"
+# Written by `prepare` when a run starts; `reconcile` counts from here.
+RUN_STARTED = RUN / "started-at.txt"
 CONFIG_FILES = ("agent.yaml", "rules.yaml", "anomaly.yaml")
 MCP_URL = "http://127.0.0.1:8765/mcp"
 STUB_URL = "http://127.0.0.1:9000/magic/callbacks/telemetry-alerts"
@@ -241,6 +243,7 @@ def agent_config() -> Path:
 
 def cmd_prepare() -> int:
     RUN_CONFIG.mkdir(parents=True, exist_ok=True)
+    RUN_STARTED.write_text(datetime.now(UTC).isoformat() + "\n", encoding="utf-8")
     for name in CONFIG_FILES:
         shutil.copyfile(DEMO_CONFIG / name, RUN_CONFIG / name)
     say(f"  Demo config copied to {RUN_CONFIG} (edits there never touch the repo).")
@@ -460,12 +463,22 @@ def _totals(http: httpx.Client, since: datetime) -> tuple[int, int]:
     )
 
 
+def _run_started() -> datetime:
+    """When this run began. Not the logs folder's ctime: on macOS and Linux
+    that changes on every rotation (a rename in the folder), so the "whole run"
+    query would cover only the last minute or two and report false losses."""
+    try:
+        return datetime.fromisoformat(RUN_STARTED.read_text(encoding="utf-8").strip())
+    except OSError, ValueError:
+        st = (RUN / "logs").stat()
+        # st_birthtime is creation time on macOS/BSD; Windows ctime is creation time.
+        return datetime.fromtimestamp(getattr(st, "st_birthtime", st.st_ctime), UTC)
+
+
 def cmd_reconcile() -> int:
     _need_run()
     files = rotated_logs(RUN / "logs", "Fix.log")
-    since = datetime.fromtimestamp((RUN / "logs").stat().st_ctime, UTC) - timedelta(
-        minutes=1
-    )
+    since = _run_started() - timedelta(minutes=1)
     say("  Waiting for the backend counts to settle (simulator stopped) ...")
     with _http() as http:
         last, stable = (-1, -1), 0

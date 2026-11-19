@@ -342,13 +342,19 @@ class LogMonitor:
         self._retired_harvesters = remaining
 
     def _drain_startup_recovery(self) -> Generator[ReadLine]:
-        """Read retained offline rotations once, then release their handles."""
-        for harvester in self._startup_backfill_harvesters:
-            try:
-                yield from self._read_harvester(harvester)
-            finally:
-                harvester.close()
-        self._startup_backfill_harvesters = []
+        """Read retained offline rotations once, then release their handles.
+
+        A caller may stop iterating part-way (``poll_once`` takes at most 256
+        lines per file per pass). The unfinished harvester then stays queued
+        with its handle open, and the next poll resumes from its offset.
+        Closing it on generator exit would leave a closed handle in the queue
+        and crash the next read. ``close()`` releases anything still queued.
+        """
+        while self._startup_backfill_harvesters:
+            harvester = self._startup_backfill_harvesters[0]
+            yield from self._read_harvester(harvester)
+            self._startup_backfill_harvesters.pop(0)
+            harvester.close()
 
     def poll_lines(self) -> Generator[ReadLine]:
         """Polls for new log lines and manages Harvester lifecycle events."""

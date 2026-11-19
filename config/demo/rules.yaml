@@ -47,6 +47,8 @@ rules:
       - severity: critical
         threshold: 0
     window: 1m
+    for: 5s          # demo: fires ~65 s after the last line (default for: 60s)
+    resolveAfter: 15s
     dependsOnLogActivity: false
 
   # Application.log signature and level rules (UBS-122/128). The simulator
@@ -65,6 +67,7 @@ rules:
         threshold: 3
     window: 1m
     for: 0s
+    resolveAfter: 15s  # demo: resolve ~75 s after the last fault (default 5m)
     dependsOnLogActivity: false
 
   - name: AppLogFailure
@@ -78,4 +81,5 @@ rules:
         threshold: 1
     window: 1m
     for: 0s
+    resolveAfter: 15s  # demo: resolve ~75 s after the last fault (default 5m)
     dependsOnLogActivity: false

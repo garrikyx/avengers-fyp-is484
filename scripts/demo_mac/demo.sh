@@ -55,7 +55,11 @@ launch() { # name (script is <name>.sh) [args...]
   local cmd="cd '$ROOT' && '$HERE/$name.sh'"
   local arg
   for arg in "$@"; do cmd="$cmd '$arg'"; done
-  mkdir -p "$PROC"
+  mkdir -p "$PROC" "$PIDS"
+  # The component writes its own PID file once it starts. Clear the old one
+  # and wait for the new one below, so a stop right after this launch (e.g.
+  # storyline step 5 -> 6) can't read a stale PID and orphan the process.
+  rm -f "$PIDS/$name.pid"
   case "$(view_mode)" in
     terminal)
       osascript -e "tell application \"Terminal\" to do script \"$cmd\"" >/dev/null
@@ -71,6 +75,15 @@ launch() { # name (script is <name>.sh) [args...]
       nohup "$HERE/$name.sh" "$@" >"$PROC/$name.log" 2>&1 &
       ;;
   esac
+  local i=0
+  until is_running "$name"; do
+    i=$((i + 1))
+    if [ "$i" -gt 150 ]; then
+      say "  $name did not record its PID in 15 s; check its window or $PROC/$name.log."
+      return 0
+    fi
+    sleep 0.1
+  done
 }
 
 # --- commands ----------------------------------------------------------------
@@ -233,7 +246,7 @@ cmd_run() {
 
   step "3/9  Reject burst"
   restart_simulator "$BURST_RATE" ""
-  pause 45 "HighRejectRate, RejectSpike and the Abnormal* rules fire"
+  pause 65 "HighRejectRate, RejectSpike and the Abnormal* rules fire (~15 s, ~55 s)"
   cmd_alerts
   cmd_ask "Any alerts open for Magic?"
 
@@ -250,9 +263,13 @@ cmd_run() {
 
   step "6/9  Log generator stops: NoLogActivity"
   stop_component simulator
-  pause 75 "A full minute with no new lines"
+  pause 80 "A full minute with no new lines, then NoLogActivity"
   cmd_alerts
   launch simulator
+  # Let it resolve before stopping the agent: agent-side alert state is held in
+  # memory, so an alert still firing when the agent stops is never resolved.
+  pause 25 "Lines flow again; NoLogActivity resolves"
+  cmd_alerts
 
   step "7/9  Agent stops: AgentHeartbeatMissing"
   stop_component agent
