@@ -62,11 +62,23 @@ def _service() -> NlQueryService:
     )
 
 
+def _midday_zone() -> str:
+    """A fixed-offset zone in which NOW is about midday.
+
+    NOW is the real clock, and "yesterday" ends at local midnight. In the
+    default Asia/Singapore zone a run between 00:00 and 06:00 local time would
+    still hold part of yesterday in the 6-hour store, so the range would be
+    clamped rather than entirely outside retention. At local midday yesterday
+    ended 12 hours ago, whenever CI runs.
+    """
+    offset = (12 - NOW.hour + 12) % 24 - 12  # -12..11 hours from UTC
+    return f"Etc/GMT{-offset:+d}"  # Etc/GMT signs are inverted: GMT-8 is UTC+8
+
+
 def _ask(question: str) -> NlQueryOutcome:
+    context = NlQueryContext(default_application="Magic", user_timezone=_midday_zone())
     return asyncio.run(
-        _service().interpret_and_query(
-            question, context=NlQueryContext(default_application="Magic"), now=NOW
-        )
+        _service().interpret_and_query(question, context=context, now=NOW)
     )
 
 
